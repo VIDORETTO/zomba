@@ -11,6 +11,8 @@ import { animateEmblem, emblemCanvas } from './emblems';
 import { allProfiles, favoriteWeapon, getProfile, levelOf, runs } from './profile';
 import { MAX_START_ROUND, levelFromXp, rankOf, startPoints } from '../shared/progress';
 import { WEAPONS } from '../shared/weapons';
+import type { BoardMode, BoardStart, RunInput } from '../shared/board';
+import { apiBase, fetchRuns, getAccount, login, setAccount, submitRun } from './online';
 import './styles.css';
 
 const $ = <T extends HTMLElement = HTMLElement>(id: string) => document.getElementById(id) as T;
@@ -184,12 +186,23 @@ function startGame(transport: Transport, mapId: string) {
         save('zomba.settings', s);
       },
       onExit: exitGame,
+      onlineRun: onlineRunFor(transport),
     });
     $('loading').classList.add('hidden');
     game.start();
     if (import.meta.env.DEV) (window as unknown as { __game: Game }).__game = game;
   }, 30);
 }
+
+// placar online: no solo o jogo envia a partida; no co-op o servidor já registrou
+function onlineRunFor(transport: Transport): ((run: RunInput) => Promise<string>) | undefined {
+  if (!getAccount()) return undefined;
+  if (!transport.solo) return () => Promise.resolve('O servidor registrou a partida no placar online.');
+  const base = apiUrl();
+  return (run) => submitRun(base, run).then((r) => (r.best ? 'Novo recorde seu no placar online!' : 'Partida enviada ao placar online.'));
+}
+
+const apiUrl = () => apiBase(serverInput.value.trim() || defaultServerUrl());
 
 function exitGame() {
   game?.dispose();
@@ -229,7 +242,12 @@ document.querySelectorAll<HTMLButtonElement>('#board-tabs button').forEach((b) =
   b.addEventListener('click', () => {
     boardTab = b.dataset.tab!;
     document.querySelectorAll('#board-tabs button').forEach((x) => x.classList.toggle('on', x === b));
-    $('board-filter').classList.toggle('hidden', boardTab !== 'runs');
+    $('board-filter').classList.toggle('hidden', boardTab === 'players');
+    $('board-online-filter').classList.toggle('hidden', boardTab !== 'online');
+    $('board-account').classList.toggle('hidden', boardTab !== 'online');
+    $('board-note').textContent = boardTab === 'online'
+      ? 'Placar do servidor do jogo (o mesmo do co-op). Partidas de co-op são conferidas pelo servidor (✓).'
+      : 'Placar deste computador.';
     renderBoard();
   }),
 );
@@ -243,8 +261,83 @@ document.querySelectorAll<HTMLButtonElement>('#board-filter button').forEach((b)
 
 const esc = (s: string) => s.replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]!);
 
+// ---------- placar online ----------
+
+let onlineMode: BoardMode = 'solo';
+let onlineMap = 'cidade';
+let onlineReq = 0;
+document.querySelectorAll<HTMLButtonElement>('#board-online-filter button').forEach((b) =>
+  b.addEventListener('click', () => {
+    if (b.dataset.mode) onlineMode = b.dataset.mode as BoardMode;
+    if (b.dataset.omap) onlineMap = b.dataset.omap;
+    document.querySelectorAll<HTMLButtonElement>('#board-online-filter button').forEach((x) =>
+      x.classList.toggle('on', x.dataset.mode ? x.dataset.mode === onlineMode : x.dataset.omap === onlineMap));
+    renderBoard();
+  }),
+);
+
+function renderAccount(msg = '', bad = false) {
+  const box = $('board-account');
+  const acc = getAccount();
+  const note = msg ? `<span class="msg ${bad ? 'bad' : ''}">${esc(msg)}</span>` : '';
+  if (acc) {
+    box.innerHTML = `<span>Conectado como <b>${esc(acc.name)}</b>. Suas partidas entram no placar.</span><button class="btn ghost" id="acc-out">Sair</button>${note}`;
+    $('acc-out').addEventListener('click', () => {
+      setAccount(null);
+      renderAccount('Você saiu da conta.');
+    });
+    return;
+  }
+  box.innerHTML = `<input id="acc-name" maxlength="16" placeholder="Nome" value="${esc(nameInput.value.trim())}"><input id="acc-pass" type="password" maxlength="64" placeholder="Senha"><button class="btn primary" id="acc-in">Entrar ou criar conta</button>${note || '<span class="msg">Com uma conta, suas partidas aparecem no placar online. Se o nome for novo, a conta é criada.</span>'}`;
+  const go = async () => {
+    const name = $<HTMLInputElement>('acc-name').value.trim();
+    const pass = $<HTMLInputElement>('acc-pass').value;
+    renderAccount('Conectando…');
+    try {
+      const r = await login(apiUrl(), name, pass);
+      // o nome do jogo passa a ser o da conta
+      nameInput.value = r.name;
+      playerName();
+      refreshProfile();
+      renderAccount(r.created ? 'Conta criada.' : 'Bem-vindo de volta.');
+      renderBoard();
+    } catch (err) {
+      renderAccount((err as Error).message, true);
+    }
+  };
+  $('acc-in').addEventListener('click', go);
+  $('acc-pass').addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') go();
+  });
+}
+
+async function renderOnline() {
+  const body = $('board-body');
+  if (!$('board-account').innerHTML) renderAccount();
+  const req = ++onlineReq;
+  body.innerHTML = '<p class="muted">Carregando…</p>';
+  try {
+    const list = await fetchRuns(apiUrl(), onlineMode, boardFilter as BoardStart, onlineMap);
+    if (req !== onlineReq) return;
+    if (!list.length) {
+      body.innerHTML = '<p class="muted">Nenhuma partida nesta categoria ainda.</p>';
+      return;
+    }
+    const custom = boardFilter === 'custom';
+    body.innerHTML = `<table><thead><tr><th>#</th><th>Jogador</th><th class="num">Rodada</th>${custom ? '<th class="num">Início</th>' : ''}<th class="num">Abates</th><th class="num">Cabeça</th><th>Data</th><th></th></tr></thead><tbody>${list
+      .map((r, i) => `<tr><td>${i + 1}</td><td>${esc(r.name)}${r.mode === 'coop' ? ` <span class="muted">(${r.players})</span>` : ''}</td><td class="num">${r.round}</td>${custom ? `<td class="num">${r.startRound}</td>` : ''}<td class="num">${fmt(r.kills)}</td><td class="num">${fmt(r.headshots)}</td><td>${r.date.split('-').reverse().join('/')}</td><td>${r.verified ? '<span class="ok" title="Conferida pelo servidor">✓</span>' : ''}</td></tr>`)
+      .join('')}</tbody></table>`;
+  } catch (err) {
+    if (req === onlineReq) body.innerHTML = `<p class="muted">${esc((err as Error).message)} Confira o endereço do servidor na tela de co-op.</p>`;
+  }
+}
+
 function renderBoard() {
   const body = $('board-body');
+  if (boardTab === 'online') {
+    renderOnline();
+    return;
+  }
   if (boardTab === 'runs') {
     const list = runs().filter((r) => (boardFilter === 'zero' ? r.startRound === 1 : r.startRound > 1));
     if (!list.length) {
@@ -339,7 +432,7 @@ function renderLobby(code: string, hostId: string, players: LobbyPlayer[], start
 
 $('btn-create').addEventListener('click', async () => {
   const c = await connect();
-  c?.create(playerName(), playerLevel(), prefs.startRound, prefs.mapId);
+  c?.create(playerName(), playerLevel(), prefs.startRound, prefs.mapId, getAccount()?.token);
 });
 $('btn-join').addEventListener('click', async () => {
   const code = $<HTMLInputElement>('in-code').value.trim().toUpperCase();
@@ -348,7 +441,7 @@ $('btn-join').addEventListener('click', async () => {
     return;
   }
   const c = await connect();
-  c?.join(code, playerName(), playerLevel());
+  c?.join(code, playerName(), playerLevel(), getAccount()?.token);
 });
 $('btn-start').addEventListener('click', () => net?.start());
 $('lobby-round').addEventListener('input', () => {

@@ -181,8 +181,9 @@ export interface LobbyPlayer {
 
 export type ClientMsg =
   | PlayerInput
-  | { t: 'create'; name: string; level: number; startRound: number; mapId: string }
-  | { t: 'join'; code: string; name: string; level: number }
+  // token = conta do placar online (opcional): o servidor registra a partida de co-op no nome dela
+  | { t: 'create'; name: string; level: number; startRound: number; mapId: string; token?: string }
+  | { t: 'join'; code: string; name: string; level: number; token?: string }
   | { t: 'config'; startRound: number; mapId: string }
   | { t: 'start' }
   | { t: 'ping'; n: number };

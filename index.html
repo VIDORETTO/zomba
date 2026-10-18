@@ -84,13 +84,22 @@
           <div class="tabs" id="board-tabs">
             <button data-tab="runs" class="on">Recordes</button>
             <button data-tab="players">Jogadores</button>
+            <button data-tab="online">Online</button>
+          </div>
+          <div class="tabs small hidden" id="board-online-filter">
+            <button data-mode="solo" class="on">Solo</button>
+            <button data-mode="coop">Co-op</button>
+            <span class="gap"></span>
+            <button data-omap="cidade" class="on">Cidade</button>
+            <button data-omap="rota">Rota</button>
           </div>
           <div class="tabs small" id="board-filter">
             <button data-filter="zero" class="on">Desde a rodada 1</button>
             <button data-filter="custom">Rodada inicial escolhida</button>
           </div>
+          <div id="board-account" class="board-account hidden"></div>
           <div id="board-body" class="board-body"></div>
-          <p class="muted">Placar deste computador. O placar online chega quando o servidor estiver na internet.</p>
+          <p class="muted" id="board-note">Placar deste computador.</p>
           <button class="btn ghost" data-back>Voltar</button>
         </div>
 

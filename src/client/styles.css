@@ -467,6 +467,13 @@ input:focus { border-color: var(--blood-bright); }
 .tabs button.on { background: var(--blood); border-color: #c4241b; }
 .tabs.small button { padding: 5px; font-size: 12px; }
 .board-body { max-height: min(52vh, 420px); overflow: auto; }
+.tabs .gap { flex: 0 0 12px; }
+.board-account { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 8px 10px; border: 1px solid var(--line); border-radius: 3px; background: rgba(255, 255, 255, 0.03); font-size: 13px; }
+.board-account input { flex: 1 1 120px; min-width: 0; padding: 6px 8px; background: rgba(0, 0, 0, 0.35); border: 1px solid var(--line); border-radius: 3px; color: var(--paper); font: 13px var(--sans); }
+.board-account .btn { padding: 6px 12px; font-size: 13px; }
+.board-account .msg { flex-basis: 100%; color: var(--muted); }
+.board-account .msg.bad { color: #ff8a7a; }
+.board-body .ok { color: #8fd88a; font-size: 12px; }
 .board-body table { width: 100%; border-collapse: collapse; font-size: 13px; text-align: left; }
 .board-body th { position: sticky; top: 0; background: #1a120e; color: var(--muted); font-weight: 600; padding: 6px; border-bottom: 1px solid var(--line); }
 .board-body td { padding: 6px; border-bottom: 1px solid var(--line); vertical-align: middle; }

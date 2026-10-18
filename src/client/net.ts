@@ -134,12 +134,13 @@ export class NetClient implements Transport {
     }
   }
 
-  create(name: string, level: number, startRound: number, mapId: string) {
-    this.raw({ t: 'create', name, level, startRound, mapId });
+  // token: conta do placar online (o servidor registra a partida de co-op nela)
+  create(name: string, level: number, startRound: number, mapId: string, token?: string) {
+    this.raw({ t: 'create', name, level, startRound, mapId, token });
   }
 
-  join(code: string, name: string, level: number) {
-    this.raw({ t: 'join', code, name, level });
+  join(code: string, name: string, level: number, token?: string) {
+    this.raw({ t: 'join', code, name, level, token });
   }
 
   config(startRound: number, mapId: string) {

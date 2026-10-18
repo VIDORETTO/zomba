@@ -1,9 +1,11 @@
 import { createReadStream, existsSync, statSync } from 'node:fs';
-import { createServer } from 'node:http';
+import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import { extname, join, normalize, resolve } from 'node:path';
 import { WebSocket, WebSocketServer } from 'ws';
 import { MAX_PLAYERS, NET_PORT, TICK_DT, TICK_RATE } from '../shared/constants';
-import { getMap, isMapId } from '../shared/map';
+import { MAPS, getMap, isMapId } from '../shared/map';
+import { BOARD, checkRun } from '../shared/board';
+import { Board } from './board';
 import type { ClientMsg, ServerMsg } from '../shared/protocol';
 import { GameSim } from '../shared/sim';
 
@@ -14,6 +16,8 @@ interface Client {
   slot: number;
   level: number;
   room: Room | null;
+  // conta do placar online (nome), se o jogador entrou nela
+  account: string | null;
 }
 
 interface Room {
@@ -25,12 +29,122 @@ interface Room {
   endAt: number;
   startRound: number;
   mapId: string;
+  startedAt: number;
+  recorded: boolean;
 }
 
 const PORT = Number(process.env.PORT ?? NET_PORT);
 const DIST = resolve(process.cwd(), 'dist');
 const rooms = new Map<string, Room>();
 let nextId = 1;
+// placar online: arquivo na pasta data/ (ou na indicada em ZOMBA_DATA)
+const board = new Board(process.env.ZOMBA_DATA ?? resolve(process.cwd(), 'data'));
+for (const sig of ['SIGINT', 'SIGTERM'] as const) {
+  process.on(sig, () => {
+    board.flush();
+    process.exit(0);
+  });
+}
+const mapIds = MAPS.map((m) => m.id);
+
+// ---------- placar online (HTTP) ----------
+// POST /api/conta {name, pass}: entra (ou cria a conta) e devolve o token
+// POST /api/partida {token, run}: guarda uma partida solo
+// GET /api/placar?modo=solo|coop&inicio=zero|custom&mapa=cidade|rota e GET /api/jogadores
+const posts = new Map<string, number[]>();
+function limited(ip: string) {
+  const now = Date.now();
+  const list = (posts.get(ip) ?? []).filter((t) => now - t < 60000);
+  list.push(now);
+  posts.set(ip, list);
+  return list.length > BOARD.ratePerMinute;
+}
+
+function reply(res: ServerResponse, status: number, body: unknown) {
+  res.writeHead(status, {
+    'content-type': 'application/json; charset=utf-8',
+    'access-control-allow-origin': '*',
+    'access-control-allow-headers': 'content-type',
+    'access-control-allow-methods': 'GET, POST, OPTIONS',
+  });
+  res.end(JSON.stringify(body));
+}
+
+function readBody(req: IncomingMessage): Promise<unknown> {
+  return new Promise((ok, fail) => {
+    let size = 0;
+    const chunks: Buffer[] = [];
+    req.on('data', (c: Buffer) => {
+      size += c.length;
+      if (size > 4096) {
+        fail(new Error('grande demais'));
+        req.destroy();
+      } else chunks.push(c);
+    });
+    req.on('end', () => {
+      try {
+        ok(JSON.parse(Buffer.concat(chunks).toString('utf8') || '{}'));
+      } catch {
+        fail(new Error('JSON inválido'));
+      }
+    });
+  });
+}
+
+async function api(req: IncomingMessage, res: ServerResponse, path: string, query: URLSearchParams) {
+  if (req.method === 'OPTIONS') return reply(res, 204, {});
+  if (req.method === 'GET' && path === '/api/placar') {
+    const mode = query.get('modo') === 'coop' ? 'coop' : 'solo';
+    const start = query.get('inicio') === 'custom' ? 'custom' : 'zero';
+    const map = isMapId(query.get('mapa')) ? query.get('mapa')! : 'cidade';
+    return reply(res, 200, { runs: board.top(mode, start, map) });
+  }
+  if (req.method === 'GET' && path === '/api/jogadores') return reply(res, 200, { players: board.players() });
+  if (req.method !== 'POST') return reply(res, 404, { error: 'Não encontrado.' });
+  if (limited(req.socket.remoteAddress ?? '?')) return reply(res, 429, { error: 'Muitos envios. Espere um minuto.' });
+  let body: Record<string, unknown>;
+  try {
+    body = (await readBody(req)) as Record<string, unknown>;
+  } catch (err) {
+    return reply(res, 400, { error: (err as Error).message });
+  }
+  if (path === '/api/conta') {
+    const r = board.login(body.name, body.pass);
+    return 'error' in r ? reply(res, 401, r) : reply(res, 200, r);
+  }
+  if (path === '/api/partida') {
+    const name = board.nameOf(body.token);
+    if (!name) return reply(res, 401, { error: 'Entre na sua conta de novo.' });
+    const run = checkRun(body.run as never, mapIds);
+    if (typeof run === 'string') return reply(res, 400, { error: `Partida recusada: ${run}.` });
+    // o co-op o próprio servidor registra; pelo navegador só entra partida solo
+    if (run.mode !== 'solo') return reply(res, 400, { error: 'Partidas de co-op são registradas pelo servidor.' });
+    const best = board.addRun(name, run, false);
+    return reply(res, 200, { ok: true, best });
+  }
+  return reply(res, 404, { error: 'Não encontrado.' });
+}
+
+// fim de partida de co-op: grava no placar de quem entrou na conta (partida verificada pelo servidor)
+function recordRoom(room: Room, sim: GameSim) {
+  if (room.recorded) return;
+  room.recorded = true;
+  const seconds = Math.round((Date.now() - room.startedAt) / 1000);
+  for (const c of room.clients.values()) {
+    if (!c.account) continue;
+    const p = sim.players.get(c.id);
+    if (!p) continue;
+    const run = checkRun({
+      mode: 'coop', map: room.mapId, round: sim.round, startRound: room.startRound, players: sim.players.size,
+      kills: p.kills, headshots: p.headshots, downs: p.downs, revives: p.revives, seconds,
+    }, mapIds);
+    if (typeof run === 'string') {
+      console.log(`[sala ${room.code}] partida de ${c.account} fora do placar: ${run}`);
+      continue;
+    }
+    board.addRun(c.account, run, true);
+  }
+}
 
 // Em produção (npm run build), o próprio servidor entrega o jogo pela mesma porta.
 const MIME: Record<string, string> = {
@@ -47,6 +161,14 @@ const MIME: Record<string, string> = {
 };
 
 const http = createServer((req, res) => {
+  const [rawPath, rawQuery] = (req.url ?? '/').split('?');
+  if (rawPath.startsWith('/api/')) {
+    api(req, res, rawPath, new URLSearchParams(rawQuery ?? '')).catch((err) => {
+      console.error('[placar] erro:', err);
+      if (!res.headersSent) reply(res, 500, { error: 'Erro no servidor.' });
+    });
+    return;
+  }
   if (!existsSync(DIST)) {
     res.writeHead(200, { 'content-type': 'text/plain; charset=utf-8' });
     res.end('Servidor Zomba rodando. Em desenvolvimento, abra o jogo pelo Vite (porta 5173).');
@@ -133,6 +255,7 @@ function startRoom(room: Room) {
   }
   sim.start();
   room.sim = sim;
+  room.startedAt = Date.now();
   console.log(`[sala ${room.code}] partida iniciada com ${room.clients.size} jogador(es)`);
   room.timer = setInterval(() => {
     // um erro numa sala não pode derrubar o servidor (e as outras salas)
@@ -145,6 +268,7 @@ function startRoom(room: Room) {
     if (list.length) broadcast(room, { t: 'ev', list });
     broadcast(room, { t: 'snap', s: sim.snapshot() });
     if (sim.state === 'gameover') {
+      recordRoom(room, sim);
       if (!room.endAt) room.endAt = Date.now() + 20000;
       else if (Date.now() > room.endAt) closeRoom(room);
     }
@@ -156,7 +280,7 @@ const cleanRound = (n: unknown) => Math.max(1, Math.min(100, Math.floor(Number(n
 const cleanName = (n: unknown) => String(n ?? '').replace(/[^\p{L}\p{N} _-]/gu, '').trim().slice(0, 16) || 'Jogador';
 
 wss.on('connection', (ws) => {
-  const c: Client = { id: `p${nextId++}`, ws, name: 'Jogador', slot: 0, level: 1, room: null };
+  const c: Client = { id: `p${nextId++}`, ws, name: 'Jogador', slot: 0, level: 1, room: null, account: null };
   send(c, { t: 'welcome', id: c.id });
 
   ws.on('message', (raw) => {
@@ -174,9 +298,10 @@ wss.on('connection', (ws) => {
         leave(c);
         c.name = cleanName(msg.name);
         c.level = cleanLevel(msg.level);
+        c.account = board.nameOf(msg.token);
         c.slot = 0;
         const room: Room = {
-          code: newCode(), hostId: c.id, clients: new Map([[c.id, c]]), sim: null, timer: null, endAt: 0,
+          code: newCode(), hostId: c.id, clients: new Map([[c.id, c]]), sim: null, timer: null, endAt: 0, startedAt: 0, recorded: false,
           startRound: cleanRound(msg.startRound),
           mapId: isMapId(msg.mapId) ? msg.mapId : 'cidade',
         };
@@ -195,6 +320,7 @@ wss.on('connection', (ws) => {
         leave(c);
         c.name = cleanName(msg.name);
         c.level = cleanLevel(msg.level);
+        c.account = board.nameOf(msg.token);
         c.slot = slot;
         c.room = room;
         room.clients.set(c.id, c);

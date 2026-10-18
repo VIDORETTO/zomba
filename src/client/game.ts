@@ -3,6 +3,7 @@ import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
 import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
+import type { RunInput } from '../shared/board';
 import { BISPO, BLEEDOUT_TIME, PLAYER, PLAYER_COLORS, REVIVE_RANGE, TICK_DT } from '../shared/constants';
 import type { MapDef } from '../shared/map/types';
 import type { GameEvent, NetPlayer, Snapshot } from '../shared/protocol';
@@ -56,6 +57,8 @@ export interface GameOptions {
   playerName: string;
   onSettings: (s: Settings) => void;
   onExit: () => void;
+  // placar online (só com conta): manda a partida e devolve a mensagem para a tela de fim de jogo
+  onlineRun?: (run: RunInput) => Promise<string>;
 }
 
 // ?autoplay em desenvolvimento: joga sem capturar o mouse (usado nos testes automáticos)
@@ -1645,6 +1648,7 @@ export class Game {
           <p class="survived">${players.length > 1 ? 'Vocês sobreviveram' : 'Você sobreviveu'} ${round} rodada${round === 1 ? '' : 's'}</p>
           ${result ? `<div class="levelup"><span class="emb"></span><div><div class="xp-gain">+${result.xp.toLocaleString('pt-BR')} XP</div>${result.after.level > result.before.level ? `<div class="new-level">Novo nível ${result.after.level}: ${rankOf(result.after.level).name}</div>` : `<div class="muted">Nível ${result.after.level} · faltam ${(result.after.need - result.after.into).toLocaleString('pt-BR')} XP</div>`}${result.record ? '<div class="new-level">Novo recorde pessoal!</div>' : ''}</div></div>` : ''}
           <table><thead><tr><th>Nome</th><th>Pontos</th><th>Abates</th><th>Na cabeça</th><th>Quedas</th><th>Reanimações</th></tr></thead><tbody>${rows}</tbody></table>
+          <p class="muted online-note"></p>
           <button class="btn primary" data-act="exit">Voltar ao menu</button>
         </div>`);
       if (result) {
@@ -1653,6 +1657,16 @@ export class Game {
         animateEmblem(c, result.after.level);
       }
       ov.querySelector('[data-act="exit"]')!.addEventListener('click', () => this.o.onExit());
+      // placar online
+      const note = ov.querySelector<HTMLElement>('.online-note')!;
+      if (me && this.o.onlineRun) {
+        note.textContent = 'Enviando ao placar online…';
+        this.o.onlineRun({
+          mode: this.transport.solo ? 'solo' : 'coop', map: this.o.map.id, round: Math.max(round, startRound), startRound,
+          players: this.buffer.latest?.s.players.length ?? 1, kills: me.kills, headshots: me.headshots,
+          downs: me.downs, revives: me.revives, seconds: Math.round(this.t),
+        }).then((m) => (note.textContent = m), (err: Error) => (note.textContent = `Placar online: ${err.message}`));
+      }
     }, 2200);
   }
 
