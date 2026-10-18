@@ -1,0 +1,1527 @@
+import * as THREE from 'three';
+import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
+import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
+import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
+import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
+import { PLAYER, PLAYER_COLORS, REVIVE_RANGE, TICK_DT } from '../shared/constants';
+import type { MapDef } from '../shared/map/types';
+import type { GameEvent, NetPlayer, Snapshot } from '../shared/protocol';
+import { clamp, lerp } from '../shared/rng';
+import { MAX_PERKS, PERKS, PERK_FX, SOLO_SELF_REVIVES, perkPrice, type PerkId } from '../shared/perks';
+import { BOX, FORGE, GRENADE, KNIFE, SIGHTS, WEAPONS, ammoPrice, baseId, pelletOffsets, sightFits, upgradeId, wallAmmoPrice, type HitPart } from '../shared/weapons';
+import type { Interactable } from '../shared/map/types';
+import { World } from '../shared/world';
+import type { AudioEngine, Surface } from './audio';
+import { PlayerController } from './controller';
+import { FX } from './fx';
+import { Hud, type Marker } from './hud';
+import { Input } from './input';
+import { setSimpleMaterials } from './humanoid';
+import { FOG_DENSITY, buildMapView, type MapView } from './mapView';
+import { Barricades } from './barricades';
+import { BoxView } from './boxView';
+import { ForgeView } from './forgeView';
+import { PowerupView, announce } from './powerupView';
+import { POWERUPS } from '../shared/powerups';
+import { BANK, rankOf } from '../shared/progress';
+import { bankBalance, bankChange, canDeposit, recordMatch } from './profile';
+import { emblemCanvas, animateEmblem } from './emblems';
+import { ENTRY_BOARDS, entryPoints } from '../shared/map/types';
+import { LOWER, QUALITY, QUALITY_LABEL, initialLevel, type GpuInfo, type QualityConfig, type QualitySetting } from './quality';
+import type { Transport } from './net';
+import { RemotePlayers } from './players';
+import { SnapBuffer } from './snapbuffer';
+import { particleTexture, type TexSet } from './textures';
+import { WeaponView } from './weapon';
+import { ZombieManager } from './zombies';
+import { BusView } from './busView';
+import { standingIn } from '../shared/busBody';
+
+export interface Settings {
+  sensitivity: number;
+  volume: number;
+  fov: number;
+  quality: QualitySetting;
+}
+
+export interface GameOptions {
+  renderer: THREE.WebGLRenderer;
+  container: HTMLElement;
+  transport: Transport;
+  map: MapDef;
+  tex: TexSet;
+  audio: AudioEngine;
+  settings: Settings;
+  gpu: GpuInfo;
+  playerName: string;
+  onSettings: (s: Settings) => void;
+  onExit: () => void;
+}
+
+// ?autoplay em desenvolvimento: joga sem capturar o mouse (usado nos testes automáticos)
+const AUTOPLAY = import.meta.env.DEV && new URLSearchParams(location.search).has('autoplay');
+
+const WEEKDAYS =['Domingo', 'Segunda-feira', 'Terça-feira', 'Quarta-feira', 'Quinta-feira', 'Sexta-feira', 'Sábado'];
+
+export class Game {
+  private readonly renderer: THREE.WebGLRenderer;
+  private readonly scene = new THREE.Scene();
+  private readonly camera = new THREE.PerspectiveCamera(75, 1, 0.05, 500);
+  private readonly composer: EffectComposer;
+  private readonly world: World;
+  private mapView: MapView;
+  private readonly fx: FX;
+  private readonly barricades: Barricades;
+  private readonly boxView: BoxView;
+  private readonly powerupView: PowerupView;
+  private forgeView!: ForgeView;
+  // mapa Rota: ônibus, parada onde o jogador está e névoa da estrada
+  private busView: BusView | null = null;
+  private zone: string | null | undefined = undefined;
+  private fogK = 0;
+  private lastPower = false;
+  private anvilT = 0;
+  // arma recém-forjada: mostra na mão assim que ela estiver na mão
+  private inspectWeapon: string | null = null;
+  // abates por arma nesta partida (para a arma favorita do placar)
+  private readonly weaponKills: Record<string, number> = {};
+  private repairEntry: number | null = null;
+  private shadowRefreshT = 0;
+  private pendingSwitch: string | null = null;
+  private readonly nadeMeshes = new Map<number, THREE.Mesh>();
+  private readonly nadeGeo = new THREE.SphereGeometry(0.06, 10, 8);
+  private readonly nadeMat = new THREE.MeshStandardMaterial({ color: 0x3d4a30, roughness: 0.7 });
+  private readonly rayMat = new THREE.MeshBasicMaterial({ color: new THREE.Color(0.8, 4, 1.2) });
+  private readonly rocketMat = new THREE.MeshStandardMaterial({ color: 0x4a5a30, roughness: 0.6, metalness: 0.3, emissive: new THREE.Color(0.3, 0.1, 0.02) });
+  private readonly boltMat = new THREE.MeshStandardMaterial({ color: 0xb03020, roughness: 0.5 });
+  private shake = 0;
+  // clima da rodada infernal (0..1, muda devagar) e clarão dos raios
+  private hellK = 0;
+  // último marcador de acerto de explosão
+  private blastMarkT = -1;
+  private boltFlash = 0;
+  private howlT = 5;
+  private q: QualityConfig;
+  private scale = 1;
+  private frameMs = 16;
+  private dynT = 0;
+  private slowT = 0;
+  private readonly zombies: ZombieManager;
+  private readonly players: RemotePlayers;
+  private readonly weapon: WeaponView;
+  private readonly pc: PlayerController;
+  private readonly input: Input;
+  private readonly hud: Hud;
+  private readonly buffer = new SnapBuffer();
+  private readonly raycaster = new THREE.Raycaster();
+  private readonly muzzleLight = new THREE.PointLight(0xffa040, 0, 9, 2);
+  private readonly transport: Transport;
+  private readonly audio: AudioEngine;
+  private readonly settings: Settings;
+  private me: NetPlayer | null = null;
+  private spawned = false;
+  private raf = 0;
+  private last = 0;
+  private t = 0;
+  private sendT = 0;
+  private flashT = 0;
+  private blockSprintT = 0;
+  private reviveTarget: string | null = null;
+  private over = false;
+  private disposed = false;
+  private fpsAcc = 0;
+  private fpsN = 0;
+  private fps = 0;
+  private buyPending = 0;
+  private readonly jingleT = new Map<string, number>();
+  private infoT = 0;
+
+  constructor(private readonly o: GameOptions) {
+    this.renderer = o.renderer;
+    this.transport = o.transport;
+    this.audio = o.audio;
+    this.settings = { ...o.settings };
+    this.world = new World(o.map);
+
+    this.q = QUALITY[initialLevel(this.settings.quality, o.gpu)];
+    this.prepareRenderer();
+    this.mapView = buildMapView(o.map, o.tex, this.scene, this.q);
+    this.fx = new FX(this.scene, particleTexture(), this.q.particles);
+    this.barricades = new Barricades(this.scene, o.map.entries, o.tex, this.q.simpleMaterials);
+    this.boxView = new BoxView(this.scene, o.map.boxSpots, o.tex);
+    this.powerupView = new PowerupView(this.scene);
+    this.fx.setWorld(o.map.fires, o.map.lava);
+    this.zombies = new ZombieManager(this.scene, o.tex, this.fx, this.audio);
+    // alvo da corrente do Carrasco: o peito do jogador
+    this.zombies.locate = (pid) => (pid === this.transport.localId ? new THREE.Vector3(this.pc.pos.x, this.pc.pos.y + 1.1, this.pc.pos.z) : this.playerPos(pid));
+    this.players = new RemotePlayers(this.scene, o.tex, this.transport.localId);
+    this.scene.add(this.muzzleLight);
+
+    this.composer = new EffectComposer(this.renderer);
+    this.composer.addPass(new RenderPass(this.scene, this.camera));
+    this.composer.addPass(new UnrealBloomPass(new THREE.Vector2(512, 512), 0.55, 0.45, 0.82));
+    this.composer.addPass(new OutputPass());
+
+    this.pc = new PlayerController(this.world);
+    const [sx, sz] = o.map.playerSpawns[0];
+    this.pc.spawn(sx, sz, sz > 0 ? 0 : Math.PI);
+    this.pc.onStep = () => this.audio.footstep(this.surface(), this.pc.sprinting ? 1.3 : 1);
+    this.pc.onLand = (v) => {
+      if (v > 4) this.audio.land();
+    };
+
+    this.weapon = new WeaponView({
+      fire: (spread) => this.fire(spread),
+      throwGrenade: () => this.throwGrenade(),
+      knife: () => this.knife(),
+      sound: (s) => {
+        if (s === 'dry') this.audio.dryFire();
+        else if (s === 'magOut') this.audio.magOut();
+        else if (s === 'magIn') this.audio.magIn();
+        else if (s === 'slide') this.audio.slide();
+        else if (s === 'gulp') this.audio.gulp();
+        else if (s === 'shell') this.audio.shell();
+        else if (s === 'switch') this.audio.weaponSwitch();
+        else this.audio.knifeSwing();
+      },
+    });
+
+    this.forgeView = new ForgeView(this.scene, o.map, this.fx, this.weapon.camoMats);
+    if (o.map.bus) this.busView = new BusView(this.scene);
+    this.input = new Input(this.renderer.domElement, AUTOPLAY);
+    this.input.onUnlock = () => this.onUnlock();
+    this.hud = new Hud(o.container);
+    this.renderer.domElement.addEventListener('click', this.onCanvasClick);
+
+    this.transport.onSnapshot = (s) => this.onSnapshot(s);
+    this.transport.onEvents = (l) => this.onEvents(l);
+
+    window.addEventListener('resize', this.resize);
+    this.resize();
+  }
+
+  start() {
+    this.audio.startAmbience();
+    const d = new Date();
+    const hh = String(d.getHours()).padStart(2, '0');
+    const mm = String(d.getMinutes()).padStart(2, '0');
+    this.hud.showIntro([this.o.map.name.toUpperCase(), 'Algum lugar no interior', `${WEEKDAYS[d.getDay()]}, ${hh}:${mm}`]);
+    this.input.lock();
+    this.last = performance.now();
+    this.raf = requestAnimationFrame(this.frame);
+  }
+
+  // Configurações do renderizador que dependem da qualidade.
+  private prepareRenderer() {
+    setSimpleMaterials(this.q.simpleMaterials);
+    this.renderer.shadowMap.enabled = this.q.shadows;
+    // o cenário não se mexe: a sombra é calculada uma vez e reaproveitada
+    this.renderer.shadowMap.autoUpdate = false;
+    this.renderer.shadowMap.needsUpdate = true;
+  }
+
+  private setQuality(level: QualitySetting | 'downgrade') {
+    let lv = this.q.level;
+    if (level === 'downgrade') lv = LOWER[lv] ?? lv;
+    else {
+      this.settings.quality = level;
+      this.o.onSettings({ ...this.settings });
+      lv = initialLevel(level, this.o.gpu);
+    }
+    if (lv === this.q.level) return;
+    this.q = QUALITY[lv];
+    this.prepareRenderer();
+    this.mapView.dispose();
+    this.mapView = buildMapView(this.o.map, this.o.tex, this.scene, this.q);
+    this.mapView.setDoors([...this.world.openDoors]);
+    this.fx.density = this.q.particles;
+    this.scale = 1;
+    this.slowT = 0;
+    this.resize();
+  }
+
+  private resize = () => {
+    const w = window.innerWidth;
+    const h = window.innerHeight;
+    const pr = Math.min(window.devicePixelRatio || 1, this.q.maxPixelRatio) * this.scale;
+    this.renderer.setPixelRatio(pr);
+    this.composer.setPixelRatio(pr);
+    this.renderer.setSize(w, h);
+    this.composer.setSize(w, h);
+    this.camera.aspect = w / h;
+    this.camera.updateProjectionMatrix();
+    this.weapon.resize(w / h);
+    this.fx.resize(h * this.renderer.getPixelRatio(), this.camera.fov);
+  };
+
+  private onCanvasClick = () => {
+    if (!this.input.locked && !this.hud.overlayOpen && !this.over) this.input.lock();
+  };
+
+  private get active() {
+    return (this.input.locked || AUTOPLAY) && !this.over && !this.hud.overlayOpen;
+  }
+
+  // Só em desenvolvimento: posiciona a câmera para testes automáticos.
+  debugView(x: number, z: number, yaw: number, pitch = 0) {
+    this.pc.spawn(x, z, yaw);
+    this.pc.pitch = pitch;
+  }
+
+  debugShoot() {
+    this.fire(this.weapon.spread);
+  }
+
+  lookAtNearestZombie(height = 1.2) {
+    let best: { x: number; y: number; z: number } | null = null;
+    let bd = Infinity;
+    for (const z of this.zombies.bodies()) {
+      const d = Math.hypot(z.x - this.pc.pos.x, z.z - this.pc.pos.z);
+      if (d < bd) {
+        bd = d;
+        best = z;
+      }
+    }
+    if (!best) return;
+    const dx = best.x - this.pc.pos.x;
+    const dz = best.z - this.pc.pos.z;
+    this.pc.yaw = Math.atan2(-dx, -dz);
+    this.pc.pitch = Math.atan2(best.y + height - (this.pc.pos.y + this.pc.eyeHeight), bd);
+  }
+
+  // ---------- rede ----------
+
+  private onSnapshot(s: Snapshot) {
+    this.buffer.push(s, performance.now());
+    const me = s.players.find((p) => p.id === this.transport.localId) ?? null;
+    if (me && !this.spawned) {
+      this.spawned = true;
+      this.pc.spawn(me.x, me.z, me.z > 0 ? 0 : Math.PI);
+    }
+    this.me = me;
+    // portas abertas (pela simulação): libera a colisão local e afunda o modelo
+    const open = new Set(s.doors ?? []);
+    for (const id of open) {
+      if (this.world.openDoors.has(id)) continue;
+      this.world.openDoors.add(id);
+      if (!id.startsWith('box-spot-')) {
+        this.mapView.setDoors([id]);
+        this.renderer.shadowMap.needsUpdate = true;
+        this.shadowRefreshT = 1.4;
+      }
+    }
+    for (const id of [...this.world.openDoors]) if (!open.has(id)) this.world.openDoors.delete(id);
+    this.hud.setRound(s.round);
+    this.hud.setScores(s.players, this.transport.localId);
+    if (me) {
+      this.weapon.setInventory(me.weapons);
+      this.weapon.setSights(me.sights ?? {});
+      this.weapon.heavyKnife = me.heavyKnife;
+      if (this.pendingSwitch && me.weapons.includes(this.pendingSwitch)) {
+        this.weapon.switchTo(this.pendingSwitch);
+        this.pendingSwitch = null;
+      }
+    }
+  }
+
+  private playerPos(pid: string): THREE.Vector3 | null {
+    if (pid === this.transport.localId) return null;
+    const p = this.players.positions().find((x) => x.id === pid);
+    return p ? new THREE.Vector3(p.x, p.y + 1.4, p.z) : null;
+  }
+
+  private onEvents(list: GameEvent[]) {
+    const local = this.transport.localId;
+    for (const e of list) {
+      switch (e.e) {
+        case 'points':
+          if (e.pid === local) this.hud.popPoints(e.delta, this.me?.slot ?? 0);
+          break;
+        case 'zhit':
+          // explosões e projéteis: o acerto só se sabe agora (um marcador por instante, mesmo pegando vários)
+          if (e.pid === local && e.blast) {
+            if (this.t - this.blastMarkT > 0.08) {
+              this.blastMarkT = this.t;
+              this.hud.hitmarker(false);
+              this.audio.hitmarker(false);
+            }
+          }
+          if (e.pid !== local || e.blast) {
+            const v = this.zombies.view(e.zid);
+            if (v) {
+              const p = v.h.root.position.clone();
+              const dog = v.kind === 3;
+              p.y += e.part === 'head' ? (dog ? 0.75 : 1.65) : dog ? 0.6 : 1.2;
+              this.fx.blood(p, new THREE.Vector3(0, 0.3, 0), 0.7);
+            }
+          }
+          break;
+        case 'zkill':
+          this.zombies.onEvent(e);
+          if (e.pid === local) {
+            const w = this.weapon.def.id;
+            this.weaponKills[w] = (this.weaponKills[w] ?? 0) + 1;
+            this.hud.hitmarker(true);
+            this.audio.hitmarker(e.part === 'head');
+          }
+          break;
+        case 'zattack':
+        case 'zrise':
+          this.zombies.onEvent(e);
+          break;
+        case 'phurt':
+          if (e.pid === local) {
+            this.audio.hurt();
+            let angle: number | null = null;
+            if (!e.lava) {
+              const dx = e.fromX - this.pc.pos.x;
+              const dz = e.fromZ - this.pc.pos.z;
+              const f = -Math.sin(this.pc.yaw) * dx - Math.cos(this.pc.yaw) * dz;
+              const r = Math.cos(this.pc.yaw) * dx - Math.sin(this.pc.yaw) * dz;
+              angle = Math.atan2(r, f);
+              this.pc.pitch += 0.03;
+              this.pc.yaw += (Math.random() - 0.5) * 0.05;
+            }
+            this.hud.hurtFrom(angle);
+          }
+          break;
+        case 'pdown':
+          if (e.pid === local) {
+            this.weapon.raise();
+            this.reviveTarget = null;
+          } else {
+            this.hud.notify(`${this.nameOf(e.pid)} caiu! Reanime com <b>F</b>.`);
+          }
+          break;
+        case 'previve':
+          if (e.pid === local) this.weapon.raise();
+          else if (e.by === local) this.hud.notify(`Você reanimou ${this.nameOf(e.pid)}.`);
+          break;
+        case 'pdead':
+          if (e.pid === local) this.hud.notify('Você sangrou até a morte. Volta na próxima rodada.');
+          else this.hud.notify(`${this.nameOf(e.pid)} morreu.`);
+          break;
+        case 'prespawn':
+          if (e.pid === local) {
+            this.pc.spawn(e.x, e.z, e.z > 0 ? 0 : Math.PI);
+            this.weapon.reset();
+          }
+          break;
+        case 'shot': {
+          const p = this.playerPos(e.pid);
+          const wd = WEAPONS[e.weapon];
+          if (p && wd?.projectile === 'rocket') this.audio.rocketLaunch(p);
+          else if (p && wd?.projectile === 'blade') this.audio.bladeLaunch(p);
+          else if (p) this.audio.gunshot(p, wd?.sound ?? wd?.cls ?? 'pistol');
+          break;
+        }
+        case 'roundStart':
+          this.hud.setRound(e.round);
+          if (e.hell) {
+            this.audio.hellStart();
+            this.hud.showBanner('RODADA INFERNAL');
+          } else {
+            this.audio.roundStart();
+          }
+          break;
+        case 'roundEnd':
+          this.hud.roundEnded();
+          this.audio.roundEnd();
+          if (e.hell) this.audio.hellEnd();
+          break;
+        case 'boss': {
+          this.zombies.onEvent(e);
+          const p = new THREE.Vector3(e.x, 0.5, e.z);
+          const d = p.distanceTo(this.pc.pos);
+          if (e.phase === 'spawn') {
+            this.audio.bossBell();
+            this.hud.showBanner('O CARRASCO');
+            this.hud.notify('<b>O Carrasco</b> chegou. Quebre o capacete e mire na cabeça.');
+            this.shake = Math.max(this.shake, 1);
+            for (let k = 0; k < 4; k++) this.fx.dirt(e.x + (Math.random() - 0.5) * 2, e.z + (Math.random() - 0.5) * 2);
+            this.fx.explosion(p);
+          } else if (e.phase === 'armor') {
+            this.hud.notify('O capacete do <b>Carrasco</b> caiu: tiro na cabeça vale o triplo!');
+          } else if (e.phase === 'slam') {
+            this.audio.bossSlam(p);
+            this.fx.explosion(p.setY(0.1));
+            for (let k = 0; k < 6; k++) {
+              const a = (k / 6) * Math.PI * 2;
+              this.fx.dirt(e.x + Math.cos(a) * 2.5, e.z + Math.sin(a) * 2.5);
+            }
+            if (d < 16) this.shake = Math.max(this.shake, 1.2 * (1 - d / 16));
+          } else if (e.phase === 'chain') {
+            const v = this.zombies.view(e.zid);
+            if (v) this.audio.chainThrow(v.h.root.position);
+          } else if (e.phase === 'charge') {
+            const v = this.zombies.view(e.zid);
+            if (v) this.audio.bossRoar(v.h.root.position, 1);
+          } else if (e.phase === 'wall') {
+            this.audio.bossSlam(p);
+            if (d < 14) this.shake = Math.max(this.shake, 0.8 * (1 - d / 14));
+          } else if (e.phase === 'death') {
+            this.fx.explosion(p);
+            this.hud.notify('<b>O Carrasco</b> caiu! +1000 para cada jogador.');
+            this.shake = Math.max(this.shake, 0.6);
+          }
+          break;
+        }
+        case 'bosspull':
+          if (e.pid === local) {
+            this.pc.pull(e.x, e.z, e.stop);
+            this.audio.chainHit();
+            this.shake = Math.max(this.shake, 0.7);
+          }
+          break;
+        case 'power':
+          this.audio.powerOn();
+          this.hud.notify(`${e.pid === local ? 'Você ligou' : `${this.nameOf(e.pid)} ligou`} a <b>energia</b>: bebidas acesas e o cofre da Forja aberto.`);
+          this.shake = Math.max(this.shake, 0.4);
+          break;
+        case 'bus': {
+          const bp = this.busView?.pose;
+          const at = bp ? new THREE.Vector3(bp.x, 1.5, bp.z) : this.pc.pos.clone();
+          const zn = this.o.map.zones?.find((z) => z.id === e.zone)?.name ?? '';
+          const near = this.zone === e.zone || (bp && Math.hypot(bp.x - this.pc.pos.x, bp.z - this.pc.pos.z) < 15);
+          if (e.phase === 'arrive') {
+            this.audio.busDoor(at);
+            if (near) this.hud.notify(`<b>Ônibus</b> na parada ${zn}: sai em 20 s.`);
+          } else if (e.phase === 'honk') {
+            this.audio.busHorn(at);
+            if (near) this.hud.notify('<b>Ônibus</b> saindo!');
+          } else {
+            this.audio.busDoor(at);
+          }
+          break;
+        }
+        case 'zvanish':
+        case 'runover':
+          this.zombies.onEvent(e);
+          break;
+        case 'dogspawn': {
+          const p = new THREE.Vector3(e.x, 0.5, e.z);
+          this.fx.lightning(e.x, e.z);
+          this.audio.lightning(p);
+          const d = p.distanceTo(this.pc.pos);
+          this.boltFlash = Math.max(this.boltFlash, clamp(1 - d / 45, 0.25, 1));
+          if (d < 12) this.shake = Math.max(this.shake, 0.5 * (1 - d / 12));
+          break;
+        }
+        case 'gameover':
+          this.gameOver(e.round);
+          break;
+        case 'pleave':
+          this.hud.notify(`${e.name} saiu da partida.`);
+          break;
+        case 'refill':
+          if (e.pid === local) {
+            this.buyPending = 0;
+            this.audio.buy();
+            if (e.weapon === this.weapon.def.id) this.weapon.startAction('refill', 1.5, () => this.weapon.refill(e.weapon));
+            else this.weapon.refill(e.weapon);
+          }
+          break;
+        case 'perk':
+          if (e.pid === local) {
+            this.buyPending = 0;
+            const d = PERKS[e.perk];
+            this.audio.buy();
+            this.weapon.startAction('drink', 2, () => {}, d.color);
+            this.hud.notify(`<b>${d.name}</b>: ${d.desc}.`);
+            const m = this.o.map.interactables.find((i) => i.perk === e.perk);
+            if (m) this.audio.perkJingle(new THREE.Vector3(m.use[0], 1.6, m.use[1]), Object.keys(PERKS).indexOf(e.perk));
+          }
+          break;
+        case 'deny':
+          if (e.pid === local) {
+            this.buyPending = 0;
+            this.audio.deny();
+          }
+          break;
+        case 'sight':
+          if (e.pid === local) {
+            this.buyPending = 0;
+            this.audio.buy();
+            this.weapon.startAction('refill', 1.2, () => {});
+            this.hud.notify(`<b>${SIGHTS[e.sight].name}</b> instalado: ${WEAPONS[e.weapon]?.name ?? e.weapon}.`);
+          }
+          break;
+        case 'door': {
+          const d = this.o.map.doors.find((x) => x.id === e.id);
+          for (const it of this.o.map.interactables) {
+            if (it.door !== e.id) continue;
+            const p = new THREE.Vector3(it.use[0], 0.5, it.use[1]);
+            this.audio.doorOpen(p);
+            for (let k = 0; k < 3; k++) this.fx.dirt(it.use[0] + (Math.random() - 0.5) * 2, it.use[1] + (Math.random() - 0.5) * 2);
+          }
+          if (e.pid === local) {
+            this.buyPending = 0;
+            this.audio.buy();
+          } else if (d) {
+            this.hud.notify(`${this.nameOf(e.pid)} abriu <b>${d.name}</b>.`);
+          }
+          break;
+        }
+        case 'weapon':
+          if (e.pid === local) {
+            this.buyPending = 0;
+            this.audio.buy();
+            this.pendingSwitch = e.weapon;
+            this.hud.notify(`<b>${WEAPONS[e.weapon]?.name ?? e.weapon}</b>${e.replaced ? ` no lugar de ${WEAPONS[e.replaced]?.name ?? e.replaced}` : ''}.`);
+          }
+          break;
+        case 'gear':
+          if (e.pid === local) {
+            this.buyPending = 0;
+            this.audio.buy();
+            this.hud.notify(e.item === 'knife' ? '<b>Faca pesada</b>: mata com um golpe até a rodada 4.' : '<b>Granadas</b> cheias.');
+          }
+          break;
+        case 'bank':
+          if (e.pid === local) {
+            this.buyPending = 0;
+            this.audio.buy();
+            bankChange(this.o.playerName, e.action === 'deposit' ? e.amount : -e.amount);
+            this.hud.notify(`${e.action === 'deposit' ? 'Depositou' : 'Sacou'} ${e.amount} pontos. Saldo no banco: <b>${bankBalance(this.o.playerName).toLocaleString('pt-BR')}</b>`);
+          }
+          break;
+        case 'forge': {
+          const fp = new THREE.Vector3(...this.o.map.forge.anvil);
+          if (e.pid === local) this.buyPending = 0;
+          if (e.phase === 'candle') this.audio.knifeSwing();
+          else if (e.phase === 'on') {
+            this.audio.forgeIgnite(fp);
+            this.hud.notify(this.o.map.forge.candles.length ? 'A <b>Forja</b> acendeu no cemitério.' : 'A <b>Forja</b> acendeu no cofre do banco, na Cidade.');
+          } else if (e.phase === 'start') {
+            // a arma entra na fornalha
+            const mouth = new THREE.Vector3(...this.o.map.forge.mouth);
+            this.fx.fireBurst(mouth);
+            this.fx.fireBurst(mouth.clone().setY(mouth.y + 0.3));
+            this.audio.forgeIgnite(fp);
+            if (e.pid === local) {
+              this.buyPending = 0;
+              this.audio.buy();
+            }
+          } else if (e.phase === 'ready') {
+            // pronta: coluna de fogo sobre a bigorna, clarão e tremor por perto
+            this.fx.forgeBurst(fp.clone().setY(fp.y + 0.4));
+            this.audio.forgeDone(fp);
+            const d = fp.distanceTo(this.pc.pos);
+            this.boltFlash = Math.max(this.boltFlash, clamp(1 - d / 25, 0, 0.6));
+            if (d < 10) this.shake = Math.max(this.shake, 0.5 * (1 - d / 10));
+          } else if (e.phase === 'take' && e.pid === local) {
+            this.buyPending = 0;
+            this.hud.emberFlash();
+            this.audio.forgeTake();
+            this.inspectWeapon = e.weapon;
+            this.hud.notify(`<b style="color:#ff8a4a">${WEAPONS[e.weapon!]?.name}</b> forjada.`);
+          } else if (e.phase === 'expire' && e.pid === local) this.hud.notify('Ninguém pegou a arma da Forja e ela se perdeu.');
+          break;
+        }
+        case 'powerup': {
+          const d = POWERUPS[e.kind];
+          this.audio.powerupPickup();
+          announce(`${d.name}!`, this.settings.volume);
+          this.hud.notify(`<b style="color:${d.color}">${d.name}</b>${e.pid === local ? '' : ` (${this.nameOf(e.pid)})`}`);
+          if (e.kind === 'maxammo') this.weapon.refillAll();
+          if (e.kind === 'bomb') {
+            this.hud.whiteFlash();
+            this.audio.explosion(this.camera.position.clone().add(new THREE.Vector3(0, 10, 0)));
+          }
+          break;
+        }
+        case 'box': {
+          this.boxView.onEvent(e.phase);
+          const bp = this.boxView.position();
+          if (e.phase === 'spin') this.audio.boxSpin(bp);
+          else if (e.phase === 'crow') {
+            this.audio.crow(bp);
+            this.hud.notify(e.pid === local ? 'O <b>Corvo</b> levou a caixa. Seus pontos foram devolvidos.' : 'O <b>Corvo</b> levou a caixa embora.');
+          } else if (e.phase === 'arrive') {
+            this.hud.notify(`A <b>Caixa Misteriosa</b> apareceu: ${this.o.map.boxSpots[e.loc]?.name ?? ''}.`);
+          } else if (e.phase === 'offer' && e.pid === local) {
+            this.audio.hitmarker(true);
+          }
+          if (e.pid === local && (e.phase === 'spin' || e.phase === 'take')) this.buyPending = 0;
+          break;
+        }
+        case 'boom': {
+          const p = new THREE.Vector3(e.x, e.y, e.z);
+          if (e.kind === 'ray') this.fx.rayBurst(p);
+          else if (e.kind === 'fire') {
+            this.fx.fireBurst(p);
+            break;
+          } else this.fx.explosion(p);
+          this.audio.explosion(p);
+          const d = p.distanceTo(this.pc.pos);
+          if (d < 14) this.shake = Math.max(this.shake, 1 - d / 14);
+          break;
+        }
+        case 'board':
+          if (e.kind === 'tear') this.audio.boardBreak(this.barricades.center(e.entry));
+          else this.audio.boardFix(this.barricades.center(e.entry));
+          break;
+        case 'selfrevive':
+          if (e.pid === local) {
+            this.weapon.raise();
+            this.hud.notify('<b>Segundo Fôlego</b>: você se levantou! Suas bebidas se foram.');
+          }
+          break;
+        case 'pjoin':
+        case 'knife':
+          break;
+      }
+    }
+  }
+
+  private nameOf(pid: string) {
+    return this.buffer.latest?.players.get(pid)?.name ?? 'Aliado';
+  }
+
+  // ---------- combate ----------
+
+  private fire(spread: number) {
+    const def = this.weapon.def;
+    const origin = this.camera.getWorldPosition(new THREE.Vector3());
+    const fwd = this.camera.getWorldDirection(new THREE.Vector3());
+    if (def.projectile) {
+      const start = origin.clone().addScaledVector(fwd, 0.6);
+      start.y -= 0.06;
+      this.transport.send({ t: 'launch', weapon: def.id, x: start.x, y: start.y, z: start.z, dx: fwd.x, dy: fwd.y, dz: fwd.z });
+      if (def.projectile === 'ray') this.audio.rayZap();
+      else if (def.projectile === 'rocket') this.audio.rocketLaunch();
+      else if (def.projectile === 'blade') this.audio.bladeLaunch();
+      else this.audio.gunshot(undefined, def.projectile === 'bolt' ? 'smg' : 'shotgun');
+      this.pc.pitch += 0.012 * def.recoil;
+      this.flashT = 0.05;
+      this.blockSprintT = 0.3;
+      return;
+    }
+    const right = new THREE.Vector3().crossVectors(fwd, this.camera.up).normalize();
+    const up = new THREE.Vector3().crossVectors(right, fwd).normalize();
+    const meshes = this.zombies.hitMeshes();
+    const hits: { zid: number; part: HitPart }[] = [];
+
+    // tiro único vai exatamente no centro; escopetas usam um padrão fixo de chumbos
+    for (const [ox, oy] of pelletOffsets(def.pellets)) {
+      const dir = fwd.clone().addScaledVector(right, ox * spread).addScaledVector(up, oy * spread).normalize();
+      const wh = this.world.raycast(origin.x, origin.y, origin.z, dir.x, dir.y, dir.z, def.range);
+      this.raycaster.set(origin, dir);
+      this.raycaster.far = wh ? wh.t : def.range;
+      // primeiro acerto em cada zumbi; o fuzil de precisão segue até `pierce` zumbis
+      const seenZ = new Set<number>();
+      const zhits = this.raycaster.intersectObjects(meshes, false).filter((h) => {
+        const id = h.object.userData.zid as number;
+        if (seenZ.has(id)) return false;
+        seenZ.add(id);
+        return true;
+      }).slice(0, def.pierce ?? 1);
+      // arma forjada: rastro de brasa até o fim do tiro
+      if (def.upgraded) {
+        const end = zhits.length ? zhits[zhits.length - 1].point : origin.clone().addScaledVector(dir, wh ? wh.t : Math.min(def.range, 40));
+        const muzzle = origin.clone().addScaledVector(fwd, 0.5).addScaledVector(right, 0.08).addScaledVector(up, -0.08);
+        this.fx.emberTracer(muzzle, end, !!wh || zhits.length > 0);
+      }
+      for (const zh of zhits) {
+        const part = zh.object.userData.part as HitPart;
+        hits.push({ zid: zh.object.userData.zid as number, part });
+        this.fx.blood(zh.point, dir.clone().negate().lerp(dir, 0.6), part === 'head' ? 1.4 : 1);
+        this.hud.hitmarker(false);
+        this.audio.hitmarker(part === 'head');
+        this.audio.bodyHit(zh.point, part === 'head');
+      }
+      if (!zhits.length && wh) {
+        const p = origin.clone().addScaledVector(dir, wh.t);
+        this.fx.impact(p, wh.nx, wh.ny, wh.nz);
+      }
+    }
+    this.transport.send({ t: 'shoot', weapon: def.id, hits });
+    this.audio.gunshot(undefined, def.sound ?? def.cls);
+    if (def.upgraded) this.audio.emberShot();
+    const adsK = 1 - this.weapon.ads * 0.45;
+    this.pc.pitch += (0.016 + Math.random() * 0.008) * def.recoil * adsK;
+    this.pc.yaw += (Math.random() - 0.5) * 0.009 * adsK;
+    this.flashT = 0.05;
+    this.blockSprintT = 0.3;
+  }
+
+  private throwGrenade() {
+    const origin = this.camera.getWorldPosition(new THREE.Vector3());
+    const fwd = this.camera.getWorldDirection(new THREE.Vector3());
+    const start = origin.clone().addScaledVector(fwd, 0.5);
+    start.y -= 0.1;
+    const v = fwd.clone().multiplyScalar(GRENADE.throwSpeed);
+    v.y += 2.5;
+    v.x += this.pc.vel.x * 0.5;
+    v.z += this.pc.vel.z * 0.5;
+    this.transport.send({ t: 'grenade', x: start.x, y: start.y, z: start.z, vx: v.x, vy: v.y, vz: v.z });
+    this.audio.knifeSwing();
+  }
+
+  // Granadas em voo: bolinhas que seguem o estado da partida.
+  private updateGrenades() {
+    const list = this.buffer.latest?.s.projectiles ?? [];
+    const seen = new Set<number>();
+    for (const g of list) {
+      seen.add(g.id);
+      let m = this.nadeMeshes.get(g.id);
+      if (!m) {
+        const mat = g.kind === 'ray' ? this.rayMat : g.kind === 'bolt' || g.kind === 'blade' ? this.boltMat : g.kind === 'rocket' ? this.rocketMat : this.nadeMat;
+        m = new THREE.Mesh(this.nadeGeo, mat);
+        if (g.kind === 'bolt') m.scale.set(0.4, 0.4, 3);
+        if (g.kind === 'blade') m.scale.set(0.15, 0.5, 2.6);
+        if (g.kind === 'rocket') m.scale.set(0.9, 0.9, 4);
+        if (g.kind === 'ray') m.scale.setScalar(2.2);
+        m.position.set(g.x, g.y, g.z);
+        this.scene.add(m);
+        this.nadeMeshes.set(g.id, m);
+      }
+      const to = new THREE.Vector3(g.x, g.y, g.z);
+      // projéteis compridos apontam para onde voam; granadas rolam
+      if (g.kind === 'bolt' || g.kind === 'blade' || g.kind === 'rocket') {
+        if (to.distanceToSquared(m.position) > 1e-6) m.lookAt(to.clone().add(to.clone().sub(m.position)));
+      } else {
+        m.rotation.x += 0.2;
+      }
+      const prev = m.position.clone();
+      m.position.lerp(to, 0.35);
+      // rastros: fumaça e fogo do foguete, brilho verde do raio
+      if (g.kind === 'rocket') this.fx.rocketTrail(prev, m.position);
+      else if (g.kind === 'ray') this.fx.rayTrail(prev, m.position);
+    }
+    for (const [id, m] of this.nadeMeshes) {
+      if (seen.has(id)) continue;
+      this.scene.remove(m);
+      this.nadeMeshes.delete(id);
+    }
+  }
+
+  private knife() {
+    const fx = -Math.sin(this.pc.yaw);
+    const fz = -Math.cos(this.pc.yaw);
+    let best: { id: number; x: number; y: number; z: number; top: number } | null = null;
+    let bestD = Infinity;
+    for (const z of this.zombies.bodies()) {
+      if (z.rising) continue;
+      const dx = z.x - this.pc.pos.x;
+      const dz = z.z - this.pc.pos.z;
+      const d = Math.hypot(dx, dz);
+      if (d > KNIFE.range + 0.35 || Math.abs(z.y - this.pc.pos.y) > 1.2) continue;
+      const cos = (dx * fx + dz * fz) / (d || 1);
+      if (d > 0.6 && cos < 0.55) continue;
+      if (d < bestD) {
+        bestD = d;
+        best = z;
+      }
+    }
+    this.transport.send({ t: 'knife', zid: best ? best.id : null });
+    if (best) {
+      const p = new THREE.Vector3(best.x, best.y + best.top, best.z);
+      this.fx.blood(p, new THREE.Vector3(fx, 0.2, fz), 1.2);
+      this.audio.knifeHit();
+      this.hud.hitmarker(false);
+    }
+  }
+
+  private surface(): Surface {
+    const { x, y, z } = this.pc.pos;
+    if (y > 0.05) {
+      for (const b of this.world.query(x - 0.1, z - 0.1, x + 0.1, z + 0.1)) {
+        if (Math.abs(b.max[1] - y) < 0.05 && x >= b.min[0] && x <= b.max[0] && z >= b.min[2] && z <= b.max[2]) {
+          return b.mat === 'floorWood' || b.mat === 'wood' ? 'wood' : 'hard';
+        }
+      }
+    }
+    return Math.abs(x) < 9 || Math.abs(z) < 9 ? 'hard' : 'dirt';
+  }
+
+  // ---------- quadro ----------
+
+  private frame = (now: number) => {
+    if (this.disposed) return;
+    this.raf = requestAnimationFrame(this.frame);
+    try {
+      this.step(now);
+    } catch (e) {
+      this.reportError(e);
+    } finally {
+      // sempre libera os cliques deste quadro, senão um erro deixa o tiro "preso"
+      this.input.endFrame();
+    }
+  };
+
+  private reportedErrors = new Set<string>();
+  private reportError(e: unknown) {
+    const msg = e instanceof Error ? e.message : String(e);
+    if (this.reportedErrors.has(msg)) return;
+    this.reportedErrors.add(msg);
+    console.error(e);
+    this.hud.notify(`Erro: ${escapeHtml(msg)}`);
+    // em desenvolvimento, relança fora do quadro para o erro aparecer no terminal do servidor
+    if (import.meta.env.DEV) setTimeout(() => {
+      throw e;
+    });
+  }
+
+  // Resolução dinâmica: baixa a resolução interna se o quadro demora, sobe quando sobra folga.
+  // Na qualidade automática, se mesmo na resolução mínima continuar lento, baixa a qualidade.
+  private adaptResolution(rawMs: number, dt: number) {
+    if (rawMs > 0 && rawMs < 250) this.frameMs = lerp(this.frameMs, rawMs, 0.06);
+    this.dynT += dt;
+    if (this.dynT < 1) return;
+    this.dynT = 0;
+    const slow = this.frameMs > 21;
+    if (slow && this.scale > this.q.minScale + 0.001) {
+      this.scale = Math.max(this.q.minScale, this.scale - (this.frameMs > 40 ? 0.2 : 0.1));
+      this.resize();
+    } else if (!slow && this.frameMs < 13 && this.scale < 1) {
+      this.scale = Math.min(1, this.scale + 0.05);
+      this.resize();
+    }
+    if (slow && this.scale <= this.q.minScale + 0.001 && this.settings.quality === 'auto' && LOWER[this.q.level]) {
+      if (++this.slowT >= 3) {
+        this.setQuality('downgrade');
+        this.hud.notify(`Qualidade ajustada para <b>${QUALITY_LABEL[this.q.level]}</b> para rodar liso.`);
+      }
+    } else {
+      this.slowT = 0;
+    }
+  }
+
+  private step(now: number) {
+    const rawMs = now - this.last;
+    const dt = Math.max(0, Math.min(0.05, rawMs / 1000));
+    if (this.input.locked || AUTOPLAY) this.adaptResolution(rawMs, dt);
+    this.last = now;
+    this.t += dt;
+
+    this.fpsAcc += dt;
+    this.fpsN++;
+    if (this.fpsAcc > 0.5) {
+      this.fps = Math.round(this.fpsN / this.fpsAcc);
+      this.fpsAcc = 0;
+      this.fpsN = 0;
+    }
+
+    // no solo, o jogo só corre com o mouse capturado (pausa ao apertar Esc)
+    if (this.transport.solo) this.transport.paused = !this.input.locked && !this.over && !AUTOPLAY;
+    this.transport.update(dt);
+    const sample = this.buffer.sample(performance.now() - (this.transport.solo ? 70 : 110));
+    this.zombies.update(sample, dt, this.camera.position);
+    if (this.busView) {
+      this.busView.update(sample, dt);
+      const bp = this.busView.pose;
+      this.pc.setBus(bp);
+      this.audio.busEngine(bp ? new THREE.Vector3(bp.x, 1.2, bp.z) : null, this.busView.speed);
+    }
+    if (this.zombies.quake > 0) {
+      this.shake = Math.max(this.shake, this.zombies.quake);
+      this.zombies.quake = 0;
+    }
+    this.players.update(sample, dt);
+
+    const life = this.me?.life ?? 'alive';
+    const active = this.active;
+    const look = this.input.mouse();
+    if (active) this.pc.look(look[0], look[1], this.settings.sensitivity * 0.0022 * (1 - this.weapon.ads * 0.35));
+
+    this.blockSprintT -= dt;
+    this.pc.update(dt, this.input, {
+      ads: this.weapon.ads > 0.3,
+      blockSprint: this.blockSprintT > 0 || this.weapon.reloading,
+      downed: life !== 'alive',
+      frozen: !active || this.over,
+    }, this.zombies.bodies());
+
+    this.weapon.update(dt, this.t, this.input, this.pc, active ? look : [0, 0], active && life !== 'dead');
+    this.pc.applyCamera(this.camera, this.t);
+    if (this.shake > 0.001) {
+      this.camera.position.x += (Math.random() - 0.5) * 0.08 * this.shake;
+      this.camera.position.y += (Math.random() - 0.5) * 0.08 * this.shake;
+      this.camera.rotation.z += (Math.random() - 0.5) * 0.03 * this.shake;
+      this.shake *= Math.exp(-dt * 5);
+    }
+
+    // luneta do fuzil de precisão, ou mira comprada na Oficina (ponto vermelho / luneta 2×)
+    const sight = this.weapon.sight;
+    const scopeKind = this.weapon.def.scope ? 'sniper' : sight === 'scope' ? 'luneta' : null;
+    const scoped = !!scopeKind && this.weapon.ads > 0.85 && life !== 'dead';
+    this.hud.scope(scoped, scopeKind ?? 'sniper');
+    const zoom = this.weapon.def.scope ? 0.32 : sight ? SIGHTS[sight].zoom : 0.8;
+    const targetFov = this.settings.fov * lerp(1, zoom, this.weapon.ads) + this.weapon.sprintT * 5;
+    if (Math.abs(this.camera.fov - targetFov) > 0.01) {
+      this.camera.fov = lerp(this.camera.fov, targetFov, 1 - Math.exp(-dt * 14));
+      this.camera.updateProjectionMatrix();
+      this.fx.resize(window.innerHeight * this.renderer.getPixelRatio(), this.camera.fov);
+    }
+
+    this.sendT -= dt;
+    if (this.sendT <= 0) {
+      this.sendT = TICK_DT;
+      this.transport.send({
+        t: 'state',
+        x: this.pc.pos.x, y: this.pc.pos.y, z: this.pc.pos.z,
+        yaw: this.pc.yaw, pitch: this.pc.pitch,
+        crouch: this.pc.crouchT > 0.5, speed: this.pc.speed2d,
+      });
+    }
+
+    this.applyPerks(dt);
+    this.updateGrenades();
+    this.boxView.update(this.buffer.latest?.s.box, dt, this.t);
+    this.powerupView.update(this.buffer.latest?.s, this.t);
+    const forge = this.buffer.latest?.s.forge;
+    this.forgeView.update(forge, dt, this.t);
+    if (forge?.state === 'working') {
+      this.anvilT -= dt;
+      if (this.anvilT <= 0) {
+        this.anvilT = 0.45;
+        const ap = new THREE.Vector3(...this.o.map.forge.anvil);
+        this.audio.anvil(ap);
+        // cada martelada solta faíscas
+        this.fx.impact(ap.clone().setY(ap.y + 0.15), 0, 1, 0);
+      }
+    }
+    if (this.inspectWeapon && this.weapon.def.id === this.inspectWeapon && !this.weapon.busy) {
+      this.inspectWeapon = null;
+      this.weapon.startAction('inspect', 1.5, () => {});
+    }
+    this.hud.setEffects(this.buffer.latest?.s.effects);
+    this.hud.setGrenades(this.me?.grenades ?? 0);
+    if (canThrowKey(this.input) && this.active && life === 'alive' && (this.me?.grenades ?? 0) > 0 && !this.weapon.busy) {
+      this.weapon.startAction('throw', 0.62, () => {});
+    }
+    const canAct = active && life === 'alive';
+    if (!this.updateRevive(canAct) && !this.updateRepair(canAct) && !this.updateInteract(dt, canAct)) this.hud.prompt(null);
+    this.barricades.update(this.buffer.latest?.s.boards, dt);
+    this.updateHud(dt, life);
+
+    const fwd = this.camera.getWorldDirection(new THREE.Vector3());
+
+    this.flashT -= dt;
+    this.muzzleLight.position.copy(this.camera.position).addScaledVector(fwd, 0.8);
+    this.muzzleLight.intensity = this.flashT > 0 ? 12 : 0;
+
+    if (this.shadowRefreshT > 0) {
+      this.shadowRefreshT -= dt;
+      if (this.shadowRefreshT <= 0) this.renderer.shadowMap.needsUpdate = true;
+    }
+    this.updateMood(dt);
+    this.fx.update(dt, this.camera.position);
+    this.mapView.update(this.t, this.camera.position);
+
+    this.renderer.autoClear = true;
+    if (this.q.bloom) this.composer.render(dt);
+    else this.renderer.render(this.scene, this.camera);
+    if (life !== 'dead' && !this.over && !scoped) {
+      this.renderer.autoClear = false;
+      this.renderer.clearDepth();
+      this.renderer.render(this.weapon.scene, this.weapon.camera);
+    }
+
+    // som por último: um problema no áudio nunca impede a imagem
+    this.audio.setListener(this.camera.position, fwd);
+    const hp = this.me?.health ?? PLAYER.maxHealth;
+    this.audio.heartbeat(dt, life === 'alive' && hp < 45 ? 1 - hp / 45 : 0);
+  }
+
+  // Só em desenvolvimento: dá pontos ao jogador local (testes automáticos no solo).
+  debugPoints(n: number) {
+    const sim = (this.transport as unknown as { sim?: { players: Map<string, { points: number }> } }).sim;
+    const p = sim?.players.get(this.transport.localId);
+    if (p) p.points = n;
+  }
+
+  // Barricada quebrada por perto: segurar F conserta (+10 por tábua até 500 por rodada).
+  private updateRepair(canRepair: boolean): boolean {
+    let target: number | null = null;
+    const boards = this.buffer.latest?.s.boards;
+    if (canRepair && boards) {
+      let bestD = 1.9;
+      for (const e of this.o.map.entries) {
+        if ((boards[e.id] ?? ENTRY_BOARDS) >= ENTRY_BOARDS) continue;
+        const p = entryPoints(e).inside;
+        const d = Math.hypot(p[0] - this.pc.pos.x, p[1] - this.pc.pos.z);
+        if (d < bestD) {
+          bestD = d;
+          target = e.id;
+        }
+      }
+    }
+    const want = target !== null && this.input.isDown('KeyF') && !this.weapon.busy ? target : null;
+    if (want !== this.repairEntry) {
+      this.repairEntry = want;
+      this.transport.send({ t: 'repair', entry: want });
+    }
+    if (target === null) return false;
+    this.hud.prompt(want !== null ? 'Consertando a barricada...' : 'Segure <b>F</b> para consertar a barricada <span class="price">+10</span>', want !== null ? (boards![target] ?? 0) / ENTRY_BOARDS : null);
+    return true;
+  }
+
+  // jogador em pé dentro do ônibus agora
+  private onBusNow(): boolean {
+    const b = this.busView?.pose;
+    return !!b && standingIn(b, this.pc.pos.x, this.pc.pos.y, this.pc.pos.z);
+  }
+
+  // Clima da rodada infernal: névoa vermelha entrando e saindo devagar, clarões dos raios e uivos ao longe.
+  private updateMood(dt: number) {
+    const hell = !!this.buffer.latest?.s.hell;
+    this.hud.setHell(hell);
+    this.hud.setBoss(this.buffer.latest?.s.boss ?? null);
+    this.hellK = clamp(this.hellK + (hell ? dt / 2.5 : -dt / 4), 0, 1);
+    this.boltFlash = Math.max(0, this.boltFlash - dt * 5);
+    this.mapView.setMood(this.hellK, this.boltFlash);
+    // Rota: névoa mais fechada na estrada; o nome da parada aparece ao chegar
+    const zones = this.o.map.zones;
+    if (zones) {
+      const p = this.pc.pos;
+      const z = zones.find((zn) => p.x > zn.rect.minX && p.x < zn.rect.maxX && p.z > zn.rect.minZ && p.z < zn.rect.maxZ) ?? null;
+      const id = z?.id ?? null;
+      if (id !== this.zone) {
+        const first = this.zone === undefined;
+        this.zone = id;
+        if (z) this.hud.showBanner(z.name.toUpperCase(), 'zone');
+        else if (!first && !(this.busView?.pose && this.pc.pulled === false && this.onBusNow())) this.hud.notify('<b>Névoa</b>: fique longe dela ou os Vultos aparecem.');
+      }
+      const road = !id && !this.onBusNow();
+      this.fogK = clamp(this.fogK + (road ? dt / 2.5 : -dt / 2.5), 0, 1);
+      const base = this.o.map.fogDensity ?? FOG_DENSITY;
+      this.mapView.setFogBase(base + ((this.o.map.fogRoad ?? base) - base) * this.fogK);
+    }
+    const power = !!this.buffer.latest?.s.power;
+    if (power !== this.lastPower) {
+      this.lastPower = power;
+      this.mapView.setPower(power);
+    }
+    if (this.mapView.takeShadowDirty()) this.renderer.shadowMap.needsUpdate = true;
+    this.fx.setFog(this.mapView.fogColor, this.mapView.fogDensity);
+    if (hell) {
+      this.howlT -= dt;
+      if (this.howlT <= 0) {
+        this.howlT = 6 + Math.random() * 6;
+        const a = Math.random() * Math.PI * 2;
+        this.audio.dogHowl(new THREE.Vector3(this.pc.pos.x + Math.cos(a) * 35, 2, this.pc.pos.z + Math.sin(a) * 35));
+      }
+    }
+  }
+
+  // A Caixa Misteriosa só aparece no local onde ela está.
+  private boxUsable(spot: number): boolean {
+    const b = this.buffer.latest?.s.box;
+    return !!b && b.loc === spot && b.state !== 'moving';
+  }
+
+  // Caixotes e máquinas: aviso na tela e compra com F. Reanimar um aliado tem prioridade.
+  private updateInteract(dt: number, canUse: boolean): boolean {
+    this.buyPending = Math.max(0, this.buyPending - dt);
+    const me = this.me;
+    if (!canUse || !me) return false;
+    let best: Interactable | null = null;
+    let bestD = 1.9;
+    for (const it of this.o.map.interactables) {
+      if (it.kind === 'door' && this.world.openDoors.has(it.door!)) continue;
+      if (it.kind === 'box' && !this.boxUsable(it.box!)) continue;
+      const d = Math.hypot(it.use[0] - this.pc.pos.x, it.use[1] - this.pc.pos.z);
+      if (d < bestD && Math.abs(this.pc.pos.y - it.y) < 1.2) {
+        bestD = d;
+        best = it;
+      }
+    }
+    if (!best) return false;
+
+    let text: string;
+    let price = 0;
+    let can = true;
+    if (best.kind === 'door') {
+      const d = this.o.map.doors.find((x) => x.id === best!.door)!;
+      price = d.cost;
+      text = `Pressione <b>F</b> para abrir <b>${d.name}</b> <span class="price">${price}</span>`;
+    } else if (best.kind === 'weapon') {
+      const def = WEAPONS[best.weapon!];
+      const upId = upgradeId(def.id);
+      if (me.weapons.includes(upId)) {
+        price = wallAmmoPrice(upId);
+        if (this.weapon.isFull(upId)) {
+          text = `Munição de <b>${WEAPONS[upId].name}</b> cheia`;
+          can = false;
+        } else {
+          text = `Pressione <b>F</b> para comprar munição de <b>${WEAPONS[upId].name}</b> <span class="price">${price}</span>`;
+        }
+      } else if (me.weapons.includes(def.id)) {
+        price = wallAmmoPrice(def.id);
+        if (this.weapon.isFull(def.id)) {
+          text = `Munição de <b>${def.name}</b> cheia`;
+          can = false;
+        } else {
+          text = `Pressione <b>F</b> para comprar munição de <b>${def.name}</b> <span class="price">${price}</span>`;
+        }
+      } else {
+        price = def.cost;
+        const full = me.weapons.length >= 2 + (me.perks.includes('mula') ? 1 : 0);
+        text = `Pressione <b>F</b> para comprar <b>${def.name}</b> <span class="price">${price}</span>${full ? `<small>No lugar de: ${this.weapon.def.name}</small>` : ''}`;
+      }
+    } else if (best.kind === 'box') {
+      const b = this.buffer.latest!.s.box;
+      if (b.state === 'idle') {
+        price = b.fireSale ? 10 : BOX.cost;
+        text = `Pressione <b>F</b> para girar a <b>Caixa Misteriosa</b> <span class="price">${price}</span>`;
+      } else if (b.state === 'offer' && b.pid === this.transport.localId && b.weapon) {
+        const full = me.weapons.length >= 2 + (me.perks.includes('mula') ? 1 : 0);
+        text = `Pressione <b>F</b> para pegar <b>${WEAPONS[b.weapon]?.name ?? b.weapon}</b>${full ? `<small>No lugar de: ${this.weapon.def.name}</small>` : ''}`;
+      } else {
+        return false;
+      }
+    } else if (best.kind === 'bank') {
+      const bal = bankBalance(this.o.playerName);
+      if (best.bank === 'deposit') {
+        price = BANK.step;
+        if (!canDeposit(this.o.playerName)) {
+          text = `Banco cheio (limite de ${BANK.limit.toLocaleString('pt-BR')})`;
+          can = false;
+        } else {
+          text = `Pressione <b>F</b> para depositar <span class="price">${BANK.step}</span><small>Saldo guardado: ${bal.toLocaleString('pt-BR')}</small>`;
+        }
+      } else if (bal < BANK.step) {
+        text = `Saldo insuficiente para sacar (${bal.toLocaleString('pt-BR')})`;
+        can = false;
+      } else {
+        text = `Pressione <b>F</b> para sacar ${BANK.step} (taxa ${BANK.fee})<small>Saldo guardado: ${bal.toLocaleString('pt-BR')}</small>`;
+      }
+    } else if (best.kind === 'sight') {
+      const s = SIGHTS[best.sight!];
+      const def = this.weapon.def;
+      price = s.cost;
+      if (!sightFits(best.sight!, def.id)) {
+        text = `<b>${s.name}</b> não serve nesta arma<small>Serve em: ${s.weapons.map((w) => WEAPONS[w].name).join(', ')}</small>`;
+        can = false;
+      } else if (me.sights[baseId(def.id)] === best.sight) {
+        text = `Esta arma já tem <b>${s.name}</b>`;
+        can = false;
+      } else {
+        const old = me.sights[baseId(def.id)];
+        text = `Pressione <b>F</b> para instalar <b>${s.name}</b> <span class="price">${price}</span>${old ? `<small>Troca o ${SIGHTS[old].name}</small>` : `<small>Na arma da mão: ${def.name}</small>`}`;
+      }
+    } else if (best.kind === 'candle') {
+      const f = this.buffer.latest!.s.forge;
+      if (f.on || f.candles[best.candle!]) return false;
+      text = 'Pressione <b>F</b> para acender a vela';
+    } else if (best.kind === 'power') {
+      if (this.buffer.latest?.s.power) return false;
+      text = 'Pressione <b>F</b> para ligar a <b>energia</b><small>Acende as bebidas e abre o cofre da Forja</small>';
+    } else if (best.kind === 'forge') {
+      const f = this.buffer.latest!.s.forge;
+      const def = this.weapon.def;
+      if (!f.on) {
+        text = this.o.map.forge.candles.length ? 'A Forja está fria. Acenda as três velas do cemitério.' : 'A Forja está fria. Ligue a energia na Usina.';
+        can = false;
+      } else if (f.state === 'ready' && f.pid === this.transport.localId && f.weapon) {
+        text = `Pressione <b>F</b> para pegar <b>${WEAPONS[f.weapon]?.name}</b>`;
+      } else if (f.state !== 'idle') {
+        return false;
+      } else if (def.upgraded || !WEAPONS[upgradeId(def.id)]) {
+        text = 'Esta arma já foi forjada';
+        can = false;
+      } else if (me.weapons.length < 2) {
+        text = 'Compre outra arma antes de entregar a única que tem';
+        can = false;
+      } else {
+        price = FORGE.cost;
+        text = `Pressione <b>F</b> para forjar a <b>${def.name}</b> <span class="price">${price}</span><small>Vira ${WEAPONS[upgradeId(def.id)].name}</small>`;
+      }
+    } else if (best.kind === 'grenade') {
+      price = GRENADE.cost;
+      if (me.grenades >= GRENADE.max) {
+        text = 'Granadas cheias';
+        can = false;
+      } else {
+        text = `Pressione <b>F</b> para comprar granadas <span class="price">${price}</span>`;
+      }
+    } else if (best.kind === 'knife') {
+      price = KNIFE.heavyCost;
+      if (me.heavyKnife) {
+        text = 'Você já tem a faca pesada';
+        can = false;
+      } else {
+        text = `Pressione <b>F</b> para comprar a <b>faca pesada</b> <span class="price">${price}</span><small>Mata com um golpe até a rodada 4</small>`;
+      }
+    } else if (best.kind === 'ammo') {
+      price = ammoPrice(this.weapon.def.id) ?? 0;
+      if (this.weapon.full) {
+        text = 'Munição cheia';
+        can = false;
+      } else {
+        text = `Pressione <b>F</b> para encher a munição <span class="price">${price}</span>`;
+      }
+    } else {
+      const d = PERKS[best.perk as PerkId];
+      price = perkPrice(d.id, this.transport.solo);
+      if (this.o.map.perksNeedPower && !this.buffer.latest?.s.power) {
+        text = `<b>${d.name}</b> sem energia<small>Ligue a alavanca na Usina</small>`;
+        can = false;
+      } else if (me.perks.includes(d.id)) {
+        text = `Você já tem <b>${d.name}</b>`;
+        can = false;
+      } else if (me.perks.length >= MAX_PERKS) {
+        text = `Limite de ${MAX_PERKS} bebidas`;
+        can = false;
+      } else if (d.id === 'folego' && this.transport.solo && me.selfRevives >= SOLO_SELF_REVIVES) {
+        text = 'Segundo Fôlego esgotado nesta partida';
+        can = false;
+      } else {
+        text = `Pressione <b>F</b> para beber <b>${d.name}</b> <span class="price">${price}</span><small>${d.desc}</small>`;
+      }
+    }
+    const poor = can && me.points < price;
+    this.hud.prompt(text, null, poor);
+    if (can && this.input.wasPressed('KeyF') && !this.weapon.busy && this.buyPending <= 0) {
+      if (poor) {
+        this.audio.deny();
+      } else {
+        this.buyPending = 1;
+        this.transport.send({ t: 'interact', id: best.id, weapon: this.weapon.def.id });
+      }
+    }
+    return true;
+  }
+
+  // Aplica os efeitos das bebidas que dependem do navegador (recarga, cadência, corrida) e toca as vinhetas.
+  private applyPerks(dt: number) {
+    const perks = this.me?.perks ?? [];
+    this.weapon.mods.reload = perks.includes('reflexo') ? PERK_FX.reflexoReloadMult : 1;
+    this.weapon.mods.fire = perks.includes('gatilho') ? PERK_FX.gatilhoFireMult : 1;
+    this.pc.mods.sprintSpeed = perks.includes('passo') ? PERK_FX.passoSpeedMult : 1;
+    this.pc.mods.stamina = perks.includes('passo') ? PERK_FX.passoStaminaMult : 1;
+    this.hud.setPerks(perks);
+    for (const it of this.o.map.interactables) {
+      if (it.kind !== 'perk') continue;
+      const left = (this.jingleT.get(it.id) ?? 8 + Math.random() * 20) - dt;
+      if (left > 0) {
+        this.jingleT.set(it.id, left);
+        continue;
+      }
+      this.jingleT.set(it.id, 45 + Math.random() * 40);
+      if (Math.hypot(it.use[0] - this.pc.pos.x, it.use[1] - this.pc.pos.z) < 14) {
+        this.audio.perkJingle(new THREE.Vector3(it.use[0], 1.6, it.use[1]), Object.keys(PERKS).indexOf(it.perk!));
+      }
+    }
+  }
+
+  private updateRevive(canRevive: boolean): boolean {
+    let target: NetPlayer | null = null;
+    const snap = this.buffer.latest;
+    if (canRevive && snap) {
+      let bestD = REVIVE_RANGE;
+      for (const p of snap.s.players) {
+        if (p.id === this.transport.localId || p.life !== 'downed') continue;
+        const d = Math.hypot(p.x - this.pc.pos.x, p.z - this.pc.pos.z);
+        if (d <= bestD) {
+          bestD = d;
+          target = p;
+        }
+      }
+    }
+    const holding = !!target && this.input.isDown('KeyF');
+    const want = holding ? target!.id : null;
+    if (want !== this.reviveTarget) {
+      this.reviveTarget = want;
+      this.transport.send({ t: 'revive', target: want });
+    }
+    if (target) {
+      this.hud.prompt(holding ? `Reanimando ${target.name}...` : `Segure <b>F</b> para reanimar ${target.name}`, holding ? target.revive : null);
+      return true;
+    }
+    return false;
+  }
+
+  private updateHud(dt: number, life: string) {
+    const w = this.weapon;
+    this.hud.setAmmo(w.ammo, w.reserve, w.def.name, w.def.mag);
+    const px = (w.spread / Math.tan(THREE.MathUtils.degToRad(this.camera.fov) / 2)) * (window.innerHeight / 2);
+    this.hud.setCrosshair(Math.max(6, px), w.ads < 0.5 && w.sprintT < 0.5 && life !== 'dead' && !this.over);
+    this.hud.update(dt, this.me?.health ?? PLAYER.maxHealth, this.me?.maxHealth ?? PLAYER.maxHealth);
+
+    if (life === 'downed' && !this.over) {
+      if (this.transport.solo) this.hud.downed(true, this.me?.revive ?? 0, 'Segundo Fôlego: levantando...');
+      else this.hud.downed(true, (this.me?.bleed ?? 0) / 30, 'Aguente firme. Um aliado pode reanimar você.');
+    } else {
+      this.hud.downed(false);
+    }
+
+    // marcadores de aliados caídos
+    const markers: Marker[] = [];
+    const snap = this.buffer.latest;
+    if (snap) {
+      const v = new THREE.Vector3();
+      const W = window.innerWidth;
+      const H = window.innerHeight;
+      for (const p of snap.s.players) {
+        if (p.id === this.transport.localId || p.life !== 'downed') continue;
+        v.set(p.x, p.y + 0.6, p.z).project(this.camera);
+        const behind = v.z > 1;
+        let x = (v.x * 0.5 + 0.5) * W;
+        let y = (-v.y * 0.5 + 0.5) * H;
+        if (behind) {
+          x = W - x;
+          y = H - 40;
+        }
+        const onScreen = !behind && x > 30 && x < W - 30 && y > 30 && y < H - 30;
+        x = Math.min(W - 30, Math.max(30, x));
+        y = Math.min(H - 30, Math.max(30, y));
+        const d = Math.round(Math.hypot(p.x - this.pc.pos.x, p.z - this.pc.pos.z));
+        markers.push({ x, y, onScreen, label: `${p.name} · ${d} m`, color: PLAYER_COLORS[p.slot % PLAYER_COLORS.length] });
+      }
+    }
+    this.hud.markers(markers);
+    this.hud.clickToPlay(!this.input.locked && !this.hud.overlayOpen && !this.over);
+    if (this.t - this.infoT > 0.5) {
+      this.infoT = this.t;
+      const res = this.scale < 1 ? ` · ${Math.round(this.scale * 100)}%` : '';
+      this.hud.netinfo(`${this.fps} FPS${res}${this.transport.solo ? '' : ` · ${Math.round(this.transport.ping)} ms`}`);
+    }
+  }
+
+  // ---------- menus ----------
+
+  private onUnlock() {
+    if (this.over || this.disposed || this.hud.overlayOpen) return;
+    this.showPause();
+  }
+
+  private showPause() {
+    this.transport.paused = true;
+    const s = this.settings;
+    const ov = this.hud.showOverlay(`
+      <div class="panel pause">
+        <h2>${this.transport.solo ? 'Pausado' : 'Menu'}</h2>
+        ${this.transport.solo ? '' : '<p class="muted">A partida continua rodando para os outros jogadores.</p>'}
+        <button class="btn primary" data-act="resume">Continuar</button>
+        <label class="slider">Sensibilidade do mouse <input type="range" min="0.2" max="3" step="0.05" value="${s.sensitivity}" data-set="sensitivity"><output>${s.sensitivity.toFixed(2)}</output></label>
+        <label class="slider">Campo de visão <input type="range" min="60" max="100" step="1" value="${s.fov}" data-set="fov"><output>${s.fov}</output></label>
+        <div class="quality">
+          <span>Qualidade gráfica</span>
+          <div class="seg">${(['auto', 'alta', 'media', 'baixa'] as QualitySetting[]).map((k) => `<button data-q="${k}" class="${s.quality === k ? 'on' : ''}">${QUALITY_LABEL[k]}</button>`).join('')}</div>
+          <small>Em uso: ${QUALITY_LABEL[this.q.level]} · resolução ${Math.round(this.scale * 100)}%</small>
+          <small class="gpu ${this.o.gpu.software ? 'bad' : ''}">${this.o.gpu.software ? 'Sem aceleração gráfica: ative a aceleração de hardware no navegador.' : 'Placa: ' + escapeHtml(this.o.gpu.renderer || 'desconhecida')}</small>
+        </div>
+        <label class="slider">Volume <input type="range" min="0" max="1" step="0.05" value="${s.volume}" data-set="volume"><output>${Math.round(s.volume * 100)}%</output></label>
+        <button class="btn ghost" data-act="exit">Sair para o menu</button>
+      </div>`);
+    ov.querySelectorAll<HTMLInputElement>('input[data-set]').forEach((inp) => {
+      inp.addEventListener('input', () => {
+        const k = inp.dataset.set as 'sensitivity' | 'volume' | 'fov';
+        const v = Number(inp.value);
+        this.settings[k] = v;
+        inp.nextElementSibling!.textContent = k === 'volume' ? `${Math.round(v * 100)}%` : k === 'fov' ? String(v) : v.toFixed(2);
+        if (k === 'volume') this.audio.setVolume(v);
+        this.o.onSettings({ ...this.settings });
+      });
+    });
+    ov.querySelectorAll<HTMLButtonElement>('button[data-q]').forEach((b) => {
+      b.addEventListener('click', () => {
+        this.setQuality(b.dataset.q as QualitySetting);
+        ov.querySelectorAll('button[data-q]').forEach((x) => x.classList.toggle('on', x === b));
+        const small = ov.querySelector('.quality small');
+        if (small) small.textContent = `Em uso: ${QUALITY_LABEL[this.q.level]} · resolução ${Math.round(this.scale * 100)}%`;
+      });
+    });
+    ov.querySelector('[data-act="resume"]')!.addEventListener('click', () => {
+      this.hud.hideOverlay();
+      this.transport.paused = false;
+      this.input.lock();
+    });
+    ov.querySelector('[data-act="exit"]')!.addEventListener('click', () => this.o.onExit());
+  }
+
+  private gameOver(round: number) {
+    if (this.over) return;
+    this.over = true;
+    this.audio.gameOver();
+    this.hud.downed(false);
+    setTimeout(() => {
+      if (this.disposed) return;
+      this.input.unlock();
+      // registra a partida no perfil do jogador (XP, estatísticas, recordes)
+      const me = this.buffer.latest?.s.players.find((p) => p.id === this.transport.localId);
+      const startRound = this.buffer.latest?.s.startRound ?? 1;
+      const result = me
+        ? recordMatch({
+            name: this.o.playerName,
+            mode: this.transport.solo ? 'solo' : 'coop',
+            players: this.buffer.latest?.s.players.length ?? 1,
+            round,
+            startRound,
+            kills: me.kills,
+            headshots: me.headshots,
+            downs: me.downs,
+            revives: me.revives,
+            earned: me.earned,
+            seconds: this.t,
+            weaponKills: this.weaponKills,
+          })
+        : null;
+      const players = [...(this.buffer.latest?.s.players ?? [])].sort((a, b) => b.points - a.points);
+      const rows = players
+        .map((p) => `<tr style="color:${PLAYER_COLORS[p.slot % PLAYER_COLORS.length]}"><td>${escapeHtml(p.name)}</td><td>${p.points}</td><td>${p.kills}</td><td>${p.headshots}</td><td>${p.downs}</td><td>${p.revives}</td></tr>`)
+        .join('');
+      const ov = this.hud.showOverlay(`
+        <div class="panel gameover">
+          <h1>FIM DE JOGO</h1>
+          <p class="survived">${players.length > 1 ? 'Vocês sobreviveram' : 'Você sobreviveu'} ${round} rodada${round === 1 ? '' : 's'}</p>
+          ${result ? `<div class="levelup"><span class="emb"></span><div><div class="xp-gain">+${result.xp.toLocaleString('pt-BR')} XP</div>${result.after.level > result.before.level ? `<div class="new-level">Novo nível ${result.after.level}: ${rankOf(result.after.level).name}</div>` : `<div class="muted">Nível ${result.after.level} · faltam ${(result.after.need - result.after.into).toLocaleString('pt-BR')} XP</div>`}${result.record ? '<div class="new-level">Novo recorde pessoal!</div>' : ''}</div></div>` : ''}
+          <table><thead><tr><th>Nome</th><th>Pontos</th><th>Abates</th><th>Na cabeça</th><th>Quedas</th><th>Reanimações</th></tr></thead><tbody>${rows}</tbody></table>
+          <button class="btn primary" data-act="exit">Voltar ao menu</button>
+        </div>`);
+      if (result) {
+        const c = emblemCanvas(result.after.level, 144);
+        ov.querySelector('.emb')!.append(c);
+        animateEmblem(c, result.after.level);
+      }
+      ov.querySelector('[data-act="exit"]')!.addEventListener('click', () => this.o.onExit());
+    }, 2200);
+  }
+
+  connectionLost() {
+    if (this.over) return;
+    this.over = true;
+    this.input.unlock();
+    const ov = this.hud.showOverlay(`
+      <div class="panel gameover">
+        <h1>CONEXÃO PERDIDA</h1>
+        <p class="survived">O servidor encerrou a partida ou ficou fora do ar.</p>
+        <button class="btn primary" data-act="exit">Voltar ao menu</button>
+      </div>`);
+    ov.querySelector('[data-act="exit"]')!.addEventListener('click', () => this.o.onExit());
+  }
+
+  dispose() {
+    this.disposed = true;
+    cancelAnimationFrame(this.raf);
+    window.removeEventListener('resize', this.resize);
+    this.renderer.domElement.removeEventListener('click', this.onCanvasClick);
+    this.input.unlock();
+    this.input.dispose();
+    this.transport.close();
+    this.audio.stopAmbience();
+    this.hud.dispose();
+    this.mapView.dispose();
+    this.fx.dispose();
+    this.barricades.dispose();
+    this.boxView.dispose();
+    this.powerupView.dispose();
+    this.forgeView.dispose();
+    this.busView?.dispose();
+    this.audio.stopBusEngine();
+    this.zombies.dispose();
+    this.players.dispose();
+    this.composer.dispose();
+  }
+}
+
+function canThrowKey(input: Input) {
+  return input.wasPressed('KeyG');
+}
+
+function escapeHtml(s: string) {
+  return s.replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]!);
+}

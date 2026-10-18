@@ -1,0 +1,123 @@
+<!doctype html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Zomba</title>
+    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' fill='%23120b08'/%3E%3Ctext x='16' y='25' font-size='24' font-family='Georgia' font-weight='700' text-anchor='middle' fill='%23b51a14'%3EZ%3C/text%3E%3C/svg%3E" />
+  </head>
+  <body>
+    <svg width="0" height="0" style="position: absolute" aria-hidden="true">
+      <filter id="chalk" x="-20%" y="-20%" width="140%" height="140%">
+        <feTurbulence type="fractalNoise" baseFrequency="0.9" numOctaves="2" seed="3" result="n" />
+        <feDisplacementMap in="SourceGraphic" in2="n" scale="5" xChannelSelector="R" yChannelSelector="G" result="d" />
+        <feTurbulence type="fractalNoise" baseFrequency="2.2" numOctaves="1" seed="8" result="n2" />
+        <feColorMatrix in="n2" type="matrix" values="0 0 0 0 0  0 0 0 0 0  0 0 0 0 0  0 0 0 -1.25 1.45" result="holes" />
+        <feComposite in="d" in2="holes" operator="in" />
+      </filter>
+    </svg>
+    <div id="app"></div>
+
+    <div id="menu" class="screen">
+      <div class="menu-fog"></div>
+      <div class="menu-inner">
+        <h1 class="logo">ZOMBA</h1>
+        <p class="tagline">Quantas rodadas você aguenta?</p>
+
+        <div id="gpu-warning" class="warning hidden">
+          <b>Seu navegador está sem aceleração gráfica.</b> O jogo vai rodar com qualidade reduzida.
+          Para rodar liso, no Chrome abra <i>Configurações › Sistema</i>, ative
+          <i>"Usar aceleração gráfica quando disponível"</i> e reinicie o navegador.
+        </div>
+        <div id="panel-main" class="panel">
+          <div class="profile-card">
+            <canvas id="profile-emblem" width="112" height="112"></canvas>
+            <div class="profile-info">
+              <div class="profile-rank" id="profile-rank">Nível 1 · Osso</div>
+              <div class="xp-bar"><i id="profile-xp"></i></div>
+              <div class="profile-sub" id="profile-sub"></div>
+            </div>
+          </div>
+          <label class="field">Seu nome<input id="in-name" maxlength="16" autocomplete="off" /></label>
+          <div class="field">Mapa
+            <div class="mapsel" id="map-choice"></div>
+            <small id="map-desc"></small>
+          </div>
+          <label class="field">Rodada inicial
+            <span class="field-row"><input id="in-round" type="range" min="1" max="100" value="1" /><output id="out-round">1</output></span>
+            <small id="round-points">Começa com 500 pontos</small>
+          </label>
+          <button id="btn-solo" class="btn primary">Solo</button>
+          <button id="btn-coop" class="btn">Co-op online (até 4)</button>
+          <button id="btn-board" class="btn">Placar</button>
+          <button id="btn-controls" class="btn ghost">Controles</button>
+        </div>
+
+        <div id="panel-coop" class="panel hidden">
+          <label class="field">Servidor<input id="in-server" autocomplete="off" /></label>
+          <button id="btn-create" class="btn primary">Criar sala</button>
+          <div class="row">
+            <input id="in-code" placeholder="CÓDIGO" maxlength="4" autocomplete="off" />
+            <button id="btn-join" class="btn">Entrar</button>
+          </div>
+          <p id="coop-msg" class="msg"></p>
+          <button class="btn ghost" data-back>Voltar</button>
+        </div>
+
+        <div id="panel-lobby" class="panel hidden">
+          <div class="lobby-code">Sala <b id="lobby-code"></b></div>
+          <p class="muted">Passe esse código para seus amigos.</p>
+          <ul id="lobby-players"></ul>
+          <div class="field">Mapa
+            <div class="mapsel" id="lobby-map"></div>
+          </div>
+          <label class="field">Rodada inicial
+            <span class="field-row"><input id="lobby-round" type="range" min="1" max="100" value="1" /><output id="lobby-round-out">1</output></span>
+            <small id="lobby-round-points"></small>
+          </label>
+          <button id="btn-start" class="btn primary">Iniciar partida</button>
+          <p id="lobby-msg" class="msg"></p>
+          <button id="btn-leave" class="btn ghost">Sair da sala</button>
+        </div>
+
+        <div id="panel-board" class="panel hidden">
+          <div class="tabs" id="board-tabs">
+            <button data-tab="runs" class="on">Recordes</button>
+            <button data-tab="players">Jogadores</button>
+          </div>
+          <div class="tabs small" id="board-filter">
+            <button data-filter="zero" class="on">Desde a rodada 1</button>
+            <button data-filter="custom">Rodada inicial escolhida</button>
+          </div>
+          <div id="board-body" class="board-body"></div>
+          <p class="muted">Placar deste computador. O placar online chega quando o servidor estiver na internet.</p>
+          <button class="btn ghost" data-back>Voltar</button>
+        </div>
+
+        <div id="panel-controls" class="panel hidden">
+          <table class="controls">
+            <tr><td>W A S D</td><td>Andar</td></tr>
+            <tr><td>Shift</td><td>Correr (fôlego limitado)</td></tr>
+            <tr><td>Espaço</td><td>Pular</td></tr>
+            <tr><td>C / Ctrl</td><td>Agachar (alternar / segurar)</td></tr>
+            <tr><td>Botão esquerdo</td><td>Atirar</td></tr>
+            <tr><td>Botão direito</td><td>Mirar</td></tr>
+            <tr><td>R</td><td>Recarregar</td></tr>
+            <tr><td>1 / 2 / 3 ou roda</td><td>Trocar de arma</td></tr>
+            <tr><td>G</td><td>Granada</td></tr>
+            <tr><td>V ou E</td><td>Faca</td></tr>
+            <tr><td>F</td><td>Comprar, abrir, usar</td></tr>
+            <tr><td>F (segurar)</td><td>Reanimar aliado, consertar barricada</td></tr>
+            <tr><td>Esc</td><td>Pausa e opções</td></tr>
+          </table>
+          <button class="btn ghost" data-back>Voltar</button>
+        </div>
+      </div>
+      <p class="build">protótipo 0.3</p>
+    </div>
+
+    <div id="loading" class="screen hidden"><div class="loading-text">Carregando a cidade…</div></div>
+
+    <script type="module" src="/src/client/main.ts"></script>
+  </body>
+</html>

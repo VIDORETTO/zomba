@@ -1,0 +1,66 @@
+// Teste no navegador (headless): velas, Forja e arma melhorada.
+import { chromium } from 'playwright-core';
+const out = process.argv[2] ?? '.';
+const browser = await chromium.launch({ channel: 'chrome', headless: true, args: ['--ignore-gpu-blocklist', '--use-angle=d3d11'] });
+const page = await browser.newPage({ viewport: { width: 1280, height: 720 } });
+const errs = [];
+page.on('pageerror', (e) => errs.push(e.message));
+page.on('console', (m) => { if (m.type() === 'error') errs.push(m.text()); });
+await page.goto('http://localhost:5173/?autoplay');
+await page.click('#btn-solo');
+await page.waitForFunction(() => window.__game, null, { timeout: 60000 });
+await page.waitForTimeout(1000);
+let ok = 0, bad = 0;
+const check = (name, cond, detail = '') => { cond ? ok++ : bad++; console.log(`${cond ? 'ok  ' : 'FALHOU'} ${name}${detail ? ` (${detail})` : ''}`); };
+const press = async (k) => { await page.keyboard.down(k); await page.waitForTimeout(40); await page.keyboard.up(k); };
+const calm = () => page.evaluate(() => { const sim = window.__game.transport.sim; sim.toSpawn = 0; sim.zombies.clear(); });
+const at = (x, z, yaw, pitch = 0) => page.evaluate(([x, z, yaw, pitch]) => window.__game.debugView(x, z, yaw, pitch), [x, z, yaw, pitch]);
+const forge = () => page.evaluate(() => window.__game.buffer.latest.s.forge);
+await calm();
+await page.evaluate(() => { window.__game.debugPoints(30000); window.__game.transport.sim.players.get('local').weapons = ['pistol', 'smg']; });
+await page.waitForTimeout(300);
+
+await at(38.5, 24.2, -Math.PI / 2, -0.1);
+await page.waitForTimeout(500);
+await page.screenshot({ path: `${out}/f1-forja-fria.png` });
+for (const [x, z] of [[31.2, 26], [39.0, 26], [46.6, 36]]) {
+  await at(x, z + 0.6, 0, -0.5);
+  await page.waitForTimeout(250);
+  await press('KeyF');
+  await page.waitForTimeout(250);
+}
+check('velas acendem a Forja', (await forge()).on);
+await at(32, 27.5, 0.3, -0.3);
+await page.waitForTimeout(600);
+await page.screenshot({ path: `${out}/f2-vela.png` });
+
+await page.evaluate(() => window.__game.weapon.switchTo('smg'));
+await page.waitForTimeout(700);
+await at(41.3, 24.2, -Math.PI / 2, -0.15);
+await page.waitForTimeout(300);
+const prompt = await page.evaluate(() => document.querySelector('.prompt-text')?.textContent);
+check('aviso de forjar', /forjar/.test(prompt ?? ''), prompt);
+await press('KeyF');
+await page.waitForTimeout(1500);
+await at(39.2, 24.2, -Math.PI / 2, -0.2);
+await page.waitForTimeout(300);
+await page.screenshot({ path: `${out}/f3-trabalhando.png` });
+check('Forja trabalhando', (await forge()).state === 'working');
+await page.waitForTimeout(2800);
+await page.screenshot({ path: `${out}/f4-pronta.png` });
+await at(41.3, 24.2, -Math.PI / 2, -0.15);
+await page.waitForTimeout(300);
+await press('KeyF');
+await page.waitForTimeout(1200);
+const w = await page.evaluate(() => ({ cur: window.__game.weapon.def.id, name: window.__game.weapon.def.name, mag: window.__game.weapon.ammo }));
+check('recebe a Enxame', w.cur === 'smg_pap' && w.mag === 60, JSON.stringify(w));
+await at(0, 18, 0, 0);
+await page.waitForTimeout(500);
+await page.screenshot({ path: `${out}/f5-enxame.png` });
+await page.mouse.down();
+await page.waitForTimeout(120);
+await page.screenshot({ path: `${out}/f6-enxame-tiro.png` });
+await page.mouse.up();
+check('sem erros na página', errs.length === 0, errs.slice(0, 3).join(' | '));
+console.log(`\n${ok} ok, ${bad} falharam`);
+await browser.close();

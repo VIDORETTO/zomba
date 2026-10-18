@@ -1,0 +1,62 @@
+// Fotografa os efeitos da Forja: arma entrando, martelando, pronta, pegando, mostrando e atirando com brasa.
+import { chromium } from 'playwright-core';
+const out = process.argv[2] ?? '.';
+const browser = await chromium.launch({ channel: 'chrome', headless: true, args: ['--ignore-gpu-blocklist', '--use-angle=d3d11'] });
+const page = await browser.newPage({ viewport: { width: 1280, height: 720 } });
+const errs = [];
+page.on('pageerror', (e) => errs.push(e.message));
+await page.goto('http://localhost:5173/?autoplay');
+await page.waitForLoadState('networkidle');
+await page.click('#btn-solo');
+await page.waitForFunction(() => window.__game, null, { timeout: 60000 });
+await page.waitForTimeout(2500);
+await page.evaluate(() => {
+  const g = window.__game;
+  const s = g.transport.sim;
+  s.toSpawn = 0;
+  s.zombies.clear();
+  s.forge.on = true;
+  const p = s.players.get('local');
+  p.points = 50000;
+  p.weapons = ['pistol', 'smg'];
+  // na frente da bigorna, olhando para ela
+  const f = g.o.map.interactables.find((i) => i.kind === 'forge');
+  const a = g.o.map.forge.anvil;
+  g.debugView(f.use[0], f.use[1], Math.atan2(-(a[0] - f.use[0]), -(a[2] - f.use[1])), -0.15);
+});
+await page.waitForTimeout(400);
+await page.evaluate(() => window.__game.weapon.switchTo('smg'));
+await page.waitForTimeout(800);
+const send = (weapon) => page.evaluate((weapon) => {
+  const g = window.__game;
+  const f = g.o.map.interactables.find((i) => i.kind === 'forge');
+  g.transport.send({ t: 'interact', id: f.id, weapon });
+}, weapon);
+await send('smg');
+await page.waitForTimeout(150);
+await page.screenshot({ path: `${out}/f1-entrando.png` });
+await page.waitForTimeout(1800);
+await page.screenshot({ path: `${out}/f2-martelando.png` });
+await page.waitForFunction(() => window.__game.transport.sim.forge.state === 'ready', null, { timeout: 8000 });
+await page.waitForTimeout(250);
+await page.screenshot({ path: `${out}/f3-pronta.png` });
+await page.waitForTimeout(1200);
+await page.screenshot({ path: `${out}/f4-aura.png` });
+await send('pistol');
+await page.waitForTimeout(120);
+await page.screenshot({ path: `${out}/f5-pegou.png` });
+await page.waitForFunction(() => window.__game.weapon.def.id === 'smg_pap', null, { timeout: 5000 });
+await page.waitForTimeout(700);
+await page.screenshot({ path: `${out}/f6-mostrando.png` });
+// atira pela rua com a Enxame
+await page.waitForTimeout(1500);
+await page.evaluate(() => window.__game.debugView(0, 24, 0, 0));
+await page.waitForTimeout(400);
+await page.mouse.move(640, 360);
+await page.mouse.down();
+await page.waitForTimeout(260);
+await page.screenshot({ path: `${out}/f7-tiro-brasa.png` });
+await page.mouse.up();
+const info = await page.evaluate(() => ({ weapon: window.__game.weapon.def.id, ember: document.querySelector('.emberflash') !== null }));
+console.log(JSON.stringify(info), 'erros:', errs.length ? errs.slice(0, 3).join(' | ') : 'nenhum');
+await browser.close();
