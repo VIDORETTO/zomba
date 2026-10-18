@@ -531,6 +531,167 @@ export class AudioEngine {
     o.connect(g);
   }
 
+  // ---------- armas maravilha ----------
+
+  // Canhão de Vento: estrondo grave e um sopro forte que some longe
+  windBlast(pos?: THREE.Vector3) {
+    const t = this.now;
+    const dst = pos ? this.out(pos, 7) : this.sfx;
+    const o = this.osc('sine', 70, t, 0.6);
+    o.frequency.exponentialRampToValueAtTime(28, t + 0.5);
+    const g = this.gain(0, dst);
+    this.env(g, t, 1.3, 0.004, 0.5);
+    o.connect(g);
+    const s = this.noiseSrc(t, 1.3);
+    const lp = this.filter('lowpass', 3000, 0.7);
+    lp.frequency.setValueAtTime(3800, t);
+    lp.frequency.exponentialRampToValueAtTime(260, t + 1.2);
+    const g2 = this.gain(0, dst);
+    this.env(g2, t, 1.0, 0.01, 1.2);
+    s.connect(lp).connect(g2);
+  }
+
+  // Arpão Elétrico: estalo seco e zumbido elétrico
+  arcZap(pos?: THREE.Vector3) {
+    const t = this.now;
+    const dst = pos ? this.out(pos, 5) : this.sfx;
+    const s = this.noiseSrc(t, 0.35);
+    const hp = this.filter('highpass', 2500, 0.7);
+    const g = this.gain(0, dst);
+    this.env(g, t, 0.9, 0.001, 0.12);
+    s.connect(hp).connect(g);
+    const o = this.osc('sawtooth', 120, t, 0.45);
+    const m = this.osc('square', 63, t, 0.45);
+    const mg = this.ctx.createGain();
+    mg.gain.value = 90;
+    m.connect(mg).connect(o.frequency);
+    const bp = this.filter('bandpass', 900, 2);
+    const g2 = this.gain(0, dst);
+    this.env(g2, t, 0.5, 0.005, 0.4);
+    o.connect(bp).connect(g2);
+  }
+
+  // faísca do arpão em cada zumbi atingido
+  arcHit(pos: THREE.Vector3) {
+    const t = this.now;
+    const s = this.noiseSrc(t, 0.15);
+    const bp = this.filter('bandpass', R(3000, 4500), 1.5);
+    const g = this.gain(0, this.out(pos, 3));
+    this.env(g, t, 0.45, 0.001, 0.12);
+    s.connect(bp).connect(g);
+  }
+
+  // Vórtice: rugido grave que gira enquanto o buraco fica aberto
+  vortexOpen(pos: THREE.Vector3, dur: number) {
+    const t = this.now;
+    const dst = this.out(pos, 6);
+    const o = this.osc('sawtooth', 48, t, dur);
+    o.frequency.linearRampToValueAtTime(72, t + dur);
+    const lfo = this.osc('sine', 3.2, t, dur);
+    const lg = this.ctx.createGain();
+    lg.gain.value = 260;
+    const lp = this.filter('lowpass', 500, 4);
+    lfo.connect(lg).connect(lp.frequency);
+    const g = this.gain(0, dst);
+    g.gain.setValueAtTime(0, t);
+    g.gain.linearRampToValueAtTime(0.7, t + 0.3);
+    g.gain.setValueAtTime(0.7, t + dur - 0.4);
+    g.gain.linearRampToValueAtTime(0, t + dur);
+    o.connect(lp).connect(g);
+    // ruído em laço (o buffer de ruído tem só 2 s)
+    const s = this.ctx.createBufferSource();
+    s.buffer = this.noise;
+    s.loop = true;
+    s.start(t);
+    s.stop(t + dur + 0.1);
+    const bp = this.filter('bandpass', 700, 0.8);
+    lfo.connect(lg).connect(bp.frequency);
+    const g2 = this.gain(0, dst);
+    g2.gain.setValueAtTime(0, t);
+    g2.gain.linearRampToValueAtTime(0.35, t + 0.4);
+    g2.gain.setValueAtTime(0.35, t + dur - 0.4);
+    g2.gain.linearRampToValueAtTime(0, t + dur);
+    s.connect(bp).connect(g2);
+  }
+
+  vortexClose(pos: THREE.Vector3) {
+    const t = this.now;
+    const dst = this.out(pos, 6);
+    const o = this.osc('sine', 40, t, 0.5);
+    o.frequency.exponentialRampToValueAtTime(180, t + 0.25);
+    const g = this.gain(0, dst);
+    this.env(g, t, 1, 0.01, 0.45);
+    o.connect(g);
+    const s = this.noiseSrc(t, 0.5);
+    const lp = this.filter('lowpass', 300, 1);
+    lp.frequency.exponentialRampToValueAtTime(2500, t + 0.3);
+    const g2 = this.gain(0, dst);
+    this.env(g2, t, 0.7, 0.2, 0.25);
+    s.connect(lp).connect(g2);
+  }
+
+  // ---------- Bispo e o ritual ----------
+
+  // voz do Bispo: coro grave e desafinado, como um canto de igreja distorcido
+  bispoVoice(pos: THREE.Vector3, k = 1) {
+    const t = this.now;
+    const dur = 1.2 + 1.2 * k;
+    const dst = this.out(pos, 5 + 3 * k);
+    const base = R(62, 74);
+    for (const mul of [1, 1.5, 2.01, 2.98]) {
+      const o = this.osc('sawtooth', base * mul, t, dur);
+      o.frequency.linearRampToValueAtTime(base * mul * (k > 1 ? 0.7 : 0.94), t + dur);
+      const vib = this.osc('sine', R(4.5, 6), t, dur);
+      const vg = this.ctx.createGain();
+      vg.gain.value = base * mul * 0.012;
+      vib.connect(vg).connect(o.frequency);
+      const f = this.filter('bandpass', 550 + mul * 120, 3);
+      const g = this.gain(0, dst);
+      g.gain.setValueAtTime(0.0001, t);
+      g.gain.linearRampToValueAtTime(0.16 * k / mul, t + 0.35);
+      g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+      o.connect(f).connect(g);
+    }
+  }
+
+  // vela preta acesa: chiado e um sussurro grave
+  ritualCandle(pos: THREE.Vector3) {
+    const t = this.now;
+    const s = this.noiseSrc(t, 0.8);
+    const bp = this.filter('bandpass', 1800, 2);
+    bp.frequency.exponentialRampToValueAtTime(500, t + 0.7);
+    const g = this.gain(0, this.out(pos, 3));
+    this.env(g, t, 0.5, 0.02, 0.7);
+    s.connect(bp).connect(g);
+    this.bispoVoice(pos, 0.35);
+  }
+
+  // as três velas acesas: sino grave tocando três vezes
+  ritualBell() {
+    for (let i = 0; i < 3; i++) {
+      const t = this.now + i * 1.1;
+      for (const [f, a] of [[98, 0.5], [196.5, 0.3], [261, 0.18], [392, 0.1]] as [number, number][]) {
+        const o = this.osc('sine', f, t, 3.5);
+        const g = this.gain(0, this.sfx);
+        this.env(g, t, a, 0.005, 3.4);
+        o.connect(g);
+      }
+    }
+  }
+
+  // aviso dos pilares de fogo: ronco que sobe do chão
+  pillarWarn(pos: THREE.Vector3) {
+    const t = this.now;
+    const o = this.osc('sawtooth', 40, t, 1.3);
+    o.frequency.exponentialRampToValueAtTime(90, t + 1.2);
+    const lp = this.filter('lowpass', 300, 2);
+    const g = this.gain(0, this.out(pos, 4));
+    g.gain.setValueAtTime(0.0001, t);
+    g.gain.exponentialRampToValueAtTime(0.6, t + 1.15);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + 1.35);
+    o.connect(lp).connect(g);
+  }
+
   // ---------- Carrasco ----------
 
   // rugido grave e áspero; vol 1 = rugido de batalha

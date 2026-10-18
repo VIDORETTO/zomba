@@ -63,7 +63,8 @@ const http = createServer((req, res) => {
   createReadStream(file).pipe(res);
 });
 
-const wss = new WebSocketServer({ server: http });
+// mensagens do jogo são pequenas; recusa as enormes
+const wss = new WebSocketServer({ server: http, maxPayload: 64 * 1024 });
 
 function send(c: Client, msg: ServerMsg) {
   if (c.ws.readyState === WebSocket.OPEN) c.ws.send(JSON.stringify(msg));
@@ -134,7 +135,12 @@ function startRoom(room: Room) {
   room.sim = sim;
   console.log(`[sala ${room.code}] partida iniciada com ${room.clients.size} jogador(es)`);
   room.timer = setInterval(() => {
-    sim.tick(TICK_DT);
+    // um erro numa sala não pode derrubar o servidor (e as outras salas)
+    try {
+      sim.tick(TICK_DT);
+    } catch (err) {
+      console.error(`[sala ${room.code}] erro na simulação:`, err);
+    }
     const list = sim.drainEvents();
     if (list.length) broadcast(room, { t: 'ev', list });
     broadcast(room, { t: 'snap', s: sim.snapshot() });
@@ -210,7 +216,12 @@ wss.on('connection', (ws) => {
         return;
       }
       default:
-        c.room?.sim?.handle(c.id, msg);
+        // mensagem malformada de um jogador não derruba a sala
+        try {
+          c.room?.sim?.handle(c.id, msg);
+        } catch (err) {
+          console.error(`[${c.id}] mensagem inválida (${String((msg as { t?: unknown }).t)}):`, (err as Error).message);
+        }
     }
   });
 

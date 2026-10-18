@@ -287,7 +287,7 @@ export function createBuilder(seed: number) {
   }
   // Vão com moldura de madeira; as tábuas são desenhadas pelo jogo conforme o estado.
   // A barreira invisível impede o jogador de passar, mas deixa os tiros passarem.
-  function zombieEntry(cx: number, cz: number, nx: number, nz: number, w = 1.6) {
+  function zombieEntry(cx: number, cz: number, nx: number, nz: number, w = 1.6, area?: string) {
     const lx = Math.abs(nz);
     const lz = Math.abs(nx);
     for (const s of [-1, 1]) {
@@ -298,7 +298,7 @@ export function createBuilder(seed: number) {
     box(top.x0, 2.3, top.z0, top.x1, 2.5, top.z1, 'woodDark', false);
     const bar = facing(cx, cz, nx, nz, w, 0.3);
     box(bar.x0, 0, bar.z0, bar.x1, 3, bar.z1, 'concrete', true, { hidden: true, bulletThrough: true });
-    entries.push({ id: entries.length, x: cx, z: cz, nx, nz, w });
+    entries.push(area ? { id: entries.length, x: cx, z: cz, nx, nz, w, area } : { id: entries.length, x: cx, z: cz, nx, nz, w });
   }
   // Bloco alinhado aos eixos com frente virada para (nx, nz): largura ao longo da parede, profundidade para a frente.
   function facing(x: number, z: number, nx: number, nz: number, width: number, depth: number) {

@@ -22,7 +22,14 @@ export interface WeaponDef {
   reloadTime: number;
   reloadEmptyTime: number;
   // projétil em vez de tiro instantâneo (explode no impacto, depois de grudar ou no pavio; a lâmina só corta)
-  projectile?: 'launcher' | 'bolt' | 'ray' | 'rocket' | 'blade' | 'drum';
+  // armas maravilha: vento (cone na hora), arpão (raio que salta na hora) e vórtice (esfera que vira buraco negro)
+  projectile?: 'launcher' | 'bolt' | 'ray' | 'rocket' | 'blade' | 'drum' | 'wind' | 'arc' | 'vortex';
+  // arma maravilha única: só um jogador pode ter cada uma
+  unique?: boolean;
+  // Arpão Elétrico: em quantos zumbis o raio salta
+  chain?: number;
+  // Vórtice: raio do buraco negro (m) e quanto tempo ele fica aberto (s)
+  vortex?: { radius: number; time: number };
   // rajada: quantos tiros por puxada do gatilho e o intervalo entre eles
   burst?: number;
   burstDelay?: number;
@@ -91,12 +98,12 @@ export const WEAPONS: Record<string, WeaponDef> = {
 
   // ---------- armas que só saem na Caixa Misteriosa ----------
   lmg: {
-    ...base, id: 'lmg', name: 'Metralhadora leve', source: 'box', cls: 'rifle', cost: 0,
+    ...base, id: 'lmg', name: 'Metralhadora leve', source: 'wall', cls: 'rifle', cost: 2500,
     damage: 80, fireDelay: 0.085, auto: true, mag: 100, reserve: 300,
     reloadTime: 4.2, reloadEmptyTime: 4.6, range: 100, falloffStart: 40, minDamageMult: 0.6, adsTime: 0.3, recoil: 0.55,
   },
   sniper: {
-    ...base, id: 'sniper', name: 'Fuzil de precisão', source: 'box', cls: 'rifle', cost: 0,
+    ...base, id: 'sniper', name: 'Fuzil de precisão', source: 'wall', cls: 'rifle', cost: 2400,
     damage: 500, headMult: 3, fireDelay: 1.1, auto: false, mag: 5, reserve: 40, pierce: 3, scope: true,
     reloadTime: 3.0, reloadEmptyTime: 3.4, range: 200, falloffStart: 200, minDamageMult: 1, adsTime: 0.28, recoil: 3,
   },
@@ -106,7 +113,7 @@ export const WEAPONS: Record<string, WeaponDef> = {
     reloadTime: 2.3, reloadEmptyTime: 2.6, range: 70, falloffStart: 22, minDamageMult: 0.6, adsTime: 0.16, recoil: 0.8,
   },
   autoshotgun: {
-    ...base, id: 'autoshotgun', name: 'Escopeta automática', source: 'box', cls: 'shotgun', cost: 0,
+    ...base, id: 'autoshotgun', name: 'Escopeta automática', source: 'wall', cls: 'shotgun', cost: 2000,
     damage: 75, headMult: 1.5, pellets: 7, fireDelay: 0.2, auto: true, mag: 20, reserve: 80,
     reloadTime: 3.2, reloadEmptyTime: 3.6, spreadHip: 0.07, spreadAds: 0.055, range: 28, falloffStart: 8, minDamageMult: 0.25, recoil: 1.8,
   },
@@ -127,22 +134,22 @@ export const WEAPONS: Record<string, WeaponDef> = {
     reloadTime: 2.2, reloadEmptyTime: 2.6, range: 100, falloffStart: 40, minDamageMult: 0.65, recoil: 0.55,
   },
   revolver: {
-    ...base, id: 'revolver', name: 'Revólver .44', source: 'box', cls: 'pistol', cost: 0, sound: 'magnum',
+    ...base, id: 'revolver', name: 'Revólver .44', source: 'wall', cls: 'pistol', cost: 1100, sound: 'magnum',
     damage: 200, fireDelay: 0.32, auto: false, mag: 6, reserve: 48,
     reloadTime: 2.4, reloadEmptyTime: 2.4, range: 90, falloffStart: 30, minDamageMult: 0.6, adsTime: 0.18, recoil: 2.4,
   },
   burstpistol: {
-    ...base, id: 'burstpistol', name: 'Pistola de rajada', source: 'box', cls: 'pistol', cost: 0,
+    ...base, id: 'burstpistol', name: 'Pistola de rajada', source: 'wall', cls: 'pistol', cost: 900,
     damage: 65, fireDelay: 0.3, burst: 3, burstDelay: 0.06, auto: false, mag: 15, reserve: 150,
     reloadTime: 1.6, reloadEmptyTime: 1.95, range: 70, falloffStart: 22, minDamageMult: 0.6, adsTime: 0.15, recoil: 0.6,
   },
   machinepistol: {
-    ...base, id: 'machinepistol', name: 'Metralhadora de mão', source: 'box', cls: 'smg', cost: 0,
+    ...base, id: 'machinepistol', name: 'Metralhadora de mão', source: 'wall', cls: 'smg', cost: 1200,
     damage: 42, headMult: 2.5, fireDelay: 0.052, auto: true, mag: 24, reserve: 168,
     reloadTime: 1.7, reloadEmptyTime: 2.0, range: 45, falloffStart: 12, minDamageMult: 0.5, adsTime: 0.14, recoil: 0.38,
   },
   dmr: {
-    ...base, id: 'dmr', name: 'Fuzil de atirador', source: 'box', cls: 'rifle', cost: 0, optic: 'red',
+    ...base, id: 'dmr', name: 'Fuzil de atirador', source: 'wall', cls: 'rifle', cost: 1800, optic: 'red',
     damage: 230, fireDelay: 0.22, auto: false, mag: 10, reserve: 80, pierce: 2,
     reloadTime: 2.5, reloadEmptyTime: 2.9, range: 150, falloffStart: 80, minDamageMult: 0.8, adsTime: 0.24, recoil: 1.6,
   },
@@ -165,6 +172,23 @@ export const WEAPONS: Record<string, WeaponDef> = {
     ...base, id: 'raygun', name: 'Desintegrador', source: 'wonder', cls: 'smg', cost: 0, projectile: 'ray',
     damage: 1000, fireDelay: 0.28, auto: false, mag: 20, reserve: 160,
     reloadTime: 2.6, reloadEmptyTime: 2.6, range: 120, falloffStart: 120, minDamageMult: 1, recoil: 0.9,
+  },
+  // ---------- armas maravilha (só na Caixa, 2% cada, uma de cada por partida) ----------
+  wind: {
+    ...base, id: 'wind', name: 'Canhão de Vento', source: 'wonder', cls: 'shotgun', cost: 0, projectile: 'wind', unique: true,
+    damage: 3000, fireDelay: 0.9, auto: false, mag: 2, reserve: 12,
+    reloadTime: 2.6, reloadEmptyTime: 2.6, range: 13, falloffStart: 13, minDamageMult: 1, adsTime: 0.3, recoil: 3,
+  },
+  arc: {
+    ...base, id: 'arc', name: 'Arpão Elétrico', source: 'wonder', cls: 'rifle', cost: 0, projectile: 'arc', unique: true, chain: 10,
+    damage: 2500, fireDelay: 0.7, auto: false, mag: 4, reserve: 32,
+    reloadTime: 2.4, reloadEmptyTime: 2.4, range: 45, falloffStart: 45, minDamageMult: 1, adsTime: 0.25, recoil: 1.4,
+  },
+  vortex: {
+    ...base, id: 'vortex', name: 'Vórtice', source: 'wonder', cls: 'shotgun', cost: 0, projectile: 'vortex', unique: true,
+    vortex: { radius: 7.5, time: 6 },
+    damage: 4000, fireDelay: 1.0, auto: false, mag: 1, reserve: 6,
+    reloadTime: 2.2, reloadEmptyTime: 2.2, range: 60, falloffStart: 60, minDamageMult: 1, adsTime: 0.3, recoil: 2,
   },
 };
 
@@ -192,6 +216,9 @@ const UPGRADES: Record<string, { name: string; mod: (d: WeaponDef) => Partial<We
   rocket: { name: 'Dragão', mod: () => ({ mag: 3 }) },
   blade: { name: 'Presa de Ferro', mod: () => ({ mag: 2 }) },
   drum: { name: 'Tambor do Inferno', mod: () => ({ mag: 9 }) },
+  wind: { name: 'Furacão', mod: (d) => ({ range: d.range * 1.4, falloffStart: d.range * 1.4 }) },
+  arc: { name: 'Tempestade de Ferro', mod: () => ({ chain: 16 }) },
+  vortex: { name: 'Singularidade', mod: () => ({ vortex: { radius: 10.5, time: 8 }, mag: 2 }) },
 };
 
 export const upgradeId = (id: string) => `${id}_pap`;
@@ -244,15 +271,31 @@ export const PROJECTILES: Record<NonNullable<WeaponDef['projectile']>, Projectil
   rocket: { speed: 30, gravity: 0, radius: 5.2, minDamage: 0.3, armDist: 2.5 },
   blade: { speed: 48, gravity: 4, radius: 0, minDamage: 1, armDist: 0 },
   drum: { speed: 22, gravity: 15, radius: 3.8, minDamage: 0.25, armDist: 0, fuse: 1.3 },
+  // vento e arpão agem na hora (sem projétil); o vórtice voa em arco e abre onde bater
+  wind: { speed: 0, gravity: 0, radius: 0, minDamage: 1, armDist: 0 },
+  arc: { speed: 0, gravity: 0, radius: 0, minDamage: 1, armDist: 0 },
+  vortex: { speed: 26, gravity: 10, radius: 0, minDamage: 1, armDist: 0 },
+};
+
+// Medidas das armas maravilha: abertura do cone do vento (rad), empurrão e subida dos zumbis arremessados,
+// distância do salto do arpão (m), força com que o vórtice puxa (m/s) e o raio do centro que mata.
+export const WONDER = {
+  windCone: 0.42,
+  windPush: 16,
+  windLift: 6,
+  arcJump: 7,
+  vortexPull: 7,
+  vortexCore: 0.9,
 };
 
 // Caixa Misteriosa: pesos do sorteio (somam 100).
 export const BOX_POOL: [string, number][] = [
-  ['carbine', 6], ['doublebarrel', 5], ['smg', 5], ['rifle', 6], ['pump', 6],
-  ['lmg', 6], ['sniper', 6], ['dualpistol', 6], ['autoshotgun', 6],
+  ['carbine', 5], ['doublebarrel', 5], ['smg', 5], ['rifle', 5], ['pump', 5],
+  ['lmg', 5], ['sniper', 5], ['dualpistol', 6], ['autoshotgun', 6],
   ['launcher', 6], ['crossbow', 5], ['raygun', 3],
-  ['revolver', 6], ['burstpistol', 5], ['machinepistol', 6], ['dmr', 6],
+  ['revolver', 6], ['burstpistol', 5], ['machinepistol', 6], ['dmr', 5],
   ['rocket', 4], ['blade', 3], ['drum', 4],
+  ['wind', 2], ['arc', 2], ['vortex', 2],
 ];
 
 export const BOX = {

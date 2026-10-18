@@ -1,9 +1,10 @@
 import {
-  BARRICADE, BLEEDOUT_TIME, BOSS, BUS, DOGS, VULTO, FIRST_ROUND_DELAY, INTERMISSION_TIME, LAVA_DAMAGE, LAVA_INTERVAL,
+  BARRICADE, BISPO, BLEEDOUT_TIME, BOSS, BUS, DOGS, VULTO, FIRST_ROUND_DELAY, INTERMISSION_TIME, LAVA_DAMAGE, LAVA_INTERVAL,
   PLAYER, POINTS, REVIVE_RANGE, REVIVE_TIME, ZOMBIE,
 } from './constants';
 import { ENTRY_BOARDS, entryPoints, type MapDef } from './map/types';
 import { NavGrid } from './navgrid';
+import { BUS_DOOR, busCollide, busGround, toLocal, toWorld } from './busBody';
 import type {
   BoxState, ForgeState, GameEvent, NetPlayer, NetZombie, PlayerInput, ProjectileKind, RoundState, Snapshot, ZombieAnim, ZombieKind,
 } from './protocol';
@@ -11,7 +12,7 @@ import { angleLerp, clamp } from './rng';
 import { MAX_PERKS, PERKS, PERK_FX, SELF_REVIVE_TIME, SOLO_SELF_REVIVES, perkPrice, type PerkId } from './perks';
 import { POWERUP, POWERUPS, type PowerupKind } from './powerups';
 import { BANK, MAX_START_ROUND, startPoints } from './progress';
-import { BOX, BOX_POOL, FORGE, GRENADE, KNIFE, PROJECTILES, SIGHTS, WEAPONS, ammoPrice, baseId, damageFor, sightFits, upgradeId, wallAmmoPrice, type HitPart } from './weapons';
+import { BOX, BOX_POOL, FORGE, GRENADE, KNIFE, PROJECTILES, SIGHTS, WEAPONS, WONDER, ammoPrice, baseId, damageFor, sightFits, upgradeId, wallAmmoPrice, type HitPart, type WeaponDef } from './weapons';
 import { World } from './world';
 
 interface SimPlayer extends NetPlayer {
@@ -28,7 +29,7 @@ interface SimPlayer extends NetPlayer {
 
 interface SimGrenade {
   id: number;
-  kind: ProjectileKind;
+  kind: Exclude<ProjectileKind, 'orb'>;
   weapon: string;
   traveled: number;
   stuck: boolean;
@@ -67,6 +68,19 @@ interface SimZombie {
   phaseT: number;
   // só o Carrasco
   boss?: BossState;
+  // só o Bispo
+  bispo?: BispoState;
+}
+
+interface BispoState {
+  maxHp: number;
+  phase: number;
+  shieldT: number;
+  ringT: number;
+  orbT: number;
+  castT: number;
+  summonT: number;
+  pillarT: number;
 }
 
 interface BossState {
@@ -105,6 +119,9 @@ const randInt = (a: number, b: number) => a + Math.floor(Math.random() * (b - a 
 const isDog = (z: { kind: ZombieKind }) => z.kind === 3;
 const isBoss = (z: { kind: ZombieKind }) => z.kind === 4;
 const isVulto = (z: { kind: ZombieKind }) => z.kind === 5;
+const isBispo = (z: { kind: ZombieKind }) => z.kind === 6;
+// chefões: não morrem de Golpe Fatal nem da Bomba, não são atropelados nem engolidos
+const isChief = (z: { kind: ZombieKind }) => z.kind === 4 || z.kind === 6;
 
 export function bossHealth(round: number, players: number): number {
   return BOSS.healthMult * zombieHealth(round) * Math.max(1, players);
@@ -136,6 +153,15 @@ export class GameSim {
   private readonly occupant: (number | null)[];
   private grenades: SimGrenade[] = [];
   private nextGid = 1;
+  // buracos negros do Vórtice e os zumbis que eles estão puxando neste passo
+  private vortices: { id: number; x: number; y: number; z: number; r: number; t: number; dur: number; pid: string; damage: number }[] = [];
+  private readonly sucked = new Set<number>();
+  // como o próximo zumbi morto morre (arremessado, engolido, eletrocutado): vai junto no evento
+  private killFx: { fling?: [number, number, number]; sucked?: boolean; shock?: boolean } | null = null;
+  // ritual do Bispo (Cidade), bolas de fogo dele e pilares marcados no chão
+  readonly ritual: { candles: boolean[]; state: 'idle' | 'summoning' | 'fight' | 'done'; t: number } | null;
+  private orbs: { id: number; x: number; y: number; z: number; vx: number; vy: number; vz: number; t: number }[] = [];
+  private pillars: { x: number; z: number; t: number }[] = [];
   // Caixa Misteriosa
   readonly box: BoxState = { loc: 0, state: 'idle', t: 0, weapon: null, pid: null, fireSale: false };
   private boxResult = '';
@@ -183,6 +209,7 @@ export class GameSim {
       const [nx, nz] = route.path[(s.at + 1) % route.path.length];
       this.bus = { x, z, yaw: Math.atan2(nx - x, nz - z), seg: s.at, d: 0, wait: BUS.firstWait, stop: s.zone, honked: false };
     }
+    this.ritual = map.ritual ? { candles: map.ritual.candles.map(() => false), state: 'idle', t: 0 } : null;
     this.world = new World(map);
     this.nav = new NavGrid(this.world, ZOMBIE.radius);
     this.boards = map.entries.map(() => ENTRY_BOARDS);
@@ -238,6 +265,7 @@ export class GameSim {
     switch (msg.t) {
       case 'state': {
         if (p.life === 'dead') return;
+        if (![msg.x, msg.y, msg.z, msg.yaw, msg.pitch, msg.speed].every(Number.isFinite)) return;
         p.yaw = msg.yaw;
         p.pitch = msg.pitch;
         if (p.life === 'alive') {
@@ -251,7 +279,7 @@ export class GameSim {
         break;
       }
       case 'shoot': {
-        if (p.life === 'dead') return;
+        if (p.life === 'dead' || !Array.isArray(msg.hits)) return;
         const def = WEAPONS[msg.weapon];
         if (!def || !p.weapons.includes(def.id)) return;
         this.emit({ e: 'shot', pid, weapon: def.id });
@@ -312,6 +340,13 @@ export class GameSim {
         const dl = Math.hypot(msg.dx, msg.dy, msg.dz);
         if (!Number.isFinite(dl) || dl < 1e-3 || Math.hypot(msg.x - p.x, msg.y - p.y - 1.4, msg.z - p.z) > 2.5) return;
         p.lastLaunch = this.time;
+        if (def.projectile === 'wind' || def.projectile === 'arc') {
+          const ox = msg.x, oy = msg.y, oz = msg.z, dx = msg.dx / dl, dy = msg.dy / dl, dz = msg.dz / dl;
+          this.emit({ e: 'shot', pid, weapon: def.id });
+          if (def.projectile === 'wind') this.windBlast(p, def, ox, oy, oz, dx, dy, dz);
+          else this.arcShot(p, def, ox, oy, oz, dx, dy, dz);
+          break;
+        }
         const sp = PROJECTILES[def.projectile].speed;
         this.grenades.push({
           id: this.nextGid++, kind: def.projectile, weapon: def.id, traveled: 0, stuck: false, stuckT: 0,
@@ -390,6 +425,22 @@ export class GameSim {
       this.addPoints(p, -SIGHTS[kind].cost);
       p.sights[b] = kind;
       this.emit({ e: 'sight', pid: p.id, weapon, sight: kind });
+      return;
+    }
+
+    if (it.kind === 'ritual') {
+      const r = this.ritual;
+      const i = it.candle!;
+      if (!r || r.state !== 'idle' || r.candles[i]) return;
+      // as velas pretas só pegam fogo depois que a Forja acende
+      if (!this.forge.on) return deny('desligada');
+      r.candles[i] = true;
+      this.emit({ e: 'ritual', phase: 'candle', pid: p.id, candle: i });
+      if (r.candles.every(Boolean)) {
+        r.state = 'summoning';
+        r.t = BISPO.summonDelay;
+        this.emit({ e: 'ritual', phase: 'start', pid: p.id, candle: i });
+      }
       return;
     }
 
@@ -540,7 +591,11 @@ export class GameSim {
 
   // Sorteio da caixa: nunca uma arma que o jogador já tem.
   private pickBoxWeapon(p: SimPlayer): string {
-    const pool = BOX_POOL.filter(([w]) => !p.weapons.includes(w) && !p.weapons.includes(upgradeId(w)));
+    // arma maravilha única: fica fora do sorteio enquanto alguém a tiver (ou ela estiver na Forja)
+    const taken = new Set<string>();
+    for (const o of this.players.values()) for (const w of o.weapons) taken.add(baseId(w));
+    if (this.forge.weapon) taken.add(baseId(this.forge.weapon));
+    const pool = BOX_POOL.filter(([w]) => !p.weapons.includes(w) && !p.weapons.includes(upgradeId(w)) && !(WEAPONS[w].unique && taken.has(w)));
     const total = pool.reduce((a, [, wt]) => a + wt, 0);
     let r = Math.random() * total;
     for (const [w, wt] of pool) {
@@ -609,10 +664,10 @@ export class GameSim {
 
   // Sorteia um item no lugar do zumbi morto (e garante Munição Cheia no último das rodadas 2, 5 e 10).
   private maybeDrop(z: SimZombie) {
-    if (isBoss(z)) return;
+    if (isChief(z)) return;
     // na rodada infernal só cai a Munição Cheia do último cão (no fim da rodada)
     if (isDog(z) || isVulto(z)) return;
-    const last = this.state === 'active' && this.toSpawn === 0 && this.zombies.size === 0;
+    const last = this.state === 'active' && this.toSpawn === 0 && this.roundZombies() === 0;
     let kind: PowerupKind | null = null;
     if (last && POWERUP.guaranteedAmmoRounds.includes(this.round)) kind = 'maxammo';
     else if (this.dropsThisRound < POWERUP.maxPerRound && Math.random() < POWERUP.dropChance) {
@@ -639,7 +694,7 @@ export class GameSim {
         break;
       case 'bomb':
         for (const z of [...this.zombies.values()]) {
-          if (isBoss(z)) continue;
+          if (isChief(z)) continue;
           this.zombies.delete(z.id);
           if (z.entry >= 0 && this.occupant[z.entry] === z.id) this.occupant[z.entry] = null;
           if (isDog(z)) this.lastDogPos = [z.x, z.y, z.z];
@@ -723,7 +778,30 @@ export class GameSim {
 
   private damageZombie(z: SimZombie, dmg: number, p: SimPlayer, part: HitPart, knife: boolean, blast = false) {
     // Golpe Fatal: qualquer dano mata (menos o Carrasco)
-    z.hp -= this.effects.insta > 0 && !isBoss(z) ? Math.max(dmg, z.hp) : dmg;
+    // Bispo trocando de fase: imune
+    if (z.bispo && z.bispo.shieldT > 0) return;
+    z.hp -= this.effects.insta > 0 && !isChief(z) ? Math.max(dmg, z.hp) : dmg;
+    if (z.bispo) {
+      // cada fase termina num terço da vida: o dano que sobra não pula a troca de fase
+      const b = z.bispo;
+      const floor = b.phase === 1 ? 2 / 3 : b.phase === 2 ? 1 / 3 : 0;
+      if (floor > 0 && z.hp <= b.maxHp * floor) {
+        z.hp = b.maxHp * floor;
+        b.phase++;
+        b.shieldT = BISPO.shield.time;
+        b.ringT = 0;
+        b.pillarT = 2;
+        // some numa explosão de fogo e reaparece em outro ponto do mapa
+        const spots = this.world.map.ritual?.arena ?? [[z.x, z.z]];
+        const far = spots.filter(([x, zz]) => Math.hypot(x - z.x, zz - z.z) > 8);
+        const [nx, nz] = (far.length ? far : spots)[Math.floor(Math.random() * (far.length || spots.length))];
+        this.emit({ e: 'boom', x: r3(z.x), y: r3(z.y + 1.5), z: r3(z.z), kind: 'fire' });
+        z.x = nx;
+        z.z = nz;
+        z.y = this.world.groundHeight(nx, nz, BISPO.radius, 0.3);
+        this.emit({ e: 'bispo', phase: 'phase', zid: z.id, x: r3(z.x), z: r3(z.z), n: b.phase });
+      }
+    }
     if (z.boss) {
       z.boss.taken += dmg;
       if (z.boss.armor && z.boss.taken >= z.boss.maxHp * BOSS.armorFrac && z.hp > 0) {
@@ -740,12 +818,14 @@ export class GameSim {
     if (z.entry >= 0 && this.occupant[z.entry] === z.id) this.occupant[z.entry] = null;
     if (isDog(z)) this.dogBlast(z);
     if (isBoss(z)) this.bossDeath(z);
+    if (isBispo(z)) this.bispoDeath(z);
     p.kills++;
     if (part === 'head' && !knife) p.headshots++;
     this.addPoints(p, knife ? POINTS.knifeKill : part === 'head' ? POINTS.headKill : POINTS.kill);
     this.emit({
       e: 'zkill', zid: z.id, pid: p.id, part: knife ? 'knife' : part,
       x: r3(z.x), y: r3(z.y), z: r3(z.z), yaw: r3(z.yaw), kind: z.kind, look: z.look,
+      ...(this.killFx ?? {}),
     });
     this.maybeDrop(z);
   }
@@ -831,7 +911,7 @@ export class GameSim {
     return base / (1 + 0.25 * (this.players.size - 1));
   }
 
-  private spawnZombie() {
+  private spawnZombie(at?: [number, number]) {
     const alive = [...this.players.values()].filter((p) => p.life === 'alive');
     const ref = alive.length ? alive : [...this.players.values()];
     // candidatos: pontos de surgir da terra e entradas com tábuas (as entradas pesam o dobro)
@@ -842,7 +922,7 @@ export class GameSim {
     };
     type Cand = { x: number; z: number; entry: number; d: number };
     const scored: Cand[] = this.openSpawns().map((s) => ({ x: s.x, z: s.z, entry: -1, d: nearest(s.x, s.z) }));
-    for (const e of this.world.map.entries) {
+    for (const e of this.openEntries()) {
       const pts = entryPoints(e);
       const c = { x: pts.outside[0], z: pts.outside[1], entry: e.id, d: nearest(pts.inside[0], pts.inside[1]) };
       scored.push(c, c);
@@ -855,7 +935,7 @@ export class GameSim {
     }
     if (!pool.length) pool = scored.filter((c) => c.d >= 8);
     if (!pool.length) pool = scored;
-    const pick = pool[Math.floor(Math.random() * pool.length)];
+    const pick = at ? { x: at[0], z: at[1], entry: -1, d: 0 } : pool[Math.floor(Math.random() * pool.length)];
     const jitter = pick.entry < 0 ? 1.5 : 0.6;
     const x = pick.x + (Math.random() - 0.5) * jitter;
     const z = pick.z + (Math.random() - 0.5) * jitter;
@@ -1128,6 +1208,7 @@ export class GameSim {
     }
     this.world.collideCylinder(z, BOSS.radius, BOSS.height);
     z.y = this.world.groundHeight(z.x, z.z, BOSS.radius, z.y);
+    if (this.bus) busCollide(this.bus, z, BOSS.radius);
     face(z.x + dx, z.z + dz, 4);
     // preso longe de todos: sobe da terra em outro ponto
     const nd = this.nav.distanceAt(z.x, z.z);
@@ -1136,7 +1217,8 @@ export class GameSim {
       z.stuckT = 0;
     } else z.stuckT += dt;
     if (z.stuckT > ZOMBIE.stuckTime && td > 14) {
-      const spots = this.openSpawns().filter((s) => Math.min(...targets.map((p) => Math.hypot(p.x - s.x, p.z - s.z))) > 10);
+      const near = this.world.map.zones ? this.dogSpot(14, 30) : null;
+      const spots = near ? [{ x: near[0], z: near[1] }] : this.openSpawns().filter((s) => Math.min(...targets.map((p) => Math.hypot(p.x - s.x, p.z - s.z))) > 10);
       if (spots.length) {
         const s = spots[Math.floor(Math.random() * spots.length)];
         z.x = s.x;
@@ -1241,11 +1323,12 @@ export class GameSim {
     for (const z of this.zombies.values()) {
       if (z.anim === 'rise') continue;
       const dog = isDog(z);
-      const cx = z.x, cy = z.y + (dog ? 0.5 : isBoss(z) ? 1.6 : 1.1), cz = z.z;
+      const big = isChief(z);
+      const cx = z.x, cy = z.y + (dog ? 0.5 : isBispo(z) ? 1.8 : big ? 1.6 : 1.1), cz = z.z;
       const t = Math.max(0, Math.min(1, ((cx - ax) * dx + (cy - ay) * dy + (cz - az) * dz) / len2));
       const px = ax + dx * t, py = ay + dy * t, pz = az + dz * t;
-      const rw = isBoss(z) ? 0.8 : 0.5;
-      if (Math.abs(cx - px) < rw && Math.abs(cz - pz) < rw && Math.abs(cy - py) < (dog ? 0.5 : isBoss(z) ? 1.5 : 0.95)) return { z, t };
+      const rw = big ? 0.8 : 0.5;
+      if (Math.abs(cx - px) < rw && Math.abs(cz - pz) < rw && Math.abs(cy - py) < (dog ? 0.5 : big ? 1.6 : 0.95)) return { z, t };
     }
     return null;
   }
@@ -1253,7 +1336,7 @@ export class GameSim {
   private explode(g: SimGrenade) {
     const isGrenade = g.kind === 'grenade';
     const def = isGrenade ? null : WEAPONS[g.weapon];
-    const cfg = isGrenade ? null : PROJECTILES[g.kind as Exclude<ProjectileKind, 'grenade'>];
+    const cfg = isGrenade ? null : PROJECTILES[g.kind as Exclude<ProjectileKind, 'grenade' | 'orb'>];
     const radius = isGrenade ? GRENADE.radius : cfg!.radius;
     const maxD = isGrenade ? GRENADE.damage : def!.damage;
     const minD = isGrenade ? GRENADE.minDamage : def!.damage * cfg!.minDamage;
@@ -1265,7 +1348,6 @@ export class GameSim {
       if (d > radius) continue;
       const dmg = (maxD + (minD - maxD) * (d / radius)) * mult;
       if (owner) this.damageZombie(z, dmg, owner, 'body', false, true);
-      else z.hp -= dmg;
     }
   }
 
@@ -1300,7 +1382,10 @@ export class GameSim {
           g.y += g.vy * dt * hitT;
           g.z += g.vz * dt * hitT;
           g.traveled += step * hitT;
-          if (g.kind === 'bolt') {
+          if (g.kind === 'vortex') {
+            this.grenades.splice(i, 1);
+            this.openVortex(g);
+          } else if (g.kind === 'bolt') {
             g.stuck = true;
             g.stuckT = 0;
           } else if (g.kind === 'blade') {
@@ -1330,6 +1415,11 @@ export class GameSim {
         g.y = ny;
         g.z = nz;
         g.traveled += step;
+        if (g.kind === 'vortex' && (g.y < 0.15 || g.t > 4)) {
+          this.grenades.splice(i, 1);
+          this.openVortex(g);
+          continue;
+        }
         if (g.t > 6 || g.y < -2) this.grenades.splice(i, 1);
         continue;
       }
@@ -1373,6 +1463,387 @@ export class GameSim {
     }
   }
 
+  // dano das armas maravilha: mata qualquer zumbi comum de uma vez; chefões só levam o dano
+  private wonderDamage(z: SimZombie, base: number, p: SimPlayer) {
+    const mult = p.perks.includes('gatilho') ? PERK_FX.gatilhoDamageMult : 1;
+    return isChief(z) ? base * mult : Math.max(base * mult, z.hp);
+  }
+
+  // Canhão de Vento: todo zumbi no cone à frente (e à vista) morre arremessado para longe.
+  private windBlast(p: SimPlayer, def: WeaponDef, ox: number, oy: number, oz: number, dx: number, dy: number, dz: number) {
+    const range = def.range;
+    this.emit({ e: 'wind', pid: p.id, x: r3(ox), y: r3(oy), z: r3(oz), dx: r3(dx), dy: r3(dy), dz: r3(dz), range: r3(range) });
+    const cosMax = Math.cos(WONDER.windCone);
+    for (const z of [...this.zombies.values()]) {
+      const cy = z.y + (isDog(z) ? 0.5 : 1.1);
+      const vx = z.x - ox, vy = cy - oy, vz = z.z - oz;
+      const d = Math.hypot(vx, vy, vz);
+      if (d > range || d < 1e-3) continue;
+      if ((vx * dx + vy * dy + vz * dz) / d < cosMax && d > 1.6) continue;
+      if (!this.world.lineOfSight(ox, oy, oz, z.x, cy, z.z)) continue;
+      const h = Math.hypot(vx, vz) || 1;
+      const push = WONDER.windPush * (1 - (0.5 * d) / range);
+      this.killFx = { fling: [r3((vx / h) * push), r3(WONDER.windLift * (0.7 + Math.random() * 0.6)), r3((vz / h) * push)] };
+      this.damageZombie(z, this.wonderDamage(z, def.damage, p), p, 'body', false, true);
+      this.killFx = null;
+      // quem aguenta (chefões) é empurrado para trás
+      if (this.zombies.has(z.id)) {
+        z.x += (vx / h) * 1.2;
+        z.z += (vz / h) * 1.2;
+        this.world.collideCylinder(z, isBoss(z) ? BOSS.radius : ZOMBIE.radius, isBoss(z) ? BOSS.height : ZOMBIE.height);
+      }
+    }
+  }
+
+  // Arpão Elétrico: o raio acerta o primeiro zumbi na mira e salta para o mais perto, até o limite de saltos da arma.
+  private arcShot(p: SimPlayer, def: WeaponDef, ox: number, oy: number, oz: number, dx: number, dy: number, dz: number) {
+    const wh = this.world.raycast(ox, oy, oz, dx, dy, dz, def.range);
+    const len = wh ? wh.t : def.range;
+    const pts = [r3(ox), r3(oy), r3(oz)];
+    let cur = this.zombieOnSegment(ox, oy, oz, ox + dx * len, oy + dy * len, oz + dz * len)?.z ?? null;
+    if (!cur) {
+      pts.push(r3(ox + dx * len), r3(oy + dy * len), r3(oz + dz * len));
+      this.emit({ e: 'arc', pid: p.id, pts });
+      return;
+    }
+    const done = new Set<number>();
+    const chest = (z: SimZombie): [number, number, number] => [z.x, z.y + (isDog(z) ? 0.5 : isBoss(z) ? 1.8 : 1.2), z.z];
+    for (let n = 0; cur && n < (def.chain ?? 10); n++) {
+      const [cx, cy, cz] = chest(cur);
+      pts.push(r3(cx), r3(cy), r3(cz));
+      done.add(cur.id);
+      this.killFx = { shock: true };
+      this.damageZombie(cur, this.wonderDamage(cur, def.damage, p), p, 'body', false, true);
+      this.killFx = null;
+      let next: SimZombie | null = null;
+      let best = WONDER.arcJump;
+      for (const o of this.zombies.values()) {
+        if (done.has(o.id) || o.anim === 'rise') continue;
+        const [qx, qy, qz] = chest(o);
+        const d = Math.hypot(qx - cx, qz - cz);
+        if (d < best && this.world.lineOfSight(cx, cy, cz, qx, qy, qz)) {
+          best = d;
+          next = o;
+        }
+      }
+      cur = next;
+    }
+    this.emit({ e: 'arc', pid: p.id, pts });
+  }
+
+  private openVortex(g: SimGrenade) {
+    const def = WEAPONS[g.weapon];
+    const v = def?.vortex ?? { radius: 7.5, time: 6 };
+    const y = Math.max(g.y, 0.2) + 1.0;
+    const id = this.nextGid++;
+    this.vortices.push({ id, x: g.x, y, z: g.z, r: v.radius, t: 0, dur: v.time, pid: g.pid, damage: def?.damage ?? 4000 });
+    this.emit({ e: 'vortex', phase: 'open', id, x: r3(g.x), y: r3(y), z: r3(g.z), r: v.radius, dur: v.time });
+  }
+
+  // Vórtice: puxa os zumbis do raio para o centro, onde eles somem; chefões só levam dano.
+  private updateVortices(dt: number) {
+    this.sucked.clear();
+    for (let i = this.vortices.length - 1; i >= 0; i--) {
+      const v = this.vortices[i];
+      v.t += dt;
+      if (v.t >= v.dur) {
+        this.vortices.splice(i, 1);
+        this.emit({ e: 'vortex', phase: 'close', id: v.id, x: r3(v.x), y: r3(v.y), z: r3(v.z), r: v.r, dur: v.dur });
+        continue;
+      }
+      const owner = this.players.get(v.pid);
+      for (const z of [...this.zombies.values()]) {
+        if (this.sucked.has(z.id)) continue;
+        const dx = v.x - z.x, dz = v.z - z.z;
+        const d = Math.hypot(dx, dz);
+        if (d > v.r) continue;
+        if (isChief(z)) {
+          if (owner) this.damageZombie(z, v.damage * 0.25 * dt, owner, 'body', false, true);
+          continue;
+        }
+        // sai da janela, se estava nela, e vai sendo puxado (cada vez mais rápido perto do centro)
+        if (z.phase !== 'none') {
+          if (z.entry >= 0 && this.occupant[z.entry] === z.id) this.occupant[z.entry] = null;
+          z.phase = 'none';
+          z.entry = -1;
+        }
+        this.sucked.add(z.id);
+        const speed = WONDER.vortexPull * (1.6 - d / v.r);
+        const step = Math.min(d, speed * dt);
+        if (d > 1e-3) {
+          z.x += (dx / d) * step;
+          z.z += (dz / d) * step;
+        }
+        z.y += (v.y - 0.6 - z.y) * Math.min(1, dt * 2.5);
+        z.yaw += dt * 9;
+        z.anim = 'move';
+        if (Math.hypot(v.x - z.x, v.z - z.z) < WONDER.vortexCore) {
+          if (owner) {
+            this.killFx = { sucked: true };
+            this.damageZombie(z, Math.max(v.damage, z.hp), owner, 'body', false, true);
+            this.killFx = null;
+          } else {
+            this.zombies.delete(z.id);
+            this.emit({ e: 'zvanish', zid: z.id });
+          }
+        }
+      }
+    }
+  }
+
+  // ---------- Bispo ----------
+
+  private bispoAlive() {
+    for (const z of this.zombies.values()) if (z.bispo) return true;
+    return false;
+  }
+
+  private updateRitual(dt: number) {
+    const r = this.ritual;
+    if (!r || r.state !== 'summoning') return;
+    r.t -= dt;
+    if (r.t > 0) return;
+    r.state = 'fight';
+    this.spawnBispo();
+  }
+
+  // sobe da fenda de lava do cruzamento
+  private spawnBispo() {
+    const [x, z] = this.world.map.ritual?.arena[0] ?? [0, 0];
+    const hp = BISPO.healthMult * zombieHealth(Math.max(10, this.round)) * Math.max(1, this.players.size);
+    const zb: SimZombie = {
+      id: this.nextZid++,
+      x, y: this.world.groundHeight(x, z, BISPO.radius, 0.2), z,
+      yaw: 0, hp, kind: 6, speed: BISPO.speed[0], anim: 'rise', t: 0, look: Math.floor(Math.random() * 1e6),
+      attackT: 0, attackHit: false, losT: 0, los: false, bestNav: 0xffff, stuckT: 0,
+      entry: -1, phase: 'none', phaseT: 0,
+      bispo: { maxHp: hp, phase: 1, shieldT: 0, ringT: 0, orbT: 3, castT: 0, summonT: 6, pillarT: 2 },
+    };
+    this.zombies.set(zb.id, zb);
+    this.emit({ e: 'bispo', phase: 'spawn', zid: zb.id, x: r3(x), z: r3(z) });
+  }
+
+  private updateBispo(z: SimZombie, dt: number, targets: SimPlayer[]) {
+    const b = z.bispo!;
+    const P = b.phase - 1;
+    let tp: SimPlayer | null = null;
+    let td = Infinity;
+    for (const p of targets) {
+      const d = Math.hypot(p.x - z.x, p.z - z.z);
+      if (d < td) {
+        td = d;
+        tp = p;
+      }
+    }
+    const face = (x: number, zz: number, k: number) => {
+      z.yaw = angleLerp(z.yaw, Math.atan2(x - z.x, zz - z.z), Math.min(1, dt * k));
+    };
+    // trocando de fase: parado, imune, queimando quem fica no anel de fogo
+    if (b.shieldT > 0) {
+      b.shieldT -= dt;
+      b.ringT -= dt;
+      z.anim = 'cast';
+      if (b.ringT <= 0) {
+        b.ringT = 0.5;
+        for (const p of targets) {
+          if (Math.hypot(p.x - z.x, p.z - z.z) < BISPO.shield.ring) this.damagePlayer(p, BISPO.shield.damage, z.x, z.z, true);
+        }
+      }
+      if (b.shieldT <= 0) z.anim = 'move';
+      return;
+    }
+    if (z.anim === 'attack') {
+      const S = BISPO.swing;
+      z.attackT += dt;
+      if (tp) face(tp.x, tp.z, 6);
+      if (!z.attackHit && z.attackT >= S.windup) {
+        z.attackHit = true;
+        for (const p of targets) {
+          if (Math.hypot(p.x - z.x, p.z - z.z) < S.hitRange && Math.abs(p.y - z.y) < 2) this.damagePlayer(p, S.damage, z.x, z.z, false);
+        }
+      }
+      if (z.attackT >= S.windup + S.recover) z.anim = 'move';
+      return;
+    }
+    b.orbT -= dt;
+    b.summonT -= dt;
+    if (b.phase >= 2) b.pillarT -= dt;
+    if (b.castT > 0) {
+      b.castT -= dt;
+      if (tp) face(tp.x, tp.z, 6);
+      if (b.castT <= 0) z.anim = 'move';
+      return;
+    }
+    if (!tp) return;
+    const sees = (p: SimPlayer) => this.world.lineOfSight(z.x, z.y + 2.4, z.z, p.x, p.y + 1.2, p.z);
+    if (td < BISPO.swing.range) {
+      z.anim = 'attack';
+      z.attackT = 0;
+      z.attackHit = false;
+      this.emit({ e: 'zattack', zid: z.id });
+      return;
+    }
+    // bolas de fogo no jogador mais perto (três em leque na fase 3)
+    if (b.orbT <= 0 && sees(tp)) {
+      b.orbT = BISPO.orb.every[P];
+      b.castT = BISPO.orb.cast;
+      z.anim = 'cast';
+      const ox = z.x, oy = z.y + 2.6, oz = z.z;
+      const dx = tp.x - ox, dy = tp.y + 1.1 - oy, dz = tp.z - oz;
+      const base = Math.atan2(dx, dz);
+      const h = Math.hypot(dx, dz) || 1;
+      const pitch = Math.atan2(dy, h);
+      const fans = b.phase === 3 ? [-BISPO.orb.spread, 0, BISPO.orb.spread] : [0];
+      for (const a of fans) {
+        const s = BISPO.orb.speed;
+        this.orbs.push({
+          id: this.nextGid++, x: ox, y: oy, z: oz, t: 0,
+          vx: Math.sin(base + a) * Math.cos(pitch) * s, vy: Math.sin(pitch) * s, vz: Math.cos(base + a) * Math.cos(pitch) * s,
+        });
+      }
+      this.emit({ e: 'bispo', phase: 'orb', zid: z.id, x: r3(z.x), z: r3(z.z), n: fans.length });
+      return;
+    }
+    // chama zumbis da terra em volta dele (cães na fase 3)
+    if (b.summonT <= 0) {
+      b.summonT = BISPO.summon.every[P];
+      const n = BISPO.summon.n[P];
+      if (this.roundZombies() < ZOMBIE.maxAlive) {
+        for (let i = 0; i < n; i++) {
+          if (b.phase === 3) this.spawnDog();
+          else {
+            const a = Math.random() * Math.PI * 2;
+            const r = 2.5 + Math.random() * 2;
+            const sx = z.x + Math.sin(a) * r, sz = z.z + Math.cos(a) * r;
+            if (this.nav.distanceAt(sx, sz) < 0xffff) this.spawnZombie([sx, sz]);
+          }
+        }
+        b.castT = 0.8;
+        z.anim = 'cast';
+        this.emit({ e: 'bispo', phase: 'summon', zid: z.id, x: r3(z.x), z: r3(z.z), n });
+        return;
+      }
+    }
+    // pilares de fogo sob cada jogador
+    if (b.phase >= 2 && b.pillarT <= 0) {
+      b.pillarT = BISPO.pillar.every[P];
+      const pts: number[] = [];
+      for (const p of targets) {
+        this.pillars.push({ x: p.x, z: p.z, t: BISPO.pillar.warn });
+        pts.push(r3(p.x), r3(p.z));
+      }
+      this.emit({ e: 'bispo', phase: 'pillar', zid: z.id, x: r3(z.x), z: r3(z.z), pts });
+    }
+    // anda (flutua) até o jogador
+    z.speed = BISPO.speed[P];
+    let dx = tp.x - z.x;
+    let dz = tp.z - z.z;
+    z.losT -= dt;
+    if (z.losT <= 0) {
+      z.losT = 0.3;
+      z.los = td < ZOMBIE.directChaseRange && sees(tp);
+    }
+    if (!z.los) {
+      const d = this.nav.direction(z.x, z.z);
+      if (d) [dx, dz] = d;
+    }
+    const dl = Math.hypot(dx, dz) || 1;
+    z.x += (dx / dl) * z.speed * dt;
+    z.z += (dz / dl) * z.speed * dt;
+    this.world.collideCylinder(z, BISPO.radius, BISPO.height);
+    z.y = this.world.groundHeight(z.x, z.z, BISPO.radius, z.y);
+    face(z.x + dx, z.z + dz, 4);
+    const nd = this.nav.distanceAt(z.x, z.z);
+    if (nd < z.bestNav - 1) {
+      z.bestNav = nd;
+      z.stuckT = 0;
+    } else z.stuckT += dt;
+    // preso: reaparece num dos pontos do ritual mais perto de alguém
+    if (z.stuckT > ZOMBIE.stuckTime && td > 12) {
+      const spots = this.world.map.ritual?.arena ?? [];
+      let best: [number, number] | null = null;
+      let bd = Infinity;
+      for (const [x, zz] of spots) {
+        const d = Math.min(...targets.map((p) => Math.hypot(p.x - x, p.z - zz)));
+        if (d > 8 && d < bd) {
+          bd = d;
+          best = [x, zz];
+        }
+      }
+      if (best) {
+        [z.x, z.z] = best;
+        z.y = this.world.groundHeight(z.x, z.z, BISPO.radius, 0.3);
+        this.emit({ e: 'bispo', phase: 'phase', zid: z.id, x: r3(z.x), z: r3(z.z), n: b.phase });
+      }
+      z.stuckT = 0;
+      z.bestNav = 0xffff;
+    }
+  }
+
+  // bolas de fogo: voam retas e explodem no jogador, na parede ou no chão
+  private updateOrbs(dt: number) {
+    const O = BISPO.orb;
+    for (let i = this.orbs.length - 1; i >= 0; i--) {
+      const o = this.orbs[i];
+      o.t += dt;
+      const sp = Math.hypot(o.vx, o.vy, o.vz);
+      const step = sp * dt;
+      const wh = this.world.raycast(o.x, o.y, o.z, o.vx / sp, o.vy / sp, o.vz / sp, step);
+      let hit = !!wh || o.y < 0.2 || o.t > 6;
+      if (wh) {
+        o.x += (o.vx / sp) * wh.t;
+        o.y += (o.vy / sp) * wh.t;
+        o.z += (o.vz / sp) * wh.t;
+      } else {
+        o.x += o.vx * dt;
+        o.y += o.vy * dt;
+        o.z += o.vz * dt;
+      }
+      for (const p of this.players.values()) {
+        if (p.life === 'alive' && Math.hypot(p.x - o.x, p.y + 1.1 - o.y, p.z - o.z) < O.hitRadius) hit = true;
+      }
+      if (!hit) continue;
+      this.orbs.splice(i, 1);
+      this.emit({ e: 'boom', x: r3(o.x), y: r3(o.y), z: r3(o.z), kind: 'fire' });
+      for (const p of this.players.values()) {
+        const d = Math.hypot(p.x - o.x, p.y + 1 - o.y, p.z - o.z);
+        if (p.life === 'alive' && d < O.radius) this.damagePlayer(p, O.damage * (1 - (0.6 * d) / O.radius), o.x, o.z, false);
+      }
+    }
+  }
+
+  private updatePillars(dt: number) {
+    const P = BISPO.pillar;
+    for (let i = this.pillars.length - 1; i >= 0; i--) {
+      const c = this.pillars[i];
+      c.t -= dt;
+      if (c.t > 0) continue;
+      this.pillars.splice(i, 1);
+      this.emit({ e: 'boom', x: r3(c.x), y: 0.5, z: r3(c.z), kind: 'fire' });
+      for (const p of this.players.values()) {
+        if (p.life === 'alive' && Math.hypot(p.x - c.x, p.z - c.z) < P.radius) this.damagePlayer(p, P.damage, c.x, c.z, false);
+      }
+    }
+  }
+
+  // Bispo morto: 5000 pontos e todas as bebidas para cada jogador, e Munição Cheia no chão
+  private bispoDeath(z: SimZombie) {
+    this.emit({ e: 'bispo', phase: 'death', zid: z.id, x: r3(z.x), z: r3(z.z) });
+    if (this.ritual) this.ritual.state = 'done';
+    this.orbs = [];
+    this.pillars = [];
+    for (const o of this.players.values()) {
+      if (o.life === 'dead') continue;
+      this.addPoints(o, BISPO.reward);
+      if (o.life !== 'alive') continue;
+      for (const k of Object.keys(PERKS) as PerkId[]) {
+        if (o.perks.includes(k) || (k === 'folego' && this.solo && o.selfRevives >= SOLO_SELF_REVIVES)) continue;
+        this.grantPerk(o, k);
+      }
+    }
+    this.powerups.push({ id: this.nextPid++, kind: 'maxammo', x: z.x, y: z.y, z: z.z, t: 0 });
+  }
+
   private updateRepairs(dt: number) {
     for (const p of this.players.values()) {
       if (p.repairEntry === null || p.life !== 'alive') continue;
@@ -1392,6 +1863,11 @@ export class GameSim {
         this.addPoints(p, BARRICADE.repairPoints);
       }
     }
+  }
+
+  // janelas com tábuas que já valem (as dos prédios fechados esperam a porta abrir)
+  private openEntries() {
+    return this.world.map.entries.filter((e) => !e.area || this.world.openDoors.has(e.area));
   }
 
   // pontos de surgir da terra nas áreas já abertas
@@ -1432,7 +1908,7 @@ export class GameSim {
     const alive = [...this.players.values()].filter((p) => p.life === 'alive');
     const far = (x: number, zz: number) => alive.every((p) => Math.hypot(x - p.x, zz - p.z) > 10);
     const ground = this.openSpawns().filter((s) => far(s.x, s.z));
-    const entries = this.world.map.entries.filter((e) => far(...entryPoints(e).inside));
+    const entries = this.openEntries().filter((e) => far(...entryPoints(e).inside));
     z.stuckT = 0;
     z.bestNav = 0xffff;
     z.t = 0;
@@ -1445,7 +1921,7 @@ export class GameSim {
       this.emit({ e: 'zrise', zid: z.id, x: r3(z.x), z: r3(z.z) });
       return;
     }
-    const pool = entries.length ? entries : this.world.map.entries;
+    const pool = entries.length ? entries : this.openEntries();
     if (!pool.length) return;
     const e = pool[Math.floor(Math.random() * pool.length)];
     const out = entryPoints(e).outside;
@@ -1467,7 +1943,7 @@ export class GameSim {
     } else if (this.state === 'active') {
       const maxAlive = this.hell ? DOGS.maxAlive + 2 * (this.players.size - 1) : ZOMBIE.maxAlive;
       const alive = this.roundZombies();
-      if (this.toSpawn > 0 && alive < maxAlive) {
+      if (this.toSpawn > 0 && alive < maxAlive && !this.bispoAlive()) {
         this.spawnTimer -= dt;
         if (this.spawnTimer <= 0) {
           if (this.hell) this.spawnDog();
@@ -1493,6 +1969,7 @@ export class GameSim {
       }
     }
 
+    this.updateRitual(dt);
     this.updatePlayers(dt);
     this.updateRepairs(dt);
     this.updateGrenades(dt);
@@ -1501,7 +1978,10 @@ export class GameSim {
     this.updateForge(dt);
     this.updateBus(dt);
     this.updateFog(dt);
+    this.updateVortices(dt);
     this.updateZombies(dt);
+    this.updateOrbs(dt);
+    this.updatePillars(dt);
   }
 
   // zumbis que contam para a rodada (os Vultos não contam)
@@ -1528,6 +2008,18 @@ export class GameSim {
     const lx = dx * c - dz * s, lz = dx * s + dz * c;
     // folga para a frente: o navegador desenha o ônibus um pouco atrás de onde ele está na simulação
     return Math.abs(lx) < BUS.halfWidth + 0.4 && lz > -BUS.halfLen - 0.4 && lz < BUS.halfLen + 1.6 && p.y > BUS.floorY - 0.25;
+  }
+
+  // Ponto para onde o zumbi vai quando o alvo está dentro do ônibus: primeiro a frente da porta mais perto, depois o corredor.
+  private busDoorTarget(z: SimZombie, tp: SimPlayer): [number, number] | null {
+    const b = this.bus;
+    if (!b || !this.onBus(tp) || this.onBus(z)) return null;
+    const [lx, lz] = toLocal(b, z.x, z.z);
+    if (Math.abs(lx) > BUS.halfWidth + 4 || Math.abs(lz) > BUS.halfLen + 4) return null;
+    const side = lx >= 0 ? 1 : -1;
+    const dz = (BUS_DOOR.z0 + BUS_DOOR.z1) / 2;
+    const atDoor = Math.abs(lz - dz) < 0.5 && Math.abs(lx) < BUS.halfWidth + 1;
+    return toWorld(b, atDoor ? 0 : side * (BUS.halfWidth + 0.8), dz);
   }
 
   // Ônibus: anda pela rota, freia perto das paradas, espera, buzina e sai; atropela zumbis no caminho.
@@ -1589,7 +2081,7 @@ export class GameSim {
     // atropela quem estiver na frente (menos o Carrasco)
     const s = Math.sin(b.yaw), c = Math.cos(b.yaw);
     for (const z of [...this.zombies.values()]) {
-      if (isBoss(z) || z.anim === 'rise') continue;
+      if (isChief(z) || z.anim === 'rise') continue;
       const dx = z.x - b.x, dz = z.z - b.z;
       const lx = dx * c - dz * s, lz = dx * s + dz * c;
       if (Math.abs(lx) < BUS.halfWidth + 0.4 && lz > -BUS.halfLen && lz < BUS.halfLen + 0.8) {
@@ -1728,17 +2220,22 @@ export class GameSim {
 
     for (const z of all) {
       z.t += dt;
+      if (this.sucked.has(z.id)) continue;
       if (z.phase !== 'none') {
         this.updateEntryZombie(z, dt, targets);
         continue;
       }
       const dog = isDog(z);
       if (z.anim === 'rise') {
-        if (z.t >= (dog ? DOGS.arriveTime : isBoss(z) ? BOSS.riseTime : isVulto(z) ? VULTO.riseTime : ZOMBIE.riseTime)) z.anim = 'move';
+        if (z.t >= (dog ? DOGS.arriveTime : isBoss(z) ? BOSS.riseTime : isBispo(z) ? BISPO.riseTime : isVulto(z) ? VULTO.riseTime : ZOMBIE.riseTime)) z.anim = 'move';
         continue;
       }
       if (isBoss(z)) {
         this.updateBoss(z, dt, targets, all);
+        continue;
+      }
+      if (isBispo(z)) {
+        this.updateBispo(z, dt, targets);
         continue;
       }
       // medidas do tipo: zumbi ou cão
@@ -1791,6 +2288,12 @@ export class GameSim {
           dz = d[1];
         }
       }
+      // jogador dentro do ônibus parado: o zumbi dá a volta e entra pela porta
+      const door = this.busDoorTarget(z, tp);
+      if (door) {
+        dx = door[0] - z.x;
+        dz = door[1] - z.z;
+      }
       const dl = Math.hypot(dx, dz) || 1;
       let vx = (dx / dl) * z.speed;
       let vz = (dz / dl) * z.speed;
@@ -1824,6 +2327,11 @@ export class GameSim {
       z.z += vz * dt;
       this.world.collideCylinder(z, C.radius, C.height);
       z.y = this.world.groundHeight(z.x, z.z, C.radius, z.y);
+      // o ônibus é sólido para os zumbis (só se entra pelas portas)
+      if (this.bus) {
+        busCollide(this.bus, z, C.radius);
+        z.y = Math.max(z.y, busGround(this.bus, z.x, z.z, C.radius, z.y, 0.5));
+      }
       z.yaw = angleLerp(z.yaw, Math.atan2(dx, dz), Math.min(1, dt * 6));
 
       // Zumbi preso longe de todos: reaparece em outro ponto.
@@ -1875,10 +2383,19 @@ export class GameSim {
         const b = [...this.zombies.values()].find((z) => z.boss);
         return b ? { hp: r3(Math.max(0, b.hp) / b.boss!.maxHp), armor: b.boss!.armor } : null;
       })(),
+      ritual: this.ritual ? { candles: [...this.ritual.candles], state: this.ritual.state } : null,
+      bispo: (() => {
+        const b = [...this.zombies.values()].find((z) => z.bispo);
+        return b ? { hp: r3(Math.max(0, b.hp) / b.bispo!.maxHp), phase: b.bispo!.phase, shield: b.bispo!.shieldT > 0 } : null;
+      })(),
       zombiesLeft: this.toSpawn + this.roundZombies(),
       boards: [...this.boards],
       doors: [...this.world.openDoors],
-      projectiles: this.grenades.map((g) => ({ id: g.id, kind: g.kind, x: r3(g.x), y: r3(g.y), z: r3(g.z) })),
+      projectiles: [
+        ...this.grenades.map((g) => ({ id: g.id, kind: g.kind, x: r3(g.x), y: r3(g.y), z: r3(g.z) })),
+        ...this.orbs.map((o) => ({ id: o.id, kind: 'orb' as const, x: r3(o.x), y: r3(o.y), z: r3(o.z) })),
+      ],
+      vortices: this.vortices.map((v) => ({ id: v.id, x: r3(v.x), y: r3(v.y), z: r3(v.z), r: v.r, t: r3(v.t), dur: v.dur })),
       box: { ...this.box, t: r3(Math.max(0, this.box.t)) },
       powerups: this.powerups.map((p) => ({ id: p.id, kind: p.kind, x: r3(p.x), y: r3(p.y), z: r3(p.z), t: r3(p.t) })),
       effects: { insta: r3(this.effects.insta), double: r3(this.effects.double), firesale: r3(this.effects.firesale) },

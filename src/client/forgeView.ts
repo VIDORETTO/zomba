@@ -25,12 +25,21 @@ export class ForgeView {
     scene.add(this.group);
   }
 
+  private readonly models = new Map<string, THREE.Group>();
+
   private show(id: string) {
     if (id === this.shown) return;
     this.shown = id;
     this.holder.clear();
     if (!id) return;
-    const g = buildGun(baseId(id), this.camo, false).group;
+    // cada modelo é montado uma vez só e reaproveitado (o sorteio troca de arma várias vezes por segundo)
+    let g = this.models.get(id);
+    if (g) {
+      this.holder.add(g);
+      return;
+    }
+    g = buildGun(baseId(id), this.camo, false).group;
+    this.models.set(id, g);
     g.scale.setScalar(1.6);
     this.holder.add(g);
   }
@@ -61,5 +70,7 @@ export class ForgeView {
 
   dispose() {
     this.group.removeFromParent();
+    for (const g of this.models.values()) g.traverse((o) => (o as THREE.Mesh).geometry?.dispose());
+    this.models.clear();
   }
 }

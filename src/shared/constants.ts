@@ -109,6 +109,30 @@ export const BOSS = {
   perkChance: 0.25,
 };
 
+// Bispo: chefão do ritual secreto da Cidade (três velas pretas no altar da Igreja, com a Forja já acesa).
+// Valores por fase em listas [fase 1, fase 2, fase 3].
+export const BISPO = {
+  // vida = 25 x a de um zumbi da rodada (no mínimo a da rodada 10) x jogadores
+  healthMult: 25,
+  // segundos entre a última vela e ele subir da lava do cruzamento
+  summonDelay: 4,
+  riseTime: 3,
+  radius: 0.7,
+  height: 3.0,
+  speed: [1.4, 1.8, 2.6],
+  // golpe do cajado em quem chega perto
+  swing: { range: 2.6, hitRange: 3.2, windup: 0.6, recover: 0.7, damage: 50 },
+  // bolas de fogo (na fase 3 saem três em leque)
+  orb: { every: [3.2, 2.2, 1.4], cast: 0.55, speed: 12, radius: 2.4, damage: 40, spread: 0.22, hitRadius: 0.9 },
+  // zumbis chamados da terra em volta dele (na fase 3, Cães Infernais)
+  summon: { every: [12, 14, 11], n: [3, 3, 2] },
+  // pilares de fogo sob os jogadores, com aviso no chão (fases 2 e 3)
+  pillar: { every: [0, 7, 5], warn: 1.3, radius: 1.9, damage: 55 },
+  // troca de fase: imune por alguns segundos, com um anel de fogo em volta
+  shield: { time: 5, ring: 4, damage: 12 },
+  reward: 5000,
+};
+
 // Ônibus do mapa Rota: dá a volta sozinho e para em cada parada.
 export const BUS = {
   speed: 10,

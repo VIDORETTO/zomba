@@ -3,7 +3,8 @@ import type { PowerupKind } from './powerups';
 import type { HitPart, SightKind } from './weapons';
 
 export type PlayerLife = 'alive' | 'downed' | 'dead';
-export type ProjectileKind = 'grenade' | 'launcher' | 'bolt' | 'ray' | 'rocket' | 'blade' | 'drum';
+// orb = bola de fogo do Bispo
+export type ProjectileKind = 'grenade' | 'launcher' | 'bolt' | 'ray' | 'rocket' | 'blade' | 'drum' | 'wind' | 'arc' | 'vortex' | 'orb';
 
 export interface ForgeState {
   on: boolean;
@@ -23,8 +24,8 @@ export interface BoxState {
   fireSale: boolean;
 }
 export type RoundState = 'waiting' | 'active' | 'intermission' | 'gameover';
-export type ZombieAnim = 'rise' | 'move' | 'attack' | 'tear' | 'climb' | 'slam' | 'chain' | 'charge';
-export type ZombieKind = 0 | 1 | 2 | 3 | 4 | 5; // anda, corre, dispara, Cão Infernal, Carrasco, Vulto
+export type ZombieAnim = 'rise' | 'move' | 'attack' | 'tear' | 'climb' | 'slam' | 'chain' | 'charge' | 'cast';
+export type ZombieKind = 0 | 1 | 2 | 3 | 4 | 5 | 6; // anda, corre, dispara, Cão Infernal, Carrasco, Vulto, Bispo
 
 export interface NetPlayer {
   id: string;
@@ -80,6 +81,10 @@ export interface Snapshot {
   hell: boolean;
   // Carrasco vivo: fração da vida e se ainda tem o capacete
   boss: { hp: number; armor: boolean } | null;
+  // ritual do Bispo (só na Cidade): velas pretas acesas e em que pé está
+  ritual: { candles: boolean[]; state: 'idle' | 'summoning' | 'fight' | 'done' } | null;
+  // Bispo vivo: fração da vida, fase (1 a 3) e se está imune (trocando de fase)
+  bispo: { hp: number; phase: number; shield: boolean } | null;
   // mapa Rota: energia e ônibus (posição, para onde olha, parada atual e espera)
   power: boolean;
   bus: { x: number; z: number; yaw: number; stop: string | null; wait: number } | null;
@@ -87,6 +92,8 @@ export interface Snapshot {
   boards: number[];
   doors: string[];
   projectiles: { id: number; kind: ProjectileKind; x: number; y: number; z: number }[];
+  // buracos negros do Vórtice abertos: centro, raio, tempo aberto e duração
+  vortices: { id: number; x: number; y: number; z: number; r: number; t: number; dur: number }[];
   box: BoxState;
   powerups: { id: number; kind: PowerupKind; x: number; y: number; z: number; t: number }[];
   effects: { insta: number; double: number; firesale: number };
@@ -98,7 +105,8 @@ export interface Snapshot {
 export type GameEvent =
   // blast = dano de explosão ou projétil (o navegador do atirador não viu o acerto, então marca agora)
   | { e: 'zhit'; zid: number; pid: string; part: HitPart; blast?: boolean }
-  | { e: 'zkill'; zid: number; pid: string; part: HitPart | 'knife'; x: number; y: number; z: number; yaw: number; kind: ZombieKind; look: number }
+  // fling = arremessado pelo vento (velocidade); sucked = engolido pelo vórtice; shock = morto pelo arpão
+  | { e: 'zkill'; zid: number; pid: string; part: HitPart | 'knife'; x: number; y: number; z: number; yaw: number; kind: ZombieKind; look: number; fling?: [number, number, number]; sucked?: boolean; shock?: boolean }
   | { e: 'zattack'; zid: number }
   | { e: 'zrise'; zid: number; x: number; z: number }
   | { e: 'points'; pid: string; delta: number }
@@ -125,6 +133,16 @@ export type GameEvent =
   | { e: 'runover'; zid: number }
   // raio de fogo onde um Cão Infernal vai aparecer
   | { e: 'dogspawn'; zid: number; x: number; z: number }
+  // Canhão de Vento: origem, direção e alcance do cone
+  | { e: 'wind'; pid: string; x: number; y: number; z: number; dx: number; dy: number; dz: number; range: number }
+  // Arpão Elétrico: pontos por onde o raio passou (x, y, z em sequência)
+  | { e: 'arc'; pid: string; pts: number[] }
+  // Vórtice abriu ou fechou
+  | { e: 'vortex'; phase: 'open' | 'close'; id: number; x: number; y: number; z: number; r: number; dur: number }
+  // ritual: uma vela preta acesa ou as três (o Bispo vem)
+  | { e: 'ritual'; phase: 'candle' | 'start'; pid: string; candle: number }
+  // Bispo: subiu da lava, trocou de fase, lançou fogo, marcou pilares (pts = x, z em sequência), chamou zumbis, morreu
+  | { e: 'bispo'; phase: 'spawn' | 'phase' | 'orb' | 'pillar' | 'summon' | 'death'; zid: number; x: number; z: number; n?: number; pts?: number[] }
   | { e: 'gameover'; round: number }
   | { e: 'pjoin'; pid: string; name: string }
   | { e: 'pleave'; pid: string; name: string }

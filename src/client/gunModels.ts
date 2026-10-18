@@ -687,13 +687,118 @@ function drum(m: GunMats): GunModel {
   });
 }
 
+// ---------- armas maravilha ----------
+
+const cyl = (p: THREE.Object3D, rTop: number, rBot: number, len: number, x: number, y: number, z: number, mat: THREE.Material, seg = 16) => {
+  // deitado ao longo de z: rTop fica para trás (+z), rBot para a frente (-z)
+  const c = new THREE.Mesh(new THREE.CylinderGeometry(rTop, rBot, len, seg), mat);
+  c.rotation.x = Math.PI / 2;
+  c.position.set(x, y, z);
+  p.add(c);
+  return c;
+};
+
+// Canhão de Vento: corpo de ferro, hélice atrás, boca em sino e um cilindro de ar comprimido em cima
+function wind(m: GunMats): GunModel {
+  const g = new THREE.Group();
+  const brass = new THREE.MeshStandardMaterial({ color: 0xb08a3a, roughness: 0.35, metalness: 0.8 });
+  const air = new THREE.MeshBasicMaterial({ color: new THREE.Color(1.2, 1.9, 2.4) });
+  cyl(g, 0.05, 0.05, 0.26, 0, 0, -0.04, m.dark);
+  cyl(g, 0.055, 0.12, 0.17, 0, 0, -0.25, m.steel, 20);
+  cyl(g, 0.122, 0.122, 0.02, 0, 0, -0.335, brass, 20);
+  for (const z of [0.0, -0.08, -0.14]) cyl(g, 0.056, 0.056, 0.014, 0, 0, z, brass);
+  // hélice dentro do sino
+  cyl(g, 0.03, 0.03, 0.03, 0, 0, -0.2, m.black, 12);
+  for (let i = 0; i < 4; i++) {
+    const b = box(g, 0.17, 0.016, 0.004, 0, 0, -0.27, m.steel);
+    b.rotation.z = (i / 4) * Math.PI;
+  }
+  cyl(g, 0.045, 0.045, 0.06, 0, 0, 0.11, m.dark);
+  // canos de cobre por fora
+  for (const s of [-1, 1]) box(g, 0.01, 0.01, 0.24, s * 0.058, -0.02, -0.08, brass);
+  // cilindro de ar em cima (sai na recarga)
+  const tank = new THREE.Group();
+  tank.position.set(0, 0.075, -0.02);
+  g.add(tank);
+  cyl(tank, 0.024, 0.024, 0.16, 0, 0, 0, m.steel);
+  cyl(tank, 0.018, 0.018, 0.1, 0, 0.0, 0, air);
+  box(tank, 0.014, 0.014, 0.02, 0, 0, 0.09, brass);
+  box(g, 0.035, 0.12, 0.05, 0, -0.08, 0.06, m.wood, -0.25);
+  const stock = box(g, 0.05, 0.08, 0.2, 0, -0.05, 0.22, m.wood, 0.15);
+  return finish({
+    group: g, mag: tank, style: 'cell', stock: [stock],
+    left: arms(g, V(0, -0.09, 0.07), V(0, -0.07, -0.17), m),
+    muzzle: V(0, 0, -0.35), sightY: 0.11,
+    hip: V(0.15, -0.16, -0.5), adsZ: -0.5,
+  });
+}
+
+// Arpão Elétrico: fuzil comprido com bobinas de cobre e o arpão de ponta azul por cima do cano
+function arc(m: GunMats): GunModel {
+  const g = new THREE.Group();
+  const copper = new THREE.MeshStandardMaterial({ color: 0xb4683a, roughness: 0.3, metalness: 0.75 });
+  const blue = new THREE.MeshBasicMaterial({ color: new THREE.Color(0.8, 1.8, 4) });
+  const dim = new THREE.MeshBasicMaterial({ color: new THREE.Color(0.25, 0.6, 1.4) });
+  box(g, 0.05, 0.07, 0.32, 0, 0, -0.02, m.dark);
+  cyl(g, 0.02, 0.02, 0.32, 0, -0.005, -0.33, m.steel);
+  for (let i = 0; i < 6; i++) cyl(g, 0.032, 0.032, 0.016, 0, -0.005, -0.22 - i * 0.04, copper);
+  // bateria na lateral
+  box(g, 0.025, 0.05, 0.12, -0.04, -0.01, -0.04, m.black);
+  box(g, 0.003, 0.012, 0.08, -0.053, -0.002, -0.04, dim);
+  // o arpão (sai e volta na recarga)
+  const spear = new THREE.Group();
+  g.add(spear);
+  box(spear, 0.01, 0.01, 0.46, 0, 0.05, -0.2, m.steel);
+  const tip = cyl(spear, 0.0, 0.018, 0.06, 0, 0.05, -0.45, blue, 8);
+  tip.rotation.x = -Math.PI / 2;
+  box(spear, 0.03, 0.006, 0.02, 0, 0.05, -0.4, m.steel);
+  box(g, 0.03, 0.03, 0.03, 0, 0.04, 0.02, m.black);
+  box(g, 0.032, 0.11, 0.05, 0, -0.08, 0.08, m.black, -0.2);
+  const stock = box(g, 0.048, 0.09, 0.22, 0, -0.04, 0.24, m.dark, 0.18);
+  return finish({
+    group: g, mag: spear, style: 'bolt', stock: [stock], loadFrom: V(0, 0.03, 0.2),
+    left: arms(g, V(0, -0.08, 0.09), V(0, -0.045, -0.24), m),
+    muzzle: V(0, -0.005, -0.5), sightY: 0.075,
+    hip: V(0.13, -0.14, -0.4), adsZ: -0.4,
+  });
+}
+
+// Vórtice: tubo curto que bascula, com uma esfera de vidro roxa na culatra
+function vortex(m: GunMats): GunModel {
+  const g = new THREE.Group();
+  const violet = new THREE.MeshBasicMaterial({ color: new THREE.Color(1.6, 0.5, 2.8) });
+  const glass = new THREE.MeshStandardMaterial({ color: 0x40205a, roughness: 0.1, metalness: 0.2, transparent: true, opacity: 0.55 });
+  box(g, 0.055, 0.065, 0.12, 0, 0, 0.0, m.dark);
+  const core = new THREE.Mesh(new THREE.SphereGeometry(0.018, 14, 10), violet);
+  core.position.set(0.03, 0.035, 0.03);
+  g.add(core);
+  const shell = new THREE.Mesh(new THREE.SphereGeometry(0.028, 16, 12), glass);
+  shell.position.copy(core.position);
+  g.add(shell);
+  const hinge = new THREE.Group();
+  hinge.position.set(0, -0.01, -0.06);
+  g.add(hinge);
+  cyl(hinge, 0.042, 0.05, 0.28, 0, 0.02, -0.14, m.steel, 18);
+  for (const z of [-0.06, -0.16, -0.26]) cyl(hinge, 0.054, 0.054, 0.014, 0, 0.02, z, m.black, 18);
+  cyl(hinge, 0.036, 0.036, 0.01, 0, 0.02, -0.285, violet, 18);
+  box(hinge, 0.04, 0.03, 0.16, 0, -0.035, -0.12, m.wood);
+  const stock = box(g, 0.05, 0.1, 0.28, 0, -0.06, 0.2, m.wood, 0.2);
+  return finish({
+    group: g, hinge, hingeOpen: -0.6, stock: [stock], style: 'break',
+    left: arms(g, V(0, -0.07, 0.1), V(0, -0.06, -0.18), m, hinge),
+    port: V(0, 0.02, 0.0),
+    muzzle: V(0, 0.01, -0.36), sightY: 0.11,
+    hip: V(0.13, -0.15, -0.38), adsZ: -0.38,
+  });
+}
+
 function plain(color: number) {
   return new THREE.MeshStandardMaterial({ color, roughness: 0.6 });
 }
 
 const BUILDERS: Record<string, (m: GunMats) => GunModel> = {
   pistol, carbine, doublebarrel, smg, rifle, pump, lmg, sniper, dualpistol, autoshotgun, launcher, crossbow, raygun,
-  burstrifle, revolver, burstpistol, machinepistol, dmr, rocket, blade, drum,
+  burstrifle, revolver, burstpistol, machinepistol, dmr, rocket, blade, drum, wind, arc, vortex,
 };
 
 // Monta a arma; sem mãos quando ela aparece solta no mundo.

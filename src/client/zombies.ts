@@ -1,10 +1,11 @@
 import * as THREE from 'three';
-import { BOSS, DOGS, VULTO, ZOMBIE } from '../shared/constants';
+import { BISPO, BOSS, DOGS, VULTO, ZOMBIE } from '../shared/constants';
 import type { GameEvent, ZombieAnim, ZombieKind } from '../shared/protocol';
 import { angleLerp, clamp, lerp, mulberry32 } from '../shared/rng';
 import type { AudioEngine } from './audio';
 import type { FX } from './fx';
 import { animateBoss, buildBoss, type BossRig } from './boss';
+import { animateBispo, buildBispo, type BispoRig } from './bispo';
 import { animateDog, buildDog, type DogRig } from './dog';
 import { buildHumanoid, flatMat, type Humanoid } from './humanoid';
 import type { Sample } from './snapbuffer';
@@ -15,7 +16,7 @@ const SHIRT = [0x86705a, 0xb2aa98, 0x5e7088, 0x963e34, 0x6c7a5e, 0xa49070, 0x555
 const PANTS = [0x46506a, 0x5e5040, 0x726a58, 0x404040, 0x5a6274, 0x76664f];
 const HAIR = [0x1a1410, 0x3a2a1a, 0x5a5048, 0x2a2420, 0x6a6058];
 
-const KIND_SPEED = [ZOMBIE.walkSpeed, ZOMBIE.runSpeed, ZOMBIE.sprintSpeed, 0, 0, VULTO.speed];
+const KIND_SPEED = [ZOMBIE.walkSpeed, ZOMBIE.runSpeed, ZOMBIE.sprintSpeed, 0, 0, VULTO.speed, BISPO.speed[0]];
 
 class ZombieView {
   readonly h: Humanoid;
@@ -33,6 +34,10 @@ class ZombieView {
   dying = false;
   deathT = 0;
   fallDir = 1;
+  // morte das armas maravilha: voando (velocidade) ou encolhendo para dentro do vórtice
+  fling: THREE.Vector3 | null = null;
+  flingY = 0;
+  shrink = false;
   readonly limp: number;
   readonly armStyle: number;
   readonly headTilt: number;
@@ -114,6 +119,9 @@ class BossView {
   dying = false;
   deathT = 0;
   fallDir = -1;
+  fling: THREE.Vector3 | null = null;
+  flingY = 0;
+  shrink = false;
   stepSide = 0;
   chain: { pid: string } | null = null;
 
@@ -124,10 +132,41 @@ class BossView {
   }
 }
 
-type View = ZombieView | DogView | BossView;
+// Bispo: flutua; a esfera de fogo aparece enquanto ele troca de fase
+class BispoView {
+  readonly rig: BispoRig;
+  readonly h: Humanoid;
+  readonly kind: ZombieKind = 6;
+  phase = 0;
+  speed = 0;
+  lastX = 0;
+  lastZ = 0;
+  yaw = 0;
+  anim: ZombieAnim = 'rise';
+  animT = 0;
+  riseT = 0;
+  attackT = 99;
+  climbT = 0;
+  groanT = 4;
+  dying = false;
+  deathT = 0;
+  fallDir = -1;
+  fling: THREE.Vector3 | null = null;
+  flingY = 0;
+  shrink = false;
+
+  constructor(readonly id: number, readonly look: number, tex: TexSet) {
+    this.rig = buildBispo(tex);
+    this.h = this.rig.h;
+    for (const m of this.h.hitMeshes) m.userData.zid = id;
+  }
+}
+
+type View = ZombieView | DogView | BossView | BispoView;
 
 function makeView(id: number, kind: ZombieKind, look: number, tex: TexSet): View {
   if (kind === 4) return new BossView(id, look, tex);
+  if (kind === 6) return new BispoView(id, look, tex);
   return kind === 3 ? new DogView(id, look, tex) : new ZombieView(id, kind, look, tex);
 }
 
@@ -144,6 +183,8 @@ export class ZombieManager {
   private flyers: { obj: THREE.Object3D; vel: THREE.Vector3; spin: number; t: number }[] = [];
   // onde está cada jogador (alvo da corrente)
   locate: (pid: string) => THREE.Vector3 | null = () => null;
+  // Bispo imune (trocando de fase): a Game copia do estado da partida
+  bispoShield = false;
 
   constructor(scene: THREE.Scene, private readonly tex: TexSet, private readonly fx: FX, private readonly audio: AudioEngine) {
     scene.add(this.group);
@@ -162,8 +203,8 @@ export class ZombieManager {
     for (const v of this.views.values()) {
       const p = v.h.root.position;
       const dog = v instanceof DogView;
-      const boss = v instanceof BossView;
-      const rising = v.anim === 'rise' && (boss ? v.animT < BOSS.riseTime * 0.6 : v.riseT < (dog ? DOGS.arriveTime * 0.8 : ZOMBIE.riseTime * 0.6));
+      const boss = v instanceof BossView || v instanceof BispoView;
+      const rising = v.anim === 'rise' && (v instanceof BispoView ? v.animT < BISPO.riseTime * 0.7 : boss ? v.animT < BOSS.riseTime * 0.6 : v.riseT < (dog ? DOGS.arriveTime * 0.8 : ZOMBIE.riseTime * 0.6));
       out.push({ id: v.id, x: p.x, y: p.y, z: p.z, rising, top: dog ? 0.6 : boss ? 2.3 : 1.25 });
     }
     return out;
@@ -179,6 +220,7 @@ export class ZombieManager {
         const v = this.views.get(e.zid);
         if (v instanceof DogView) this.audio.dogBark(v.h.root.position);
         else if (v instanceof BossView) this.audio.bossRoar(v.h.root.position, 0.6);
+        else if (v instanceof BispoView) this.audio.bispoVoice(v.h.root.position, 0.7);
         else if (v) this.audio.zombieAttack(v.h.root.position);
         break;
       }
@@ -246,6 +288,17 @@ export class ZombieManager {
           this.corpses.push(v);
           break;
         }
+        if (e.sucked) {
+          v.shrink = true;
+          this.audio.zombieDeath(v.h.root.position);
+          this.corpses.push(v);
+          break;
+        }
+        if (e.fling && !(v instanceof BossView)) {
+          v.fling = new THREE.Vector3(...e.fling);
+          v.flingY = v.h.root.position.y;
+          v.fallDir = -1;
+        }
         if (e.part === 'head') {
           v.h.head.visible = false;
           v.h.head.getWorldPosition(this.tmp);
@@ -253,7 +306,10 @@ export class ZombieManager {
           v.fallDir = -1;
         }
         if (v instanceof BossView) this.audio.bossRoar(v.h.root.position, 1.2);
-        else this.audio.zombieDeath(v.h.root.position);
+        else if (v instanceof BispoView) {
+          v.rig.shield.visible = false;
+          this.audio.bispoVoice(v.h.root.position, 1.4);
+        } else this.audio.zombieDeath(v.h.root.position);
         this.corpses.push(v);
         if (this.corpses.length > 14) {
           const old = this.corpses.shift()!;
@@ -294,7 +350,7 @@ export class ZombieManager {
         if (anim === 'rise' && v.anim !== 'rise') v.riseT = 0;
         if (anim === 'attack' && v.anim !== 'attack') v.attackT = 0;
         if (anim === 'climb' && v.anim !== 'climb') v.climbT = 0;
-        if (v instanceof BossView && anim !== v.anim) v.animT = 0;
+        if ((v instanceof BossView || v instanceof BispoView) && anim !== v.anim) v.animT = 0;
         v.anim = anim;
         const p = v.h.root.position;
         const nx = lerp(za.x, zb.x, k);
@@ -328,6 +384,11 @@ export class ZombieManager {
           if (v.anim === 'move') this.audio.bossRoar(v.h.root.position, 0.45);
           continue;
         }
+        if (v instanceof BispoView) {
+          v.groanT = 5 + Math.random() * 4;
+          this.audio.bispoVoice(v.h.root.position, 0.4);
+          continue;
+        }
         v.groanT = dog ? 1.2 + Math.random() * 2.5 : (v.kind === 0 ? 3 : 2) + Math.random() * 5;
         if (v.h.root.position.distanceTo(listener) < 32) {
           if (dog) this.audio.dogGrowl(v.h.root.position);
@@ -357,7 +418,7 @@ export class ZombieManager {
     for (let i = this.corpses.length - 1; i >= 0; i--) {
       const v = this.corpses[i];
       this.animateDeath(v, dt);
-      if (v.deathT > (v instanceof DogView ? 0.35 : 8)) {
+      if (v.deathT > (v instanceof DogView || v.shrink ? 0.35 : 8)) {
         this.group.remove(v.h.root);
         this.corpses.splice(i, 1);
       }
@@ -425,6 +486,22 @@ export class ZombieManager {
   private animate(v: View, dt: number) {
     if (v instanceof BossView) {
       this.animateBossView(v, dt);
+      return;
+    }
+    if (v instanceof BispoView) {
+      const p = v.h.root.position;
+      const moved = Math.hypot(p.x - v.lastX, p.z - v.lastZ);
+      v.lastX = p.x;
+      v.lastZ = p.z;
+      v.speed = lerp(v.speed, Math.min(dt > 0 ? moved / dt : 0, 8), 1 - Math.exp(-dt * 6));
+      v.animT += dt;
+      v.h.root.rotation.y = v.yaw;
+      animateBispo(v.rig, { speed: v.speed, t: this.t, anim: v.anim, animT: v.animT, shield: this.bispoShield });
+      // brasas caindo da batina
+      if (Math.random() < dt * 14) {
+        const a = Math.random() * Math.PI * 2;
+        this.fx.flame('bispo-' + v.id, this.tmp.set(p.x + Math.sin(a) * 0.5, p.y + 0.35, p.z + Math.cos(a) * 0.5), dt, 30, 0.3);
+      }
       return;
     }
     if (v instanceof DogView) {
@@ -556,6 +633,23 @@ export class ZombieManager {
     }
     v.deathT += dt;
     const h = v.h;
+    if (v.shrink) {
+      // engolido: gira e some no centro do vórtice
+      h.root.scale.setScalar(Math.max(0.01, 1 - v.deathT / 0.32));
+      h.root.rotation.y += dt * 18;
+      return;
+    }
+    if (v.fling) {
+      // arremessado: voa girando e cai mais longe
+      h.root.position.addScaledVector(v.fling, dt);
+      v.fling.y -= 14 * dt;
+      v.fling.x *= Math.exp(-dt * 0.8);
+      v.fling.z *= Math.exp(-dt * 0.8);
+      if (h.root.position.y <= v.flingY && v.fling.y < 0) {
+        h.root.position.y = v.flingY;
+        v.fling = null;
+      }
+    }
     const k = clamp(v.deathT / 0.6, 0, 1);
     const e = k * k;
     h.root.rotation.order = 'YXZ';

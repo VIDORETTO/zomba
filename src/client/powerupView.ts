@@ -92,6 +92,11 @@ export class PowerupView {
 
   dispose() {
     this.group.removeFromParent();
+    for (const m of [...this.mats.values(), this.glowMat]) {
+      m.map?.dispose();
+      m.dispose();
+    }
+    this.geo.dispose();
   }
 }
 

@@ -45,7 +45,7 @@ function fbm(x: number, y: number, size: number, base: number, oct: number, seed
 function canvas(size: number): [HTMLCanvasElement, Ctx] {
   const c = document.createElement('canvas');
   c.width = c.height = size;
-  return [c, c.getContext('2d')!];
+  return [c, c.getContext('2d', { willReadFrequently: true })!];
 }
 
 type RGB = [number, number, number];
@@ -628,6 +628,46 @@ export function chalkTexture(item: string, label: string): THREE.Texture {
       if (item === 'pump') rect(cx - 110, 70, 60, 14);
       rect(cx + 30, 46, 40, 28);
       shape([[cx + 70, 50], [cx + 165, 62], [cx + 165, 96], [cx + 70, 74]]);
+      break;
+    case 'lmg':
+      // metralhadora: cano comprido com bipé, caixa de munição embaixo e coronha
+      rect(cx - 170, 50, 120, 10);
+      rect(cx - 50, 40, 130, 32);
+      rect(cx - 30, 72, 50, 34);
+      shape([[cx - 140, 60], [cx - 160, 112]]);
+      shape([[cx - 130, 60], [cx - 110, 112]]);
+      shape([[cx + 80, 46], [cx + 160, 54], [cx + 160, 88], [cx + 80, 72]]);
+      break;
+    case 'sniper':
+    case 'dmr':
+      // fuzil comprido com luneta (ou ponto vermelho) no alto
+      rect(cx - 175, 54, 135, 9);
+      rect(cx - 40, 46, 105, 24);
+      if (item === 'sniper') rect(cx - 30, 26, 80, 14);
+      else rect(cx - 6, 30, 28, 16);
+      rect(cx + 6, 70, 18, 30);
+      shape([[cx + 65, 48], [cx + 160, 56], [cx + 160, 92], [cx + 65, 70]]);
+      break;
+    case 'autoshotgun':
+      rect(cx - 160, 50, 170, 12);
+      rect(cx - 10, 42, 80, 30);
+      rect(cx + 2, 72, 30, 40);
+      shape([[cx + 70, 48], [cx + 160, 58], [cx + 160, 92], [cx + 70, 72]]);
+      break;
+    case 'revolver':
+      // cano, tambor redondo e cabo curvo
+      rect(cx - 110, 48, 100, 16);
+      ctx.beginPath();
+      ctx.ellipse(cx + 10, 62, 22, 18, 0, 0, Math.PI * 2);
+      ctx.stroke();
+      shape([[cx + 30, 52], [cx + 60, 54], [cx + 80, 120], [cx + 50, 124], [cx + 34, 76]]);
+      break;
+    case 'burstpistol':
+    case 'machinepistol':
+      rect(cx - 80, 42, 150, 26);
+      shape([[cx + 30, 68], [cx + 58, 68], [cx + 64, 118], [cx + 36, 118]]);
+      if (item === 'machinepistol') rect(cx - 30, 68, 20, 50);
+      else rect(cx - 110, 50, 30, 10);
       break;
     case 'grenade':
       ctx.beginPath();

@@ -302,7 +302,10 @@ export class WeaponView {
       keep.delete(id);
       this.slots.push(s);
     }
-    for (const s of keep.values()) this.root.remove(s.model.group);
+    for (const s of keep.values()) {
+      this.root.remove(s.model.group);
+      this.release(s.model.group);
+    }
     const idx = this.slots.findIndex((s) => s.def.id === curId);
     this.showSlot(idx >= 0 ? idx : 0);
   }
@@ -332,10 +335,27 @@ export class WeaponView {
     for (const s of this.slots) {
       const want = s.model.rail ? map[baseId(s.def.id)] ?? s.def.optic ?? null : null;
       if ((s.optic?.kind ?? null) === want) continue;
-      if (s.optic) s.model.group.remove(s.optic.group);
+      if (s.optic) {
+        s.model.group.remove(s.optic.group);
+        this.release(s.optic.group);
+      }
       s.optic = want ? this.buildOptic(want, s.model) : null;
       if (s.optic) s.model.group.add(s.optic.group);
     }
+  }
+
+  // Libera da placa de vídeo uma arma (ou mira) que saiu: formas e materiais próprios dela.
+  // Os materiais comuns a todas as armas e o clarão do cano ficam.
+  private release(obj: THREE.Object3D) {
+    if (this.flash.parent === obj || obj.getObjectById(this.flash.id)) this.flash.removeFromParent();
+    const shared = new Set<THREE.Material>([...Object.values(this.mats), ...Object.values(this.camoMats), this.brassMat, this.shellMat, this.emberMat]);
+    const sharedGeo = new Set<THREE.BufferGeometry>([this.brassGeo, this.shellGeo, this.emberGeo]);
+    obj.traverse((o) => {
+      const m = o as THREE.Mesh;
+      if (!m.isMesh) return;
+      if (!sharedGeo.has(m.geometry)) m.geometry.dispose();
+      for (const mat of Array.isArray(m.material) ? m.material : [m.material]) if (!shared.has(mat)) mat.dispose();
+    });
   }
 
   private buildOptic(kind: SightKind, mdl: GunModel): Optic {

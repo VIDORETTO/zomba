@@ -3,7 +3,7 @@ import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
 import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
-import { PLAYER, PLAYER_COLORS, REVIVE_RANGE, TICK_DT } from '../shared/constants';
+import { BISPO, BLEEDOUT_TIME, PLAYER, PLAYER_COLORS, REVIVE_RANGE, TICK_DT } from '../shared/constants';
 import type { MapDef } from '../shared/map/types';
 import type { GameEvent, NetPlayer, Snapshot } from '../shared/protocol';
 import { clamp, lerp } from '../shared/rng';
@@ -94,6 +94,16 @@ export class Game {
   private readonly rayMat = new THREE.MeshBasicMaterial({ color: new THREE.Color(0.8, 4, 1.2) });
   private readonly rocketMat = new THREE.MeshStandardMaterial({ color: 0x4a5a30, roughness: 0.6, metalness: 0.3, emissive: new THREE.Color(0.3, 0.1, 0.02) });
   private readonly boltMat = new THREE.MeshStandardMaterial({ color: 0xb03020, roughness: 0.5 });
+  private readonly vortexMat = new THREE.MeshBasicMaterial({ color: new THREE.Color(1.6, 0.5, 2.8) });
+  private readonly orbMat = new THREE.MeshBasicMaterial({ color: new THREE.Color(2.0, 0.55, 0.1) });
+  // pilares de fogo do Bispo marcados no chão (somem quando o fogo sobe)
+  private warns: { x: number; z: number; t: number; dur: number }[] = [];
+  // buracos negros abertos: núcleo escuro e anel roxo (sem luz própria: luz nova recompila os materiais e trava o quadro)
+  private readonly vortexViews = new Map<number, { group: THREE.Group; ring: THREE.Mesh; core: THREE.Mesh }>();
+  private readonly vortexGeo = new THREE.SphereGeometry(1, 20, 14);
+  private readonly ringGeo = new THREE.TorusGeometry(1, 0.08, 8, 40);
+  private readonly coreMat = new THREE.MeshBasicMaterial({ color: 0x050008 });
+  private readonly ringMat = new THREE.MeshBasicMaterial({ color: new THREE.Color(1.8, 0.5, 3.2), transparent: true, opacity: 0.85 });
   private shake = 0;
   // clima da rodada infernal (0..1, muda devagar) e clarão dos raios
   private hellK = 0;
@@ -410,7 +420,9 @@ export class Game {
         case 'shot': {
           const p = this.playerPos(e.pid);
           const wd = WEAPONS[e.weapon];
-          if (p && wd?.projectile === 'rocket') this.audio.rocketLaunch(p);
+          if (p && wd?.projectile === 'wind') this.audio.windBlast(p);
+          else if (p && wd?.projectile === 'arc') this.audio.arcZap(p);
+          else if (p && wd?.projectile === 'rocket') this.audio.rocketLaunch(p);
           else if (p && wd?.projectile === 'blade') this.audio.bladeLaunch(p);
           else if (p) this.audio.gunshot(p, wd?.sound ?? wd?.cls ?? 'pistol');
           break;
@@ -474,6 +486,7 @@ export class Game {
           }
           break;
         case 'power':
+          if (e.pid === local) this.buyPending = 0;
           this.audio.powerOn();
           this.hud.notify(`${e.pid === local ? 'Você ligou' : `${this.nameOf(e.pid)} ligou`} a <b>energia</b>: bebidas acesas e o cofre da Forja aberto.`);
           this.shake = Math.max(this.shake, 0.4);
@@ -498,6 +511,89 @@ export class Game {
         case 'runover':
           this.zombies.onEvent(e);
           break;
+        case 'ritual': {
+          if (e.pid === local) this.buyPending = 0;
+          const c = this.o.map.ritual?.candles[e.candle];
+          const p = c ? new THREE.Vector3(c[0], c[1], c[2]) : this.pc.pos.clone();
+          if (e.phase === 'candle') {
+            this.audio.ritualCandle(p);
+            if (e.pid !== local) this.hud.notify(`${this.nameOf(e.pid)} acendeu uma <b>vela preta</b>.`);
+          } else {
+            this.audio.ritualBell();
+            this.hud.showBanner('O RITUAL');
+            this.hud.notify('As velas pretas queimam. <b>Algo sobe da lava do cruzamento...</b>');
+            this.shake = Math.max(this.shake, 0.8);
+            this.boltFlash = Math.max(this.boltFlash, 0.5);
+          }
+          break;
+        }
+        case 'bispo': {
+          const p = new THREE.Vector3(e.x, 1.5, e.z);
+          const d = p.distanceTo(this.pc.pos);
+          if (e.phase === 'spawn') {
+            this.audio.bossBell();
+            this.audio.bispoVoice(p, 1.6);
+            this.hud.showBanner('O BISPO');
+            this.hud.notify('<b>O Bispo</b> subiu da lava. Derrote-o e ganhe todas as bebidas.');
+            this.fx.explosion(p.clone().setY(0.4));
+            for (let k = 0; k < 6; k++) this.fx.fireBurst(new THREE.Vector3(e.x + (Math.random() - 0.5) * 3, 0.3, e.z + (Math.random() - 0.5) * 3));
+            this.shake = Math.max(this.shake, 1.2);
+          } else if (e.phase === 'phase') {
+            this.audio.bispoVoice(p, 1.3);
+            this.fx.fireBurst(p);
+            this.fx.fireBurst(p.clone().setY(0.4));
+            if (e.n && e.n >= 2) this.hud.notify(e.n === 3 ? '<b>O Bispo</b> está furioso!' : '<b>O Bispo</b> se envolve em fogo e muda de lugar.');
+          } else if (e.phase === 'orb') {
+            this.audio.rocketLaunch(p);
+          } else if (e.phase === 'summon') {
+            this.audio.bispoVoice(p, 0.9);
+          } else if (e.phase === 'pillar' && e.pts) {
+            for (let i = 0; i < e.pts.length; i += 2) {
+              this.warns.push({ x: e.pts[i], z: e.pts[i + 1], t: 0, dur: BISPO.pillar.warn });
+              this.audio.pillarWarn(new THREE.Vector3(e.pts[i], 0.3, e.pts[i + 1]));
+            }
+          } else if (e.phase === 'death') {
+            this.hud.showBanner('RITUAL COMPLETO');
+            this.hud.notify('<b>O Bispo</b> caiu! Todas as bebidas e +5000 para cada um.');
+            this.fx.explosion(p);
+            this.fx.forgeBurst(p.clone().setY(0.5));
+            this.audio.forgeDone(p);
+            if (d < 30) this.shake = Math.max(this.shake, 0.9);
+            this.warns = [];
+          }
+          break;
+        }
+        case 'wind': {
+          const o = new THREE.Vector3(e.x, e.y, e.z);
+          // a lufada sai da boca da arma de quem atirou
+          if (e.pid === local) o.copy(this.camera.position).add(new THREE.Vector3(0, -0.12, 0));
+          this.fx.windGust(o, new THREE.Vector3(e.dx, e.dy, e.dz).normalize(), e.range);
+          break;
+        }
+        case 'arc': {
+          const pts: THREE.Vector3[] = [];
+          for (let i = 0; i < e.pts.length; i += 3) pts.push(new THREE.Vector3(e.pts[i], e.pts[i + 1], e.pts[i + 2]));
+          if (e.pid === local && pts.length) {
+            const fwd = this.camera.getWorldDirection(new THREE.Vector3());
+            pts[0].copy(this.camera.position).addScaledVector(fwd, 0.5).add(new THREE.Vector3(0, -0.1, 0));
+          }
+          this.fx.arcBolt(pts);
+          for (const p of pts.slice(1, 7)) this.audio.arcHit(p);
+          break;
+        }
+        case 'vortex': {
+          const p = new THREE.Vector3(e.x, e.y, e.z);
+          if (e.phase === 'open') {
+            this.audio.vortexOpen(p, e.dur);
+            this.fx.vortexBurst(p, false);
+          } else {
+            this.audio.vortexClose(p);
+            this.fx.vortexBurst(p, true);
+            const d = p.distanceTo(this.pc.pos);
+            if (d < 12) this.shake = Math.max(this.shake, 0.5 * (1 - d / 12));
+          }
+          break;
+        }
         case 'dogspawn': {
           const p = new THREE.Vector3(e.x, 0.5, e.z);
           this.fx.lightning(e.x, e.z);
@@ -592,6 +688,8 @@ export class Game {
           else if (e.phase === 'on') {
             this.audio.forgeIgnite(fp);
             this.hud.notify(this.o.map.forge.candles.length ? 'A <b>Forja</b> acendeu no cemitério.' : 'A <b>Forja</b> acendeu no cofre do banco, na Cidade.');
+            // pista do ritual: as velas pretas da Igreja só pegam fogo agora
+            if (this.o.map.ritual) setTimeout(() => !this.disposed && this.hud.notify('Na Igreja, as <b>velas pretas</b> do altar parecem esperar por fogo...'), 5000);
           } else if (e.phase === 'start') {
             // a arma entra na fornalha
             const mouth = new THREE.Vector3(...this.o.map.forge.mouth);
@@ -689,6 +787,10 @@ export class Game {
       start.y -= 0.06;
       this.transport.send({ t: 'launch', weapon: def.id, x: start.x, y: start.y, z: start.z, dx: fwd.x, dy: fwd.y, dz: fwd.z });
       if (def.projectile === 'ray') this.audio.rayZap();
+      else if (def.projectile === 'wind') {
+        this.audio.windBlast();
+        this.shake = Math.max(this.shake, 0.6);
+      } else if (def.projectile === 'arc') this.audio.arcZap();
       else if (def.projectile === 'rocket') this.audio.rocketLaunch();
       else if (def.projectile === 'blade') this.audio.bladeLaunch();
       else this.audio.gunshot(undefined, def.projectile === 'bolt' ? 'smg' : 'shotgun');
@@ -766,12 +868,14 @@ export class Game {
       seen.add(g.id);
       let m = this.nadeMeshes.get(g.id);
       if (!m) {
-        const mat = g.kind === 'ray' ? this.rayMat : g.kind === 'bolt' || g.kind === 'blade' ? this.boltMat : g.kind === 'rocket' ? this.rocketMat : this.nadeMat;
+        const mat = g.kind === 'ray' ? this.rayMat : g.kind === 'vortex' ? this.vortexMat : g.kind === 'orb' ? this.orbMat : g.kind === 'bolt' || g.kind === 'blade' ? this.boltMat : g.kind === 'rocket' ? this.rocketMat : this.nadeMat;
         m = new THREE.Mesh(this.nadeGeo, mat);
         if (g.kind === 'bolt') m.scale.set(0.4, 0.4, 3);
         if (g.kind === 'blade') m.scale.set(0.15, 0.5, 2.6);
         if (g.kind === 'rocket') m.scale.set(0.9, 0.9, 4);
         if (g.kind === 'ray') m.scale.setScalar(2.2);
+        if (g.kind === 'vortex') m.scale.setScalar(1.6);
+        if (g.kind === 'orb') m.scale.setScalar(2.4);
         m.position.set(g.x, g.y, g.z);
         this.scene.add(m);
         this.nadeMeshes.set(g.id, m);
@@ -788,11 +892,45 @@ export class Game {
       // rastros: fumaça e fogo do foguete, brilho verde do raio
       if (g.kind === 'rocket') this.fx.rocketTrail(prev, m.position);
       else if (g.kind === 'ray') this.fx.rayTrail(prev, m.position);
+      else if (g.kind === 'vortex') this.fx.vortexSwirl(m.position, 0.4, 1 / 60, 0.5);
+      else if (g.kind === 'orb') this.fx.rocketTrail(prev, m.position);
     }
     for (const [id, m] of this.nadeMeshes) {
       if (seen.has(id)) continue;
       this.scene.remove(m);
       this.nadeMeshes.delete(id);
+    }
+  }
+
+  // Buracos negros do Vórtice: crescem ao abrir, giram e encolhem no fim
+  private updateVortices(dt: number) {
+    const list = this.buffer.latest?.s.vortices ?? [];
+    const seen = new Set<number>();
+    for (const v of list) {
+      seen.add(v.id);
+      let view = this.vortexViews.get(v.id);
+      if (!view) {
+        const group = new THREE.Group();
+        const core = new THREE.Mesh(this.vortexGeo, this.coreMat);
+        const ring = new THREE.Mesh(this.ringGeo, this.ringMat);
+        group.add(core, ring);
+        group.position.set(v.x, v.y, v.z);
+        this.scene.add(group);
+        view = { group, ring, core };
+        this.vortexViews.set(v.id, view);
+      }
+      const t = v.t + dt;
+      const grow = Math.min(1, t / 0.5) * Math.min(1, (v.dur - t) / 0.6);
+      const k = Math.max(0.02, grow);
+      view.core.scale.setScalar(0.55 * k + Math.sin(t * 9) * 0.04);
+      view.ring.scale.setScalar(1.3 * k);
+      view.ring.rotation.set(Math.PI / 2 + Math.sin(t * 2) * 0.3, t * 3, 0);
+      this.fx.vortexSwirl(view.group.position, v.r * 0.75, dt, k);
+    }
+    for (const [id, view] of this.vortexViews) {
+      if (seen.has(id)) continue;
+      this.scene.remove(view.group);
+      this.vortexViews.delete(id);
     }
   }
 
@@ -831,6 +969,20 @@ export class Game {
           return b.mat === 'floorWood' || b.mat === 'wood' ? 'wood' : 'hard';
         }
       }
+    }
+    // Rota: chão de concreto nas paradas, asfalto na estrada do ônibus, terra no resto
+    const route = this.o.map.bus;
+    if (route) {
+      if (this.zone || this.onBusNow()) return 'hard';
+      const n = route.path.length;
+      for (let i = 0; i < n; i++) {
+        const [ax, az] = route.path[i];
+        const [bx, bz] = route.path[(i + 1) % n];
+        const dx = bx - ax, dz = bz - az;
+        const k = clamp(((x - ax) * dx + (z - az) * dz) / (dx * dx + dz * dz || 1), 0, 1);
+        if (Math.hypot(x - ax - dx * k, z - az - dz * k) < 4.2) return 'hard';
+      }
+      return 'dirt';
     }
     return Math.abs(x) < 9 || Math.abs(z) < 9 ? 'hard' : 'dirt';
   }
@@ -968,6 +1120,7 @@ export class Game {
 
     this.applyPerks(dt);
     this.updateGrenades();
+    this.updateVortices(dt);
     this.boxView.update(this.buffer.latest?.s.box, dt, this.t);
     this.powerupView.update(this.buffer.latest?.s, this.t);
     const forge = this.buffer.latest?.s.forge;
@@ -1068,7 +1221,20 @@ export class Game {
   private updateMood(dt: number) {
     const hell = !!this.buffer.latest?.s.hell;
     this.hud.setHell(hell);
-    this.hud.setBoss(this.buffer.latest?.s.boss ?? null);
+    const sn = this.buffer.latest?.s;
+    if (sn?.bispo) this.hud.setBoss({ hp: sn.bispo.hp, armor: sn.bispo.shield }, 'O BISPO');
+    else this.hud.setBoss(sn?.boss ?? null);
+    this.zombies.bispoShield = !!sn?.bispo?.shield;
+    for (let i = this.warns.length - 1; i >= 0; i--) {
+      const w = this.warns[i];
+      w.t += dt;
+      if (w.t >= w.dur) this.warns.splice(i, 1);
+      else this.fx.warnRing(w.x, w.z, BISPO.pillar.radius, w.t / w.dur, dt);
+    }
+    const rc = this.o.map.ritual?.candles;
+    if (rc && sn?.ritual) sn.ritual.candles.forEach((lit, i) => {
+      if (lit && sn.ritual!.state !== 'done') this.fx.flame(`ritual${i}`, new THREE.Vector3(rc[i][0], rc[i][1], rc[i][2]), dt, 6, 0.2);
+    });
     this.hellK = clamp(this.hellK + (hell ? dt / 2.5 : -dt / 4), 0, 1);
     this.boltFlash = Math.max(0, this.boltFlash - dt * 5);
     this.mapView.setMood(this.hellK, this.boltFlash);
@@ -1206,6 +1372,15 @@ export class Game {
       const f = this.buffer.latest!.s.forge;
       if (f.on || f.candles[best.candle!]) return false;
       text = 'Pressione <b>F</b> para acender a vela';
+    } else if (best.kind === 'ritual') {
+      const r = this.buffer.latest?.s.ritual;
+      if (!r || r.state !== 'idle' || r.candles[best.candle!]) return false;
+      if (!this.buffer.latest!.s.forge.on) {
+        text = 'Uma vela preta, fria<small>Algo precisa queimar antes dela</small>';
+        can = false;
+      } else {
+        text = 'Pressione <b>F</b> para acender a <b>vela preta</b>';
+      }
     } else if (best.kind === 'power') {
       if (this.buffer.latest?.s.power) return false;
       text = 'Pressione <b>F</b> para ligar a <b>energia</b><small>Acende as bebidas e abre o cofre da Forja</small>';
@@ -1343,7 +1518,7 @@ export class Game {
 
     if (life === 'downed' && !this.over) {
       if (this.transport.solo) this.hud.downed(true, this.me?.revive ?? 0, 'Segundo Fôlego: levantando...');
-      else this.hud.downed(true, (this.me?.bleed ?? 0) / 30, 'Aguente firme. Um aliado pode reanimar você.');
+      else this.hud.downed(true, (this.me?.bleed ?? 0) / BLEEDOUT_TIME, 'Aguente firme. Um aliado pode reanimar você.');
     } else {
       this.hud.downed(false);
     }
@@ -1497,6 +1672,30 @@ export class Game {
   dispose() {
     this.disposed = true;
     cancelAnimationFrame(this.raf);
+    // libera da placa de vídeo tudo o que esta partida criou (as texturas do cenário ficam para a próxima)
+    const keep = new Set<THREE.Texture>(Object.values(this.o.tex).filter((t): t is THREE.Texture => t instanceof THREE.Texture));
+    const seen = new Set<object>();
+    const free = (root: THREE.Object3D) => root.traverse((obj) => {
+      // luzes com sombra guardam um mapa de sombra na placa
+      if (obj instanceof THREE.Light) obj.dispose();
+      const m = obj as THREE.Mesh;
+      if (m.geometry && !seen.has(m.geometry)) {
+        seen.add(m.geometry);
+        m.geometry.dispose();
+      }
+      const mats = m.material ? (Array.isArray(m.material) ? m.material : [m.material]) : [];
+      for (const mat of mats) {
+        if (seen.has(mat)) continue;
+        seen.add(mat);
+        for (const v of Object.values(mat)) if (v instanceof THREE.Texture && !keep.has(v)) v.dispose();
+        mat.dispose();
+      }
+    });
+    free(this.scene);
+    free(this.weapon.scene);
+    this.nadeGeo.dispose();
+    this.renderer.renderLists.dispose();
+
     window.removeEventListener('resize', this.resize);
     this.renderer.domElement.removeEventListener('click', this.onCanvasClick);
     this.input.unlock();
@@ -1514,6 +1713,7 @@ export class Game {
     this.audio.stopBusEngine();
     this.zombies.dispose();
     this.players.dispose();
+    for (const pass of this.composer.passes) pass.dispose();
     this.composer.dispose();
   }
 }

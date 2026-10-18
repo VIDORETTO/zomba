@@ -5,6 +5,8 @@ import { GameSim, bossHealth, dogHealth, dogsForRound, zombieHealth } from '../s
 import type { GameEvent } from '../src/shared/protocol';
 import { BOX_POOL, WEAPONS as WEAPONS_ } from '../src/shared/weapons';
 import { levelFromXp, matchXp, rankOf, startPoints } from '../src/shared/progress';
+import { BUS } from '../src/shared/constants';
+import { BUS_DOOR, toLocal, toWorld } from '../src/shared/busBody';
 
 const map = buildTown();
 let fails = 0;
@@ -110,7 +112,7 @@ check('mapa tem 6 máquinas e 3 caixotes', map.interactables.filter((i) => i.kin
 
 // --- barricadas ---
 {
-  check('mapa tem 4 entradas com tábuas', map.entries.length === 4);
+  check('mapa tem 4 entradas com tábuas nas ruas', map.entries.filter((e) => !e.area).length === 4);
   // sem pontos de surgir da terra: todo zumbi vem por uma entrada
   const m2 = { ...map, zombieSpawns: [] };
   const s = new GameSim(m2, true);
@@ -162,7 +164,7 @@ check('mapa tem 6 máquinas e 3 caixotes', map.interactables.filter((i) => i.kin
 
 // --- portas e áreas ---
 {
-  check('mapa tem 6 portas', map.doors.length === 6);
+  check('mapa tem 16 portas (2 lojas, 4 quintais e 10 prédios)', map.doors.length === 16);
   const s = new GameSim(map, true);
   s.addPlayer('a', 'A', 0);
   s.start();
@@ -205,6 +207,52 @@ check('mapa tem 6 máquinas e 3 caixotes', map.interactables.filter((i) => i.kin
   check('abrir o quintal ativa os pontos de surgir da terra dele', spawnsBefore === 0 && raw(s2).openSpawns().length === 5, `${spawnsBefore} -> ${raw(s2).openSpawns().length}`);
 }
 
+// --- prédios da Cidade: cada um fechado até comprar a porta ---
+{
+  const s = new GameSim(map, true);
+  s.addPlayer('a', 'A', 0);
+  s.start();
+  const nav = raw(s).nav;
+  const start = { x: -3, z: 11.5 };
+  const reach = (x: number, z: number) => {
+    nav.update([start]);
+    return nav.distanceAt(x, z) < 0xffff;
+  };
+  const areas = [...new Set(map.zombieSpawns.map((p) => p.area).filter((a): a is string => !!a))];
+  // com tudo fechado: nenhum ponto de surgir (de prédio ou quintal) é alcançável a partir da rua
+  const leaks = map.zombieSpawns.filter((p) => reach(p.x, p.z));
+  check('com tudo fechado, nenhum prédio ou quintal é alcançável a pé', leaks.length === 0, leaks.map((p) => p.area).join(' '));
+  // as portas dos prédios ficam na rua: dá para chegar até elas de graça
+  const buildings = map.doors.filter((d) => d.kind === 'door');
+  const doorsOk = buildings.every((d) => map.interactables.filter((i) => i.door === d.id).every((i) => reach(i.use[0], i.use[1])));
+  check(`as ${buildings.length} portas de prédio ficam alcançáveis da rua`, doorsOk && buildings.length === 12);
+  // cada prédio, aberto sozinho, fica alcançável (e só ele)
+  const bad: string[] = [];
+  for (const d of buildings) {
+    raw(s).world.openDoors.clear();
+    raw(s).world.openDoors.add(d.id);
+    nav.rebuild();
+    const mine = map.zombieSpawns.filter((p) => p.area === d.id);
+    const others = map.zombieSpawns.filter((p) => p.area !== d.id && p.area);
+    if (!mine.every((p) => reach(p.x, p.z)) || others.some((p) => reach(p.x, p.z))) bad.push(d.id);
+  }
+  check('cada prédio aberto fica alcançável, sem abrir outros lugares', bad.length === 0, bad.join(' '));
+  // tudo aberto: armas de parede, Caixa e bebidas alcançáveis
+  raw(s).world.openDoors.clear();
+  for (const d of map.doors) raw(s).world.openDoors.add(d.id);
+  for (let i = 0; i < map.boxSpots.length; i++) raw(s).world.openDoors.add(`box-spot-${i}`);
+  nav.rebuild();
+  const unreach = map.interactables.filter((i) => ['weapon', 'box', 'perk', 'ammo'].includes(i.kind) && !reach(i.use[0], i.use[1]));
+  check('com tudo aberto, toda arma de parede, Caixa e bebida é alcançável', unreach.length === 0, unreach.map((i) => i.id).join(' '));
+  check(`${map.entries.length - 4} janelas de prédio com tábuas, presas aos prédios`, map.entries.length > 20 && map.entries.slice(4).every((e) => e.area && areas.includes(e.area)));
+  // janelas de prédio fechado não soltam zumbis
+  raw(s).world.openDoors.clear();
+  nav.rebuild();
+  check('janelas de prédio fechado não valem como entrada', raw(s).openEntries().length === 4);
+  raw(s).world.openDoors.add('cinema');
+  check('abrir o Cinema ativa as janelas dele', raw(s).openEntries().length === 4 + map.entries.filter((e) => e.area === 'cinema').length);
+}
+
 // --- armas de parede, granadas e faca pesada ---
 {
   const s = new GameSim(map, true);
@@ -217,7 +265,7 @@ check('mapa tem 6 máquinas e 3 caixotes', map.interactables.filter((i) => i.kin
     s.handle('a', { t: 'interact', id, weapon: held });
     return s.drainEvents();
   };
-  check('mapa tem 6 armas de parede, granadas e faca', map.interactables.filter((i) => i.kind === 'weapon').length === 6 && map.interactables.some((i) => i.kind === 'grenade') && map.interactables.some((i) => i.kind === 'knife'));
+  check('mapa tem 13 armas de parede, granadas e faca', map.interactables.filter((i) => i.kind === 'weapon').length === 13 && map.interactables.some((i) => i.kind === 'grenade') && map.interactables.some((i) => i.kind === 'knife'));
   let ev = buy('wall-carbine');
   check('compra a Carabina por 500', p.weapons.join() === 'pistol,carbine' && p.points === 19500 && ev.some((e) => e.e === 'weapon'));
   ev = buy('wall-carbine', 'carbine');
@@ -265,7 +313,7 @@ check('mapa tem 6 máquinas e 3 caixotes', map.interactables.filter((i) => i.kin
 
 // --- Caixa Misteriosa ---
 {
-  check('mapa tem 4 locais da caixa', map.boxSpots.length === 4);
+  check('mapa tem 7 locais da caixa (começa no Banco)', map.boxSpots.length === 7 && map.boxSpots[0].name === 'Banco');
   const s = new GameSim(map, false);
   s.addPlayer('a', 'A', 0);
   s.addPlayer('b', 'B', 1);
@@ -701,7 +749,7 @@ check('mapa tem 6 máquinas e 3 caixotes', map.interactables.filter((i) => i.kin
 // --- armas novas e projéteis ---
 {
   const bases = Object.keys(WEAPONS_).filter((id) => !id.endsWith('_pap'));
-  check('21 armas, todas com versão da Forja', bases.length === 21 && bases.every((id) => WEAPONS_[`${id}_pap`]?.upgraded), `${bases.length} armas`);
+  check('24 armas, todas com versão da Forja', bases.length === 24 && bases.every((id) => WEAPONS_[`${id}_pap`]?.upgraded), `${bases.length} armas`);
   check('pesos da Caixa somam 100 e só têm armas que existem', BOX_POOL.reduce((a, [, w]) => a + w, 0) === 100 && BOX_POOL.every(([id]) => WEAPONS_[id]));
   check('rajadas e mira de fábrica', WEAPONS_.burstrifle.burst === 3 && WEAPONS_.burstpistol.burst === 3 && WEAPONS_.dmr.optic === 'red');
 
@@ -755,6 +803,193 @@ check('mapa tem 6 máquinas e 3 caixotes', map.interactables.filter((i) => i.kin
     fuseT += 0.05;
   }
   check('granada do tambor explode no pavio de 1,3 s', Math.abs(fuseT - 1.3) < 0.11, `${fuseT.toFixed(2)} s`);
+}
+
+// --- armas maravilha ---
+{
+  const s = new GameSim(map, true);
+  s.addPlayer('a', 'A', 0);
+  s.addPlayer('b', 'B', 1);
+  s.start();
+  const a = s.players.get('a')!;
+  a.health = a.maxHealth = 99999;
+  raw(s).round = 25;
+  const put = (pts: [number, number][]) => {
+    raw(s).zombies.clear();
+    raw(s).toSpawn = 0;
+    const ids: number[] = [];
+    for (const [x, z] of pts) {
+      raw(s).spawnZombie();
+      const zb = [...raw(s).zombies.values()].pop();
+      Object.assign(zb, { x, z, y: 0, anim: 'move', speed: 0, hp: 20000, entry: -1, phase: 'none' });
+      ids.push(zb.id);
+    }
+    return ids;
+  };
+  const fire = (weapon: string, dy = -0.03) => {
+    s.handle('a', { t: 'state', x: 0, y: 0, z: 24, yaw: 0, pitch: 0, crouch: false, speed: 0 });
+    a.weapons = ['pistol', weapon];
+    raw(s).time += 5;
+    s.handle('a', { t: 'launch', weapon, x: 0, y: 1.4, z: 23.4, dx: 0, dy, dz: -1 });
+  };
+  check('3 armas maravilha na Caixa, 2% cada (sorteio soma 100)', ['wind', 'arc', 'vortex'].every((w) => BOX_POOL.find(([x]) => x === w)?.[1] === 2) && BOX_POOL.reduce((t, [, w]) => t + w, 0) === 100);
+
+  // Canhão de Vento: mata os do cone (mesmo com muita vida) e arremessa; o de trás fica
+  const ids = put([[0, 18], [1.5, 16], [-1.5, 15], [0, 13], [0, 30]]);
+  events(s);
+  fire('wind');
+  const ev = events(s);
+  const kills = ev.filter((e) => e.e === 'zkill' && e.fling);
+  check('Canhão de Vento mata e arremessa os 4 zumbis do cone', kills.length === 4 && has(ev, 'wind'), `${kills.length} arremessados`);
+  check('quem está atrás do Canhão de Vento fica', raw(s).zombies.has(ids[4]));
+  const fl = kills[0] as Extract<GameEvent, { e: 'zkill' }>;
+  check('arremesso vai para longe do jogador e para cima', !!fl.fling && fl.fling[2] < -5 && fl.fling[1] > 2, JSON.stringify(fl.fling));
+  put([[0, 4]]);
+  fire('wind');
+  check('Canhão de Vento não alcança a 20 m', raw(s).zombies.size === 1);
+
+  // Arpão Elétrico: salta de zumbi em zumbi (até 10), cada um a 3 m do outro
+  const line: [number, number][] = [];
+  for (let i = 0; i < 13; i++) line.push([(i % 2) * 1.5, 18 - i * 2.5]);
+  put(line);
+  events(s);
+  fire('arc', -0.02);
+  const ev2 = events(s);
+  const arc = ev2.find((e) => e.e === 'arc') as Extract<GameEvent, { e: 'arc' }> | undefined;
+  const shocked = ev2.filter((e) => e.e === 'zkill' && e.shock).length;
+  check('Arpão Elétrico salta e mata 10 zumbis', shocked === 10 && !!arc && arc.pts.length === 33, `${shocked} mortos, ${arc?.pts.length} coordenadas`);
+  check('sobram os 3 além do limite de saltos', raw(s).zombies.size === 3);
+  put(line);
+  a.weapons = ['pistol', 'arc_pap'];
+  raw(s).time += 5;
+  s.handle('a', { t: 'launch', weapon: 'arc_pap', x: 0, y: 1.4, z: 23.4, dx: 0, dy: -0.02, dz: -1 });
+  check('na Forja o arpão salta em todos os 13', raw(s).zombies.size === 0 && events(s).filter((e) => e.e === 'zkill').length === 13);
+
+  // Vórtice: a esfera cai na rua, abre e engole os zumbis em volta em poucos segundos
+  put([]);
+  events(s);
+  fire('vortex', -0.12);
+  let opened: Extract<GameEvent, { e: 'vortex' }> | undefined;
+  for (let i = 0; i < 40 && !opened; i++) {
+    s.tick(0.05);
+    for (const e of events(s)) if (e.e === 'vortex' && e.phase === 'open') opened = e;
+  }
+  // quatro zumbis parados a 2–6 m do centro e um longe dele
+  const o = opened ?? { x: 0, z: 14 };
+  const near = put([[o.x + 2, o.z], [o.x - 3.5, o.z + 1], [o.x, o.z - 5], [o.x + 4, o.z + 4], [30, 0]]);
+  const far = raw(s).zombies.get(near[4]);
+  let eaten = 0;
+  let closed = false;
+  for (let i = 0; i < 20 * 8; i++) {
+    raw(s).toSpawn = 0;
+    s.tick(0.05);
+    for (const e of events(s)) {
+      if (e.e === 'vortex' && e.phase === 'close') closed = true;
+      if (e.e === 'zkill' && e.sucked && near.includes(e.zid)) eaten++;
+    }
+    far.speed = 0;
+  }
+  check('Vórtice abre na rua e aparece no estado da partida', !!opened && opened.z > 8 && opened.z < 20, JSON.stringify(opened));
+  check('Vórtice engole os 4 zumbis perto', eaten === 4, `${eaten} engolidos; sobraram ${[...raw(s).zombies.values()].map((z: { x: number; z: number }) => z.x.toFixed(1) + ',' + z.z.toFixed(1)).join(' ')}`);
+  check('zumbi longe do Vórtice fica e o buraco fecha em 6 s', raw(s).zombies.has(far.id) && closed && s.snapshot().vortices.length === 0);
+
+  // única: com o Canhão de Vento na mão de B, a Caixa nunca o sorteia para A
+  s.players.get('b')!.weapons = ['pistol', 'wind'];
+  a.weapons = ['pistol'];
+  let gotWind = 0, gotArc = 0;
+  for (let i = 0; i < 4000; i++) {
+    const w = raw(s).pickBoxWeapon(a);
+    if (w === 'wind') gotWind++;
+    if (w === 'arc') gotArc++;
+  }
+  check('arma maravilha única: a Caixa não dá a que outro jogador tem', gotWind === 0 && gotArc > 30, `vento ${gotWind}, arpão ${gotArc}`);
+}
+
+// --- ritual e Bispo (Cidade) ---
+{
+  const s = new GameSim(map, true);
+  s.addPlayer('a', 'A', 0);
+  s.start();
+  const a = s.players.get('a')!;
+  a.health = a.maxHealth = 99999;
+  raw(s).round = 12;
+  raw(s).world.openDoors.add('igreja');
+  const light = (i: number) => {
+    goTo(s, 'a', `ritual-${i}`);
+    s.handle('a', { t: 'interact', id: `ritual-${i}`, weapon: 'pistol' });
+  };
+  check('mapa tem 3 velas pretas no altar da Igreja', map.interactables.filter((i) => i.kind === 'ritual').length === 3 && map.ritual?.candles.length === 3);
+  events(s);
+  light(0);
+  check('vela preta não acende com a Forja apagada', !s.ritual!.candles[0] && has(events(s), 'deny'));
+  s.forge.on = true;
+  for (const i of [0, 1, 2]) light(i);
+  const ev = events(s);
+  check('três velas pretas começam o ritual', s.ritual!.state === 'summoning' && has(ev, 'ritual', (e) => e.e === 'ritual' && e.phase === 'start'));
+  let spawned: GameEvent | undefined;
+  for (let i = 0; i < 20 * 5 && !spawned; i++) {
+    s.tick(0.05);
+    spawned = events(s).find((e) => e.e === 'bispo' && e.phase === 'spawn');
+  }
+  const bz = [...raw(s).zombies.values()].find((z: { kind: number }) => z.kind === 6);
+  check('o Bispo sobe da lava do cruzamento', !!spawned && !!bz && Math.hypot(bz.x, bz.z) < 1 && s.snapshot().bispo?.phase === 1);
+  const maxHp = bz.bispo.maxHp;
+  check('vida do Bispo = 25 x zumbi da rodada x jogadores', Math.abs(maxHp - 25 * zombieHealth(s.round)) < 1, `${Math.round(maxHp)} na rodada ${s.round}`);
+  const left = raw(s).toSpawn;
+  raw(s).toSpawn = Math.max(left, 10);
+  const before = raw(s).toSpawn;
+  for (let i = 0; i < 20 * 3; i++) s.tick(0.05);
+  check('enquanto o Bispo vive, a rodada não solta zumbis', raw(s).toSpawn === before);
+  raw(s).applyPowerup('bomb', a);
+  check('a Bomba não mata o Bispo', raw(s).zombies.has(bz.id));
+  // bola de fogo: o jogador a 10 m, à vista
+  bz.anim = 'move';
+  bz.bispo.orbT = 0;
+  bz.bispo.summonT = 99;
+  const at = (x: number, z: number) => s.handle('a', { t: 'state', x, y: 0, z, yaw: 0, pitch: 0, crouch: false, speed: 0 });
+  events(s);
+  let orb = false, burned = false;
+  for (let i = 0; i < 20 * 4; i++) {
+    at(bz.x, bz.z + 10);
+    s.tick(0.05);
+    for (const e of events(s)) {
+      if (e.e === 'bispo' && e.phase === 'orb') orb = true;
+      if (e.e === 'phurt' && e.pid === 'a') burned = true;
+    }
+  }
+  check('o Bispo lança bola de fogo que acerta o jogador', orb && burned);
+  // dano grande: troca de fase em vez de morrer, e fica imune por alguns segundos
+  raw(s).damageZombie(bz, maxHp * 0.9, a, 'body', false);
+  check('dano grande só leva à fase 2 (não pula fase)', raw(s).zombies.has(bz.id) && bz.bispo.phase === 2 && Math.abs(bz.hp - maxHp * 2 / 3) < 1);
+  const hpShield = bz.hp;
+  raw(s).damageZombie(bz, 5000, a, 'body', false);
+  check('imune enquanto troca de fase', bz.hp === hpShield && s.snapshot().bispo?.shield === true);
+  for (let i = 0; i < 20 * 6; i++) s.tick(0.05);
+  // pilares de fogo na fase 2: aviso, depois o fogo onde o jogador estava
+  bz.bispo.pillarT = 0;
+  bz.bispo.orbT = 99;
+  events(s);
+  let warned = false, pillarHit = false;
+  const [px, pz] = [bz.x + 12, bz.z];
+  for (let i = 0; i < 20 * 3; i++) {
+    at(px, pz);
+    const before2 = a.health;
+    s.tick(0.05);
+    for (const e of events(s)) if (e.e === 'bispo' && e.phase === 'pillar') warned = true;
+    if (warned && a.health < before2) pillarHit = true;
+  }
+  check('na fase 2 vêm pilares de fogo sob o jogador (com aviso antes)', warned && pillarHit);
+  raw(s).damageZombie(bz, maxHp, a, 'body', false);
+  check('fase 3 depois de 2/3 do dano', bz.bispo.phase === 3);
+  for (let i = 0; i < 20 * 6; i++) s.tick(0.05);
+  const pts0 = a.points;
+  a.perks = [];
+  events(s);
+  raw(s).damageZombie(bz, maxHp, a, 'body', false);
+  const evd = events(s);
+  check('o Bispo morre na fase 3', !raw(s).zombies.has(bz.id) && has(evd, 'bispo', (e) => e.e === 'bispo' && e.phase === 'death'));
+  check('recompensa: todas as bebidas e 5000 pontos', a.perks.length === 6 && a.points - pts0 >= 5000, `${a.perks.length} bebidas, +${a.points - pts0}`);
+  check('ritual termina (só uma vez por partida)', s.snapshot().ritual?.state === 'done');
 }
 
 // --- mapa Rota ---
@@ -823,6 +1058,28 @@ check('mapa tem 6 máquinas e 3 caixotes', map.interactables.filter((i) => i.kin
   check('ônibus para na Lanchonete', s.bus!.stop === 'lanchonete' && Math.hypot(s.bus!.x + 170, s.bus!.z + 120) < 0.5);
   place(s.bus!.x, s.bus!.z, 0.55);
   check('jogador dentro do ônibus é reconhecido', s.onBus(a));
+  // zumbi ao lado do ônibus parado: não atravessa a parede, dá a volta e entra pela porta
+  {
+    raw(s).zombies.clear();
+    raw(s).toSpawn = 0;
+    const b = s.bus!;
+    raw(s).spawnZombie();
+    const z = [...raw(s).zombies.values()].pop();
+    const [zx, zz] = toWorld(b, BUS.halfWidth + 1.5, -3);
+    Object.assign(z, { x: zx, z: zz, y: 0, anim: 'move', kind: 1, speed: 3, entry: -1, phase: 'none' });
+    let firstInside: [number, number] | null = null;
+    let reached = false;
+    for (let i = 0; i < 20 * 10 && !reached; i++) {
+      place(b.x, b.z, BUS.floorY);
+      s.tick(0.05);
+      if (!raw(s).zombies.has(z.id)) break;
+      const [lx, lz] = toLocal(b, z.x, z.z);
+      if (!firstInside && Math.abs(lx) < BUS.halfWidth - 0.15) firstInside = [lx, lz];
+      reached = Math.hypot(z.x - b.x, z.z - b.z) < 1.3;
+    }
+    check('zumbi entra no ônibus parado só pela porta', reached && !!firstInside && firstInside[1] > BUS_DOOR.z0 - 0.4 && firstInside[1] < BUS_DOOR.z1 + 0.4, JSON.stringify(firstInside));
+    raw(s).zombies.clear();
+  }
   // atropelamento: zumbi na frente do ônibus andando
   for (let i = 0; i < 20 * 21 && s.bus!.wait > 0; i++) s.tick(0.05);
   for (let i = 0; i < 20; i++) s.tick(0.05);

@@ -127,12 +127,21 @@ export class BoxView {
     this.group.visible = true;
   }
 
+  private readonly models = new Map<string, THREE.Group>();
+
   private show(id: string) {
     if (id === this.shown) return;
     this.shown = id;
     this.holder.clear();
     if (!id) return;
-    const g = buildGun(id, this.mats, false).group;
+    // cada modelo é montado uma vez só e reaproveitado (o sorteio troca de arma várias vezes por segundo)
+    let g = this.models.get(id);
+    if (g) {
+      this.holder.add(g);
+      return;
+    }
+    g = buildGun(id, this.mats, false).group;
+    this.models.set(id, g);
     g.scale.setScalar(1.7);
     g.rotation.y = Math.PI / 2;
     this.holder.add(g);
@@ -209,5 +218,7 @@ export class BoxView {
 
   dispose() {
     this.group.removeFromParent();
+    for (const g of this.models.values()) g.traverse((o) => (o as THREE.Mesh).geometry?.dispose());
+    this.models.clear();
   }
 }

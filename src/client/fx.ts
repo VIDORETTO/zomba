@@ -176,6 +176,7 @@ class ParticlePool {
 
   dispose() {
     this.geo.dispose();
+    (this.material.uniforms.map.value as THREE.Texture | null)?.dispose();
     this.material.dispose();
   }
 }
@@ -529,6 +530,118 @@ export class FX {
         vx: R(-4, 4), vy: R(-1, 4), vz: R(-4, 4),
         life: R(0.3, 0.6), size: R(0.25, 0.6), size1: 0.05,
         r: 0.6, g: 3.2, b: 0.9, alpha: 1, alpha1: 0, drag: 3,
+      });
+    }
+  }
+
+  // Canhão de Vento: lufada de poeira e ar claro saindo em cone, mais um anel de choque na boca
+  windGust(o: THREE.Vector3, d: THREE.Vector3, range: number) {
+    const side = new THREE.Vector3(-d.z, 0, d.x).normalize();
+    const up = new THREE.Vector3().crossVectors(side, d).normalize();
+    const n = Math.round(140 * Math.max(0.5, this.density));
+    for (let i = 0; i < n; i++) {
+      const sp = R(0.55, 1) * range * 1.8;
+      const a = R(0, Math.PI * 2), spread = R(0, 0.38);
+      const vx = d.x + (side.x * Math.cos(a) + up.x * Math.sin(a)) * spread;
+      const vy = d.y + (side.y * Math.cos(a) + up.y * Math.sin(a)) * spread;
+      const vz = d.z + (side.z * Math.cos(a) + up.z * Math.sin(a)) * spread;
+      const dust = i % 3 === 0;
+      // começa a 1,8 m da boca (perto da câmera as partículas viram um clarão branco)
+      const s0 = R(1.8, 3);
+      (dust ? this.norm : this.add).spawn({
+        x: o.x + vx * s0, y: o.y + vy * s0 - 0.1, z: o.z + vz * s0,
+        vx: vx * sp, vy: vy * sp, vz: vz * sp,
+        life: R(0.35, 0.6), size: R(0.1, 0.2), size1: R(0.9, 1.6), drag: 2.2,
+        ...(dust ? { r: 0.42, g: 0.36, b: 0.3, alpha: 0.45, alpha1: 0 } : { r: 0.7, g: 0.8, b: 0.9, alpha: 0.18, alpha1: 0 }),
+      });
+    }
+    for (let i = 0; i < 28; i++) {
+      const a = (i / 28) * Math.PI * 2;
+      const vx = side.x * Math.cos(a) + up.x * Math.sin(a);
+      const vy = side.y * Math.cos(a) + up.y * Math.sin(a);
+      const vz = side.z * Math.cos(a) + up.z * Math.sin(a);
+      this.add.spawn({
+        x: o.x + d.x * 1.6, y: o.y + d.y * 1.6 - 0.1, z: o.z + d.z * 1.6,
+        vx: vx * 5 + d.x * 6, vy: vy * 5 + d.y * 6, vz: vz * 5 + d.z * 6,
+        life: 0.25, size: 0.1, size1: 0.3, r: 1.0, g: 1.1, b: 1.3, alpha: 0.4, alpha1: 0, drag: 4,
+      });
+    }
+  }
+
+  // Arpão Elétrico: raio azul em zigue-zague de ponto em ponto, com faíscas em cada zumbi
+  arcBolt(pts: THREE.Vector3[]) {
+    for (let k = 0; k < pts.length - 1; k++) {
+      const a = pts[k], b = pts[k + 1];
+      const len = a.distanceTo(b);
+      const segs = Math.max(3, Math.ceil(len / 0.8));
+      let p = a.clone();
+      for (let s = 1; s <= segs; s++) {
+        const q = s === segs ? b.clone() : a.clone().lerp(b, s / segs).add(new THREE.Vector3(R(-0.35, 0.35), R(-0.35, 0.35), R(-0.35, 0.35)));
+        const n = Math.max(1, Math.ceil(p.distanceTo(q) / 0.12));
+        for (let i = 0; i < n; i++) {
+          const u = i / n;
+          this.add.spawn({
+            x: p.x + (q.x - p.x) * u, y: p.y + (q.y - p.y) * u, z: p.z + (q.z - p.z) * u,
+            vx: 0, vy: 0, vz: 0, life: R(0.12, 0.24), size: R(0.08, 0.15), size1: 0.03,
+            r: 1.0, g: 1.8, b: 3.4, r1: 0.4, g1: 0.7, b1: 2.4, alpha: 0.9, alpha1: 0,
+          });
+        }
+        p = q;
+      }
+      for (let i = 0; i < 12; i++) {
+        this.add.spawn({
+          x: b.x, y: b.y, z: b.z, vx: R(-3, 3), vy: R(-1, 3), vz: R(-3, 3),
+          life: R(0.15, 0.35), size: R(0.06, 0.12), r: 2.4, g: 3, b: 4.2, alpha: 1, alpha1: 0, gravity: 6, drag: 1,
+        });
+      }
+    }
+  }
+
+  // Vórtice aberto: partículas roxas girando em espiral para dentro e um núcleo escuro
+  vortexSwirl(c: THREE.Vector3, r: number, dt: number, k: number) {
+    const rate = 160 * Math.max(0.4, this.density) * k;
+    const n = Math.floor(rate * dt + Math.random());
+    for (let i = 0; i < n; i++) {
+      const a = R(0, Math.PI * 2);
+      const rr = R(0.5, 1) * r;
+      const x = c.x + Math.cos(a) * rr, z = c.z + Math.sin(a) * rr, y = c.y + R(-1.2, 1.4) * (rr / r);
+      // velocidade tangente + para o centro
+      const tx = -Math.sin(a), tz = Math.cos(a);
+      const s = R(4, 7);
+      this.add.spawn({
+        x, y, z,
+        vx: (tx * s - Math.cos(a) * s * 0.8), vy: (c.y - y) * 0.9, vz: (tz * s - Math.sin(a) * s * 0.8),
+        life: R(0.5, 0.9), size: R(0.12, 0.3), size1: 0.05,
+        r: 1.6, g: 0.4, b: 2.8, r1: 0.4, g1: 0.1, b1: 1.2, alpha: 0.9, alpha1: 0, drag: 0.4,
+      });
+    }
+  }
+
+  vortexBurst(c: THREE.Vector3, inward: boolean) {
+    for (let i = 0; i < 60; i++) {
+      const a = R(0, Math.PI * 2), e = R(-0.6, 0.9);
+      const dx = Math.cos(a) * Math.cos(e), dy = Math.sin(e), dz = Math.sin(a) * Math.cos(e);
+      const s = R(3, 7);
+      const r0 = inward ? 3.5 : 0.2;
+      this.add.spawn({
+        x: c.x + dx * r0, y: c.y + dy * r0, z: c.z + dz * r0,
+        vx: dx * s * (inward ? -1 : 1), vy: dy * s * (inward ? -1 : 1), vz: dz * s * (inward ? -1 : 1),
+        life: R(0.3, 0.55), size: R(0.2, 0.45), size1: 0.05, r: 2, g: 0.6, b: 3.4, alpha: 1, alpha1: 0, drag: 2,
+      });
+    }
+  }
+
+  // aviso no chão de onde vai subir um pilar de fogo (k = 0..1, cada vez mais forte)
+  warnRing(x: number, z: number, r: number, k: number, dt: number) {
+    const n = Math.floor(60 * dt * (0.5 + k) * Math.max(0.5, this.density) + Math.random());
+    for (let i = 0; i < n; i++) {
+      const a = R(0, Math.PI * 2);
+      const rr = r * R(0.85, 1.05);
+      this.add.spawn({
+        x: x + Math.cos(a) * rr, y: 0.08, z: z + Math.sin(a) * rr,
+        vx: 0, vy: R(0.3, 1.2) * (0.5 + k), vz: 0,
+        life: R(0.25, 0.45), size: R(0.12, 0.22), size1: 0.04,
+        r: 3, g: 0.9 * (1 - k * 0.5), b: 0.15, alpha: 0.9, alpha1: 0,
       });
     }
   }

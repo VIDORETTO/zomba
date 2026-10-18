@@ -83,7 +83,7 @@ export interface Rect {
 // Objeto com que o jogador interage pela tecla F.
 export interface Interactable {
   id: string;
-  kind: 'ammo' | 'perk' | 'door' | 'weapon' | 'grenade' | 'knife' | 'box' | 'forge' | 'candle' | 'bank' | 'sight' | 'power';
+  kind: 'ammo' | 'perk' | 'door' | 'weapon' | 'grenade' | 'knife' | 'box' | 'forge' | 'candle' | 'bank' | 'sight' | 'power' | 'ritual';
   perk?: import('../perks').PerkId;
   door?: string;
   weapon?: string;
@@ -104,6 +104,8 @@ export interface Entry {
   nx: number;
   nz: number;
   w: number;
+  // janela de um prédio fechado: só vira entrada de zumbis depois que essa porta abre
+  area?: string;
 }
 
 export const ENTRY_BOARDS = 6;
@@ -171,6 +173,8 @@ export interface MapDef {
   boxSpots: BoxSpot[];
   // Forja: ponto da bigorna (arma flutua aqui), boca da fornalha e velas do ritual
   forge: { anvil: Vec3; mouth: Vec3; mouthNormal: [number, number]; candles: Vec3[] };
+  // ritual secreto (Cidade): velas pretas (chama em cima de cada uma) e lugares onde o Bispo aparece (o primeiro é onde ele sobe)
+  ritual?: { candles: Vec3[]; arena: [number, number][] };
   // ---------- mapas grandes (Rota) ----------
   zones?: Zone[];
   bus?: BusRoute;

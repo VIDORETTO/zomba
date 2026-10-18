@@ -58,7 +58,7 @@ npm run server   # depois abra http://localhost:3001
 - Rodadas com quantidade e vida de zumbis crescentes (fórmula do modo clássico), contador de rodadas em marcas de giz e vinhetas sonoras entre rodadas.
 - Pontos: 10 por acerto, 60 por abate, 100 na cabeça e 130 na faca.
 - Vida que regenera, queda, reanimação por aliado (co-op), sangramento de 30 s e volta na rodada seguinte.
-- Mapa **Cidade**: cruzamento com fenda de lava (queima quem pisa), banco e bar com interior, hotel, cinema, igreja com cemitério e becos que formam voltas.
+- Mapa **Cidade**: cruzamento com fenda de lava (queima quem pisa), doze prédios em que se entra (banco, bar, hotel, cinema, igreja, correio, mercearia, farmácia, lanchonete, oficina, barbearia e armazém), cemitério e becos que formam voltas.
 - Áudio todo sintetizado (tiros, gemidos posicionais, passos por tipo de chão, música das rodadas, vento).
 - HUD: pontos com cor por jogador, munição, mira dinâmica, marcador de acerto, direção do dano, aliados caídos na tela e tela de fim de jogo com estatísticas.
 
@@ -72,7 +72,7 @@ npm run server   # depois abra http://localhost:3001
 - **Itens que caem**: Munição Cheia, Golpe Fatal, Pontos em Dobro, Bomba, Carpinteiro e Liquidação.
 - **Forja** (5000): acenda as 3 velas do cemitério; cada arma vira uma versão melhorada com pintura de brasa.
 
-### Fase 2 (em andamento)
+### Fase 2 (pronta, menos o placar online)
 
 - **Rodada inicial** de 1 a 100, começando com pontos proporcionais (rodada 20 = 37.740).
 - **Banco**: depósito e saque de 1000 pontos (taxa de 100 no saque), guardados no navegador do jogador.
@@ -85,6 +85,9 @@ npm run server   # depois abra http://localhost:3001
 - **Acertos de explosão e projétil** (lança-granadas, besta, Desintegrador, granadas) agora marcam na mira.
 - **Forja com efeitos**: chama ao entrar a arma, faíscas a cada martelada, coluna de fogo quando fica pronta, brasas em volta da arma, clarão de brasa e a arma mostrada na mão ao pegar, e rastro de brasa nos tiros das armas forjadas.
 - **Chefão Carrasco**: zumbi de 3 m com armadura e corrente com gancho, a partir da rodada 12 e depois a cada 6 a 9 rodadas, no meio de uma rodada normal (sino e tremor). Golpeia com a corrente, bate no chão (dano em área), lança o gancho e puxa o jogador e faz investidas. O capacete cai depois de 30% do dano e aí tiro na cabeça vale o triplo. Morto, dá 1000 pontos para cada jogador, um item e 25% de chance de Bebida Grátis.
+- **Interiores de todos os prédios da Cidade**: Hotel (escada que desaba no primeiro lance), Armazém, Barbearia, Oficina, Mercearia, Cinema, Farmácia, Correio, Lanchonete e Igreja (entra-se pela torre do sino). Cada um abre com a sua porta (750 a 1250), tem janelas com tábuas por onde os zumbis entram depois que ele abre, e uma arma de parede nova (Metralhadora leve, Pistola de rajada, Fuzil de atirador, Revólver, Metralhadora de mão, Escopeta automática, Fuzil de precisão) ou um local novo da Caixa (Hotel, Cinema, Lanchonete; agora são 7).
+- **Armas maravilha** (só na Caixa, 2% cada, uma de cada por partida): **Canhão de Vento** (rajada em cone que arremessa os zumbis), **Arpão Elétrico** (raio que salta entre até 10 zumbis) e **Vórtice** (esfera que abre um buraco negro e suga os zumbis por 6 s). Na Forja: Furacão, Tempestade de Ferro (16 saltos) e Singularidade (buraco maior, 8 s).
+- **Ritual do Bispo** (segredo da Cidade): com a Forja acesa, acenda as três velas pretas do altar da Igreja. O Bispo sobe da lava do cruzamento: lança bolas de fogo, chama zumbis, e em cada troca de fase fica imune num anel de fogo e muda de lugar; na fase 2 vêm pilares de fogo (com aviso no chão) e na fase 3 ele lança três bolas de fogo e chama Cães Infernais. Derrotado, dá todas as bebidas e 5000 pontos a cada jogador. Uma vez por partida.
 
 ### Fase 3: mapa Rota (estilo TranZit)
 
@@ -97,7 +100,7 @@ Escolha **Rota** no menu (ou no lobby do co-op). Cinco paradas ligadas por uma e
 
 ## Próximos passos
 
-O planejamento completo está no documento de planejamento do projeto. Faltam da Fase 2: chefão final (Bispo), interiores de todos os prédios, armas maravilha e o placar online.
+O planejamento completo está no documento de planejamento do projeto. Da Fase 2 falta só o placar online, que depende de o servidor estar hospedado na internet.
 
 ## Estrutura
 
@@ -120,6 +123,6 @@ tools/        testes automáticos com capturas de tela (usam o Chrome instalado)
 ## Testes
 
 - Regras (sem navegador): `npx tsx tools/test-sim.ts`
-- No navegador, sem janela (com `npm run dev` rodando): `node tools/<teste>.mjs <pasta-de-capturas>`, com `test-buy`, `test-barricade`, `test-doors`, `test-weapons`, `test-box`, `test-powerups`, `test-forge`, `test-progress`, `test-reload`, `test-sights`, `test-hell`, `test-boss`, `test-rota`, `coop` e `firefox-sim` (os dois aceitam `rota` como segundo argumento para testar o mapa Rota). Para revisar animações: `tools/reload.mjs` (capturas da recarga em câmera lenta) `tools/dog-shot.mjs` e `tools/boss-shot.mjs` (Cão Infernal e Carrasco de perto) e `tools/sheet.mjs` (junta capturas numa folha), `tools/probe-hits.mjs` (dano e marcador de acerto de cada arma), `tools/guns-shot.mjs` (armas na mão) e `tools/forge-fx.mjs` (efeitos da Forja) e `tools/rota-tour.mjs` (fotos de cada parada do Rota).
+- No navegador, sem janela (com `npm run dev` rodando): `node tools/<teste>.mjs <pasta-de-capturas>`, com `test-buy`, `test-barricade`, `test-doors`, `test-weapons`, `test-box`, `test-powerups`, `test-forge`, `test-progress`, `test-reload`, `test-sights`, `test-hell`, `test-boss`, `test-rota`, `test-wonder`, `test-bispo`, `coop` e `firefox-sim` (os dois aceitam `rota` como segundo argumento para testar o mapa Rota). Para revisar animações: `tools/reload.mjs` (capturas da recarga em câmera lenta) `tools/dog-shot.mjs` e `tools/boss-shot.mjs` (Cão Infernal e Carrasco de perto) e `tools/sheet.mjs` (junta capturas numa folha), `tools/probe-hits.mjs` (dano e marcador de acerto de cada arma), `tools/guns-shot.mjs` (armas na mão) e `tools/forge-fx.mjs` (efeitos da Forja) e `tools/rota-tour.mjs` (fotos de cada parada do Rota), `tools/town-tour.mjs` (fotos de dentro de cada prédio da Cidade), `tools/bispo-shot.mjs` (o Bispo de perto) e `tools/view.mjs` (vistas avulsas). Para achar problemas: `tools/soak.mjs` (joga sozinho por minutos e mede memória, objetos e FPS), `tools/menu-cycle.mjs` (entra e sai de partidas e confere se nada fica preso na placa de vídeo), `tools/leak-probe.mjs` (confere se a partida anterior sai da memória) e `npx tsx tools/map-info.ts` (resumo dos mapas).
 
 Em desenvolvimento a página **não recarrega sozinha** quando o código muda: atualize com F5 para ver as novidades.

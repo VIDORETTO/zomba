@@ -150,12 +150,14 @@ export class Hud {
   }
 
   // barra de vida do Carrasco no alto da tela (marca dos 30% = capacete)
-  setBoss(b: { hp: number; armor: boolean } | null) {
-    const key = b ? b.hp.toFixed(3) + (b.armor ? 'a' : '') : '';
+  // barra de vida do chefão (Carrasco ou Bispo); armor = capacete ou escudo de fogo
+  setBoss(b: { hp: number; armor: boolean } | null, name = 'O CARRASCO') {
+    const key = b ? name + b.hp.toFixed(3) + (b.armor ? 'a' : '') : '';
     if (key === this.bossKey) return;
     this.bossKey = key;
     this.bossBar.classList.toggle('hidden', !b);
     if (!b) return;
+    (this.bossBar.querySelector('.bossname') as HTMLElement).textContent = name;
     (this.bossBar.querySelector('i') as HTMLElement).style.width = `${Math.round(b.hp * 1000) / 10}%`;
     this.bossBar.classList.toggle('armored', b.armor);
   }
