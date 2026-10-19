@@ -1172,5 +1172,31 @@ check('mapa tem 6 máquinas e 3 caixotes', map.interactables.filter((i) => i.kin
   check('Vórtice machuca o chefão em pulsos (4 acertos em 2,1 s)', hits === 4 && va.points - p0 === 40, `${hits} acertos, +${va.points - p0}`);
 }
 
+// --- ônibus: sai devagar da parada (dá para alcançar correndo) e não fica lento demais ---
+{
+  const rota = getMap('rota');
+  const s = new GameSim(rota, true);
+  s.addPlayer('a', 'A', 0);
+  s.start();
+  raw(s).bus.wait = 0.01;
+  s.tick(0.05);
+  events(s);
+  const b = s.bus!;
+  let dist = 0, t = 0, px = b.x, pz = b.z, top = 0;
+  const at: Record<number, number> = {};
+  while (t < 20) {
+    s.tick(0.05);
+    t += 0.05;
+    dist += Math.hypot(b.x - px, b.z - pz);
+    px = b.x;
+    pz = b.z;
+    top = Math.max(top, raw(s).bus.v);
+    for (const k of [6, 8]) if (Math.abs(t - k) < 0.026) at[k] = dist;
+  }
+  // corredor que sai 2 s atrás do ônibus, a 6,9 m/s
+  check('correndo dá para alcançar o ônibus que saiu da parada', 6.9 * (8 - 2) > at[8], `ônibus a ${at[8]?.toFixed(1)} m em 8 s`);
+  check('ônibus chega a uns 6 m/s (não fica lento demais)', top > 6 && top < 6.9, `máx ${top.toFixed(2)} m/s`);
+}
+
 console.log(`\n${passes} ok, ${fails} falharam`);
 process.exit(fails ? 1 : 0);

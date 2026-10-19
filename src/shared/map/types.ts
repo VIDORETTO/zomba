@@ -149,6 +149,17 @@ export interface BoxSpot {
   name: string;
 }
 
+// Vegetação e pedras desenhadas em lote pelo navegador (só visual; a colisão de troncos e pedras vai em blocos escondidos).
+export type FoliageKind = 'pine' | 'oak' | 'bush' | 'grass' | 'corn' | 'rock' | 'stump';
+export interface Foliage {
+  kind: FoliageKind;
+  x: number;
+  z: number;
+  // escala (1 = tamanho normal do tipo) e giro em torno do eixo vertical
+  s: number;
+  r: number;
+}
+
 // Ponto onde zumbis surgem da terra; area = porta que precisa estar aberta (null = sempre).
 export interface SpawnPoint {
   x: number;
@@ -186,6 +197,11 @@ export interface MapDef {
   // névoa nas paradas e na estrada (padrão: a da Cidade)
   fogDensity?: number;
   fogRoad?: number;
+  // cor da névoa nas paradas e na estrada (padrão: a da Cidade)
+  fogColor?: number;
+  fogRoadColor?: number;
+  // árvores, moitas, capim, milharal e pedras
+  foliage?: Foliage[];
   // até onde (m) os zumbis acham caminho em volta dos jogadores
   navRange?: number;
 }

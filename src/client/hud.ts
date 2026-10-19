@@ -30,6 +30,9 @@ export interface Marker {
   label: string;
   color: string;
   onScreen: boolean;
+  // símbolo em cima do texto (padrão: cruz de aliado caído) e estilo de item no chão
+  icon?: string;
+  item?: boolean;
 }
 
 export class Hud {
@@ -299,6 +302,10 @@ export class Hud {
       e.style.top = `${m.y}px`;
       e.style.color = m.color;
       e.classList.toggle('edge', !m.onScreen);
+      e.classList.toggle('pu', !!m.item);
+      const b = e.querySelector('b')!;
+      const icon = m.icon ?? '✚';
+      if (b.textContent !== icon) b.textContent = icon;
       const span = e.querySelector('span')!;
       if (span.textContent !== m.label) span.textContent = m.label;
     });

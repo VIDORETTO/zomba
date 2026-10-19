@@ -314,12 +314,16 @@ input:focus { border-color: var(--blood-bright); }
   position: absolute;
   transform: translate(-50%, -100%);
   text-align: center;
+  white-space: nowrap;
   font-weight: 700;
   text-shadow: 0 1px 3px #000;
   animation: blink 0.9s ease-in-out infinite;
 }
 .marker b { display: block; font-size: 30px; color: var(--blood-bright); }
 .marker span { font-size: 13px; }
+.marker.pu b { color: currentColor; font-size: 24px; text-shadow: 0 0 6px currentColor, 0 0 14px rgba(90, 255, 120, 0.8), 0 1px 2px #000; }
+.marker.pu span { font-size: 12px; opacity: 0.9; }
+.marker.pu.edge b { font-size: 18px; }
 .marker.edge b { font-size: 22px; }
 
 .feed { position: absolute; left: 24px; top: 20px; display: flex; flex-direction: column; gap: 4px; max-width: 420px; }

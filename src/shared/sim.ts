@@ -190,7 +190,7 @@ export class GameSim {
   bossTimer = -1;
   // mapa Rota: energia, ônibus e tempo de cada jogador na névoa
   power = false;
-  bus: { x: number; z: number; yaw: number; seg: number; d: number; wait: number; stop: string | null; honked: boolean } | null = null;
+  bus: { x: number; z: number; yaw: number; seg: number; d: number; v: number; wait: number; stop: string | null; honked: boolean } | null = null;
   private readonly fogT = new Map<string, number>();
   private vultoT = 0;
   private noFogT = 0;
@@ -209,7 +209,7 @@ export class GameSim {
       const s = route.stops[0];
       const [x, z] = route.path[s.at];
       const [nx, nz] = route.path[(s.at + 1) % route.path.length];
-      this.bus = { x, z, yaw: Math.atan2(nx - x, nz - z), seg: s.at, d: 0, wait: BUS.firstWait, stop: s.zone, honked: false };
+      this.bus = { x, z, yaw: Math.atan2(nx - x, nz - z), seg: s.at, d: 0, v: 0, wait: BUS.firstWait, stop: s.zone, honked: false };
     }
     this.ritual = map.ritual ? { candles: map.ritual.candles.map(() => false), state: 'idle', t: 0 } : null;
     this.world = new World(map);
@@ -2065,8 +2065,10 @@ export class GameSim {
       ahead += Math.hypot(bx - ax, bz - az);
       if (stopAt.has((i + 1) % n)) break;
     }
-    const speed = ahead < BUS.slowDist ? Math.max(BUS.slowSpeed, BUS.speed * (ahead / BUS.slowDist)) : BUS.speed;
-    let left = speed * dt;
+    // acelera devagar ao sair (dá para correr atrás e subir) e freia chegando na parada
+    const target = ahead < BUS.slowDist ? Math.max(BUS.slowSpeed, BUS.speed * (ahead / BUS.slowDist)) : BUS.speed;
+    b.v = b.v < target ? Math.min(target, b.v + BUS.accel * dt) : Math.max(target, b.v - BUS.brake * dt);
+    let left = b.v * dt;
     while (left > 0) {
       const [ax, az] = route.path[b.seg];
       const [bx, bz] = route.path[(b.seg + 1) % n];
@@ -2081,6 +2083,7 @@ export class GameSim {
         const stop = route.stops.find((s) => s.at === b.seg);
         if (stop) {
           b.wait = BUS.wait;
+          b.v = 0;
           b.stop = stop.zone;
           b.honked = false;
           this.emit({ e: 'bus', phase: 'arrive', zone: stop.zone });
@@ -2094,7 +2097,8 @@ export class GameSim {
     b.x = ax + ((bx - ax) * b.d) / len;
     b.z = az + ((bz - az) * b.d) / len;
     b.yaw = angleLerp(b.yaw, Math.atan2(bx - ax, bz - az), Math.min(1, dt * 2.2));
-    // atropela quem estiver na frente (menos o Carrasco)
+    // atropela quem estiver na frente (menos o Carrasco); bem devagar, só empurra
+    if (b.v < 1.5) return;
     const s = Math.sin(b.yaw), c = Math.cos(b.yaw);
     for (const z of [...this.zombies.values()]) {
       if (isChief(z) || z.anim === 'rise') continue;

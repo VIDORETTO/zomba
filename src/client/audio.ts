@@ -259,6 +259,19 @@ export class AudioEngine {
     this.boom(t + 0.4, 0.8);
   }
 
+  // item caiu no chão: brilho que sobe (posicional, ouve-se de longe)
+  powerupDrop(pos: THREE.Vector3) {
+    const t = this.now;
+    const dst = this.out(pos, 8);
+    [392, 587.33, 783.99].forEach((f, i) => {
+      const o = this.osc('sine', f, t + i * 0.09, 0.9);
+      o.frequency.linearRampToValueAtTime(f * 1.5, t + i * 0.09 + 0.8);
+      const g = this.gain(0, dst);
+      this.env(g, t + i * 0.09, 0.35, 0.02, 0.8);
+      o.connect(g);
+    });
+  }
+
   powerupPickup() {
     const t = this.now;
     [523.25, 659.25, 783.99, 1046.5].forEach((f, i) => {

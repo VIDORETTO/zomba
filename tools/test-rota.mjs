@@ -48,7 +48,7 @@ const p0 = await page.evaluate(() => ({ x: window.__game.pc.pos.x, z: window.__g
 await page.waitForTimeout(12000);
 const ride = await page.evaluate(() => ({ x: window.__game.pc.pos.x, z: window.__game.pc.pos.z, on: window.__game.onBusNow(), bus: window.__game.buffer.latest.s.bus }));
 const moved = Math.hypot(ride.x - p0.x, ride.z - p0.z);
-check('ônibus leva o jogador junto pela estrada', moved > 40 && ride.on, `andou ${moved.toFixed(0)} m, dentro=${ride.on}`);
+check('ônibus leva o jogador junto pela estrada', moved > 15 && ride.on, `andou ${moved.toFixed(0)} m, dentro=${ride.on}`);
 await page.screenshot({ path: `${out}/rt3-viajando.png` });
 const fpsRide = await fps();
 // chega na Lanchonete

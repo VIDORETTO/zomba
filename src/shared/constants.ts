@@ -137,9 +137,13 @@ export const BISPO = {
 
 // Ônibus do mapa Rota: dá a volta sozinho e para em cada parada.
 export const BUS = {
-  speed: 10,
+  // velocidade de cruzeiro: um pouco abaixo da corrida (6,9 m/s), dá para alcançar correndo
+  speed: 6.3,
+  // sai da parada devagar (m/s²) e freia mais forte
+  accel: 1.0,
+  brake: 2.5,
   // perto da parada ele freia
-  slowSpeed: 4,
+  slowSpeed: 3,
   slowDist: 18,
   wait: 20,
   // na Rodoviária, no começo, ele espera mais

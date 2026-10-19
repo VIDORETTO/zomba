@@ -35,8 +35,8 @@ export interface MapView {
   // cor da névoa atual (as partículas usam a mesma)
   readonly fogColor: THREE.Color;
   readonly fogDensity: number;
-  // névoa de base (Rota: mais fechada na estrada que nas paradas)
-  setFogBase(d: number): void;
+  // névoa de base (Rota: mais fechada e mais clara na estrada que nas paradas); road = 0 parada .. 1 estrada
+  setFogBase(d: number, road?: number): void;
   // a sombra precisa ser redesenhada (ela acompanha o jogador em mapas grandes)
   takeShadowDirty(): boolean;
   // energia (mapa Rota): sem ela as luzes das máquinas de bebida ficam quase apagadas
@@ -244,7 +244,7 @@ export function buildMapView(map: MapDef, tex: TexSet, scene: THREE.Scene, q: Qu
     fog: false,
     uniforms: {
       top: { value: new THREE.Color(0x2a1a12) },
-      horizon: { value: new THREE.Color(FOG_COLOR) },
+      horizon: { value: new THREE.Color(map.fogColor ?? FOG_COLOR) },
       sun: { value: new THREE.Color(0xff8a3a) },
       sunDir: { value: sunDir },
     },
@@ -274,8 +274,10 @@ export function buildMapView(map: MapDef, tex: TexSet, scene: THREE.Scene, q: Qu
   group.add(sky);
   materials.push(skyMat);
 
-  scene.fog = new THREE.FogExp2(FOG_COLOR, FOG_DENSITY);
-  scene.background = new THREE.Color(FOG_COLOR);
+  const stopFog = new THREE.Color(map.fogColor ?? FOG_COLOR);
+  const roadFog = new THREE.Color(map.fogRoadColor ?? map.fogColor ?? FOG_COLOR);
+  scene.fog = new THREE.FogExp2(stopFog.getHex(), FOG_DENSITY);
+  scene.background = stopFog.clone();
 
   // com menos luzes pontuais, um pouco mais de luz ambiente compensa
   const hemi = new THREE.HemisphereLight(0xc49a78, 0x4a3426, q.lights < 4 ? 2.3 : 1.9);
@@ -300,11 +302,12 @@ export function buildMapView(map: MapDef, tex: TexSet, scene: THREE.Scene, q: Qu
   const shadowCenter = new THREE.Vector3(0, 0, 0);
   let shadowDirty = false;
   let fogBase = map.fogDensity ?? FOG_DENSITY;
+  let fogRoad = 0;
   let powerK = map.perksNeedPower ? 0.08 : 1;
 
   // valores normais, para misturar com o clima infernal
   const base = {
-    fog: new THREE.Color(FOG_COLOR),
+    fog: stopFog.clone(),
     top: skyMat.uniforms.top.value.clone() as THREE.Color,
     sun: skyMat.uniforms.sun.value.clone() as THREE.Color,
     hemi: hemi.color.clone(),
@@ -312,7 +315,7 @@ export function buildMapView(map: MapDef, tex: TexSet, scene: THREE.Scene, q: Qu
     sunLight: sunLight.color.clone(),
     sunI: sunLight.intensity,
   };
-  const fogColor = new THREE.Color(FOG_COLOR);
+  const fogColor = stopFog.clone();
   const fog = scene.fog as THREE.FogExp2;
   const bg = scene.background as THREE.Color;
   let moodKey = '';
@@ -323,9 +326,11 @@ export function buildMapView(map: MapDef, tex: TexSet, scene: THREE.Scene, q: Qu
     get fogDensity() {
       return fog.density;
     },
-    setFogBase(d: number) {
-      if (Math.abs(d - fogBase) < 1e-5) return;
+    setFogBase(d: number, road = 0) {
+      if (Math.abs(d - fogBase) < 1e-5 && Math.abs(road - fogRoad) < 1e-3) return;
       fogBase = d;
+      fogRoad = road;
+      base.fog.copy(stopFog).lerp(roadFog, road);
       moodKey = '';
     },
     setPower(on: boolean) {

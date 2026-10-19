@@ -36,25 +36,68 @@ function glowTexture(): THREE.Texture {
 interface Item {
   group: THREE.Group;
   icon: THREE.Mesh;
+  glow: THREE.Sprite;
+  beam: THREE.Mesh;
+  ring: THREE.Mesh;
 }
 
-// Itens no chão: ícone girando com brilho verde, piscando quando está para sumir.
+// coluna de luz: some para cima (textura vertical em degradê)
+function beamTexture(): THREE.Texture {
+  const c = document.createElement('canvas');
+  c.width = 4;
+  c.height = 128;
+  const ctx = c.getContext('2d')!;
+  const g = ctx.createLinearGradient(0, 128, 0, 0);
+  g.addColorStop(0, 'rgba(255,255,255,0.9)');
+  g.addColorStop(0.25, 'rgba(255,255,255,0.45)');
+  g.addColorStop(1, 'rgba(255,255,255,0)');
+  ctx.fillStyle = g;
+  ctx.fillRect(0, 0, 4, 128);
+  return new THREE.CanvasTexture(c);
+}
+
+function ringTexture(): THREE.Texture {
+  const c = document.createElement('canvas');
+  c.width = c.height = 128;
+  const ctx = c.getContext('2d')!;
+  const g = ctx.createRadialGradient(64, 64, 20, 64, 64, 62);
+  g.addColorStop(0, 'rgba(255,255,255,0)');
+  g.addColorStop(0.7, 'rgba(255,255,255,0.7)');
+  g.addColorStop(0.85, 'rgba(255,255,255,0.25)');
+  g.addColorStop(1, 'rgba(255,255,255,0)');
+  ctx.fillStyle = g;
+  ctx.fillRect(0, 0, 128, 128);
+  return new THREE.CanvasTexture(c);
+}
+
+// Itens no chão: ícone grande girando, brilho verde pulsante, coluna de luz que aparece de longe (atravessa a névoa)
+// e anel no chão; tudo pisca quando está para sumir.
 export class PowerupView {
   private readonly group = new THREE.Group();
-  private readonly items = new Map<number, Item>();
+  readonly items = new Map<number, Item>();
   private readonly mats = new Map<PowerupKind, THREE.MeshBasicMaterial>();
   private readonly glowMat: THREE.SpriteMaterial;
-  private readonly geo = new THREE.PlaneGeometry(0.75, 0.75);
+  private readonly beamMat: THREE.MeshBasicMaterial;
+  private readonly ringMat: THREE.MeshBasicMaterial;
+  private readonly geo = new THREE.PlaneGeometry(1.05, 1.05);
+  private readonly beamGeo = new THREE.CylinderGeometry(0.32, 0.32, 16, 12, 1, true).translate(0, 8, 0);
+  private readonly ringGeo = new THREE.PlaneGeometry(2.6, 2.6).rotateX(-Math.PI / 2);
+  // item novo no chão (a Game toca um som)
+  onSpawn: ((kind: PowerupKind, pos: THREE.Vector3) => void) | null = null;
+  private first = true;
 
   constructor(scene: THREE.Scene) {
-    this.glowMat = new THREE.SpriteMaterial({ map: glowTexture(), color: new THREE.Color(0.25, 0.9, 0.3), blending: THREE.AdditiveBlending, depthWrite: false, transparent: true });
+    const green = new THREE.Color(0.35, 1.4, 0.45);
+    this.glowMat = new THREE.SpriteMaterial({ map: glowTexture(), color: green, blending: THREE.AdditiveBlending, depthWrite: false, transparent: true });
+    this.beamMat = new THREE.MeshBasicMaterial({ map: beamTexture(), color: green, blending: THREE.AdditiveBlending, transparent: true, depthWrite: false, side: THREE.DoubleSide, fog: false, opacity: 0.55 });
+    this.ringMat = new THREE.MeshBasicMaterial({ map: ringTexture(), color: green, blending: THREE.AdditiveBlending, transparent: true, depthWrite: false, opacity: 0.8 });
     scene.add(this.group);
   }
 
   private mat(kind: PowerupKind) {
     let m = this.mats.get(kind);
     if (!m) {
-      m = new THREE.MeshBasicMaterial({ map: iconTexture(kind), color: new THREE.Color(1.6, 1.6, 1.6), transparent: true, side: THREE.DoubleSide, depthWrite: false });
+      m = new THREE.MeshBasicMaterial({ map: iconTexture(kind), color: new THREE.Color(1.8, 1.8, 1.8), transparent: true, side: THREE.DoubleSide, depthWrite: false });
       this.mats.set(kind, m);
     }
     return m;
@@ -70,19 +113,30 @@ export class PowerupView {
         const g = new THREE.Group();
         const icon = new THREE.Mesh(this.geo, this.mat(p.kind));
         const glow = new THREE.Sprite(this.glowMat);
-        glow.scale.setScalar(1.1);
-        g.add(icon, glow);
+        const beam = new THREE.Mesh(this.beamGeo, this.beamMat);
+        const ring = new THREE.Mesh(this.ringGeo, this.ringMat);
+        ring.position.y = 0.04;
+        beam.renderOrder = 2;
+        g.add(beam, ring, icon, glow);
         g.position.set(p.x, p.y, p.z);
         this.group.add(g);
-        it = { group: g, icon };
+        it = { group: g, icon, glow, beam, ring };
         this.items.set(p.id, it);
+        if (!this.first) this.onSpawn?.(p.kind, g.position.clone());
       }
-      it.icon.position.y = 1.0 + Math.sin(t * 2.5 + p.id) * 0.12;
+      const pulse = 0.5 + 0.5 * Math.sin(t * 4 + p.id);
+      it.icon.position.y = 1.1 + Math.sin(t * 2.5 + p.id) * 0.14;
       it.icon.rotation.y = t * 2;
-      it.group.children[1].position.y = it.icon.position.y;
-      // pisca nos últimos segundos
-      it.group.visible = p.t < POWERUP.blinkAt || Math.sin(t * 18) > -0.2;
+      it.glow.position.y = it.icon.position.y;
+      it.glow.scale.setScalar(1.9 + pulse * 0.7);
+      it.ring.scale.setScalar(0.85 + pulse * 0.3);
+      it.ring.rotation.y = t * 0.8;
+      it.beam.scale.set(1, 0.92 + pulse * 0.08, 1);
+      // pisca nos últimos segundos (cada vez mais rápido)
+      const blinkHz = p.t < POWERUP.blinkAt ? 0 : p.t < POWERUP.lifetime - 4 ? 9 : 18;
+      it.group.visible = blinkHz === 0 || Math.sin(t * blinkHz) > -0.2;
     }
+    this.first = false;
     for (const [id, it] of this.items) {
       if (seen.has(id)) continue;
       this.group.remove(it.group);
@@ -92,11 +146,13 @@ export class PowerupView {
 
   dispose() {
     this.group.removeFromParent();
-    for (const m of [...this.mats.values(), this.glowMat]) {
+    for (const m of [...this.mats.values(), this.glowMat, this.beamMat, this.ringMat]) {
       m.map?.dispose();
       m.dispose();
     }
     this.geo.dispose();
+    this.beamGeo.dispose();
+    this.ringGeo.dispose();
   }
 }
 

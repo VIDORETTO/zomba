@@ -36,6 +36,7 @@ import { particleTexture, type TexSet } from './textures';
 import { WeaponView } from './weapon';
 import { ZombieManager } from './zombies';
 import { BusView } from './busView';
+import { FogBanks, FoliageView } from './foliageView';
 import { standingIn } from '../shared/busBody';
 
 export interface Settings {
@@ -80,6 +81,9 @@ export class Game {
   private forgeView!: ForgeView;
   // mapa Rota: ônibus, parada onde o jogador está e névoa da estrada
   private busView: BusView | null = null;
+  // vegetação e bancos de névoa rasteiros (mapas que têm)
+  private foliage: FoliageView;
+  private fogBanks: FogBanks | null = null;
   private zone: string | null | undefined = undefined;
   private fogK = 0;
   private lastPower = false;
@@ -161,10 +165,17 @@ export class Game {
     this.q = QUALITY[initialLevel(this.settings.quality, o.gpu)];
     this.prepareRenderer();
     this.mapView = buildMapView(o.map, o.tex, this.scene, this.q);
+    this.foliage = new FoliageView(this.scene, o.map, this.q);
+    if (o.map.fogRoadColor !== undefined) this.fogBanks = new FogBanks(this.scene, Math.round(36 * this.q.particles) + 8);
     this.fx = new FX(this.scene, particleTexture(), this.q.particles);
     this.barricades = new Barricades(this.scene, o.map.entries, o.tex, this.q.simpleMaterials);
     this.boxView = new BoxView(this.scene, o.map.boxSpots, o.tex);
     this.powerupView = new PowerupView(this.scene);
+    this.powerupView.onSpawn = (kind, p) => {
+      this.audio.powerupDrop(p.clone().setY(1));
+      const d = Math.hypot(p.x - this.pc.pos.x, p.z - this.pc.pos.z);
+      if (d > 12) this.hud.notify(`<b style="color:${POWERUPS[kind].color}">${POWERUPS[kind].name}</b> caiu a ${Math.round(d)} m.`);
+    };
     this.fx.setWorld(o.map.fires, o.map.lava);
     this.zombies = new ZombieManager(this.scene, o.tex, this.fx, this.audio);
     // alvo da corrente do Carrasco: o peito do jogador
@@ -257,6 +268,8 @@ export class Game {
     this.mapView.dispose();
     this.mapView = buildMapView(this.o.map, this.o.tex, this.scene, this.q);
     this.mapView.setDoors([...this.world.openDoors]);
+    this.foliage.dispose();
+    this.foliage = new FoliageView(this.scene, this.o.map, this.q);
     this.fx.density = this.q.particles;
     this.scale = 1;
     this.slowT = 0;
@@ -1189,6 +1202,7 @@ export class Game {
     this.updateMood(dt);
     this.fx.update(dt, this.camera.position);
     this.mapView.update(this.t, this.camera.position);
+    this.foliage.update(this.t, this.camera.position);
 
     this.renderer.autoClear = true;
     if (this.q.bloom) this.composer.render(dt);
@@ -1280,7 +1294,8 @@ export class Game {
       const road = !id && !this.onBusNow();
       this.fogK = clamp(this.fogK + (road ? dt / 2.5 : -dt / 2.5), 0, 1);
       const base = this.o.map.fogDensity ?? FOG_DENSITY;
-      this.mapView.setFogBase(base + ((this.o.map.fogRoad ?? base) - base) * this.fogK);
+      this.mapView.setFogBase(base + ((this.o.map.fogRoad ?? base) - base) * this.fogK, this.fogK);
+      this.fogBanks?.update(dt, this.camera.position, this.fogK * (1 - this.hellK * 0.6), this.mapView.fogColor);
     }
     const power = !!this.buffer.latest?.s.power;
     if (power !== this.lastPower) {
@@ -1564,14 +1579,38 @@ export class Game {
         let x = (v.x * 0.5 + 0.5) * W;
         let y = (-v.y * 0.5 + 0.5) * H;
         if (behind) {
-          x = W - x;
-          y = H - 40;
+          // atrás: na borda esquerda ou direita, na altura do meio (longe do HUD de baixo)
+          x = W - x < W / 2 ? 0 : W;
+          y = H * 0.45;
         }
         const onScreen = !behind && x > 30 && x < W - 30 && y > 30 && y < H - 30;
-        x = Math.min(W - 30, Math.max(30, x));
+        // longe o bastante da borda para o nome caber na tela
+        x = Math.min(W - 70, Math.max(70, x));
         y = Math.min(H - 30, Math.max(30, y));
         const d = Math.round(Math.hypot(p.x - this.pc.pos.x, p.z - this.pc.pos.z));
         markers.push({ x, y, onScreen, label: `${p.name} · ${d} m`, color: PLAYER_COLORS[p.slot % PLAYER_COLORS.length] });
+      }
+      // itens no chão até 80 m: símbolo na tela (ou na borda, se estiver fora da vista)
+      for (const pu of snap.s.powerups) {
+        const d = Math.hypot(pu.x - this.pc.pos.x, pu.z - this.pc.pos.z);
+        if (d > 80) continue;
+        v.set(pu.x, pu.y + 2.1, pu.z).project(this.camera);
+        const behind = v.z > 1;
+        let x = (v.x * 0.5 + 0.5) * W;
+        let y = (-v.y * 0.5 + 0.5) * H;
+        if (behind) {
+          // atrás: na borda esquerda ou direita, na altura do meio (longe do HUD de baixo)
+          x = W - x < W / 2 ? 0 : W;
+          y = H * 0.45;
+        }
+        const onScreen = !behind && x > 30 && x < W - 30 && y > 30 && y < H - 30;
+        // de perto o item já se vê bem: só o símbolo some se estiver na tela e a menos de 6 m
+        if (onScreen && d < 6) continue;
+        // longe o bastante da borda para o nome caber na tela
+        x = Math.min(W - 70, Math.max(70, x));
+        y = Math.min(H - 30, Math.max(30, y));
+        const def = POWERUPS[pu.kind];
+        markers.push({ x, y, onScreen, label: `${def.name} · ${Math.round(d)} m`, color: def.color, icon: def.glyph, item: true });
       }
     }
     this.hud.markers(markers);
@@ -1743,6 +1782,8 @@ export class Game {
     this.audio.stopAmbience();
     this.hud.dispose();
     this.mapView.dispose();
+    this.foliage.dispose();
+    this.fogBanks?.dispose();
     this.fx.dispose();
     this.barricades.dispose();
     this.boxView.dispose();

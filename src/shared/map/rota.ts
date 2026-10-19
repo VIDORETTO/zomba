@@ -1,6 +1,6 @@
 import { SIGHTS } from '../weapons';
 import { IDENT, createBuilder } from './builder';
-import type { MapDef, MaterialId, Rect, Vec3, Zone } from './types';
+import type { Block, Foliage, MapDef, MaterialId, Rect, Vec3, Zone } from './types';
 
 // "Rota": cinco paradas ligadas por uma estrada em anel no meio da névoa (estilo TranZit).
 // Rodoviária (início) -> Lanchonete -> Fazenda -> Usina (energia) -> Cidade (Forja) -> Rodoviária.
@@ -81,12 +81,17 @@ export function buildRota(): MapDef {
     const hx = along ? 0.8 : 2.2, hz = along ? 2.2 : 0.8;
     box(x - hx, 2.5, z - hz, x + hx, 2.62, z + hz, 'metal', false, { tint: 0x3a4a5a });
     box(x - hx + (along ? -nx * 0.7 : 0) - (along ? 0.05 : 0), 0, z - hz + (along ? 0 : -nz * 0.7) - (along ? 0 : 0.05),
-      x + hx + (along ? -nx * 0.7 : 0) + (along ? 0.05 : 0) - (along ? 1.5 : 0), 2.5, z + hz + (along ? 0 : -nz * 0.7) + (along ? 0 : 0.05) - (along ? 0 : 1.5), 'glass', false);
+      x + hx + (along ? -nx * 0.7 : 0) + (along ? 0.05 : 0) - (along ? 1.5 : 0), 2.5, z + hz + (along ? 0 : -nz * 0.7) + (along ? 0 : 0.05) - (along ? 0 : 1.5), 'glass', true);
     for (const s of [-1, 1]) {
       const px = along ? x : x + s * 2.1, pz = along ? z + s * 2.1 : z;
       box(px - 0.06, 0, pz - 0.06, px + 0.06, 2.5, pz + 0.06, 'metal', true, { tint: 0x3a4a5a });
     }
-    box(x - (along ? 0.25 : 1.6), 0.45, z - (along ? 1.6 : 0.25), x + (along ? 0.25 : 1.6), 0.55, z + (along ? 1.6 : 0.25), 'wood', false);
+    box(x - (along ? 0.25 : 1.6), 0.45, z - (along ? 1.6 : 0.25), x + (along ? 0.25 : 1.6), 0.55, z + (along ? 1.6 : 0.25), 'wood', true);
+    // pés do banco
+    for (const s of [-1, 1]) {
+      const lx = x + (along ? 0 : s * 1.4), lz = z + (along ? s * 1.4 : 0);
+      box(lx - 0.05, 0, lz - 0.05, lx + 0.05, 0.45, lz + 0.05, 'metal', false, { tint: 0x3a4a5a });
+    }
     // placa de parada no poste, de frente para a estrada
     const sx = x + nx * 1.4 + (along ? 0 : 2.6), sz = z + nz * 1.4 + (along ? 2.6 : 0);
     box(sx - 0.05, 0, sz - 0.05, sx + 0.05, 3.1, sz + 0.05, 'metal', true);
@@ -103,6 +108,105 @@ export function buildRota(): MapDef {
         tint: 0x2e2620, rot: [rr(-0.8, 0.8), rr(0, Math.PI), rr(-0.4, 0.4)],
       });
     }
+  }
+
+  // árvore desenhada pelo navegador; o tronco colide (bloco escondido)
+  const foliage: Foliage[] = [];
+  function tree(kind: 'pine' | 'oak', x: number, z: number, s: number) {
+    foliage.push({ kind, x, z, s, r: rr(0, Math.PI * 2) });
+    const t = (kind === 'pine' ? 0.24 : 0.32) * s;
+    box(x - t, 0, z - t, x + t, 4 * s, z + t, 'woodDark', true, { hidden: true });
+    occAdd(blocks[blocks.length - 1]);
+  }
+  function rock(x: number, z: number, s: number) {
+    foliage.push({ kind: 'rock', x, z, s, r: rr(0, Math.PI * 2) });
+    const w = 0.62 * s;
+    box(x - w, 0, z - w, x + w, 0.85 * s, z + w, 'stone', true, { hidden: true });
+    occAdd(blocks[blocks.length - 1]);
+  }
+  function stump(x: number, z: number) {
+    const s = rr(0.8, 1.2);
+    foliage.push({ kind: 'stump', x, z, s, r: rr(0, Math.PI * 2) });
+    box(x - 0.35 * s, 0, z - 0.35 * s, x + 0.35 * s, 0.6 * s, z + 0.35 * s, 'woodDark', true, { hidden: true });
+    occAdd(blocks[blocks.length - 1]);
+  }
+  // já tem algo sólido aqui? (não planta árvore dentro de carro, poste, ruína ou outra árvore)
+  // grade de 8 m com os blocos sólidos, montada na primeira consulta; árvores novas entram nela
+  let occGrid: Map<number, Block[]> | null = null;
+  const occKey = (cx: number, cz: number) => (cx + 500) * 1000 + (cz + 500);
+  function occAdd(b: Block) {
+    if (!occGrid || !b.solid || b.max[1] < 0.3) return;
+    for (let cx = Math.floor(b.min[0] / 8); cx <= Math.floor(b.max[0] / 8); cx++) {
+      for (let cz = Math.floor(b.min[2] / 8); cz <= Math.floor(b.max[2] / 8); cz++) {
+        const k = occKey(cx, cz);
+        let l = occGrid.get(k);
+        if (!l) occGrid.set(k, (l = []));
+        l.push(b);
+      }
+    }
+  }
+  function occupied(x: number, z: number) {
+    if (!occGrid) {
+      occGrid = new Map();
+      for (const b of blocks) occAdd(b);
+    }
+    for (let cx = Math.floor((x - 2) / 8); cx <= Math.floor((x + 2) / 8); cx++) {
+      for (let cz = Math.floor((z - 2) / 8); cz <= Math.floor((z + 2) / 8); cz++) {
+        for (const b of occGrid.get(occKey(cx, cz)) ?? []) {
+          if (x > b.min[0] - 1.4 && x < b.max[0] + 1.4 && z > b.min[2] - 1.4 && z < b.max[2] + 1.4) return true;
+        }
+      }
+    }
+    return false;
+  }
+  function telephonePole(x: number, z: number, alongX: boolean) {
+    box(x - 0.13, 0, z - 0.13, x + 0.13, 8, z + 0.13, 'woodDark', true, { tint: 0x4a3a2a });
+    const hx = alongX ? 0.08 : 1.1, hz = alongX ? 1.1 : 0.08;
+    box(x - hx, 7.2, z - hz, x + hx, 7.36, z + hz, 'woodDark', false, { tint: 0x4a3a2a });
+    for (const s of [-1, 1]) {
+      const ix = x + (alongX ? 0 : s * 0.9), iz = z + (alongX ? s * 0.9 : 0);
+      box(ix - 0.05, 7.36, iz - 0.05, ix + 0.05, 7.5, iz + 0.05, 'glass', false, { tint: 0x9ab0a0 });
+    }
+  }
+  function roadSign(x: number, z: number, nx: number, nz: number, text: string) {
+    box(x - 0.06, 0, z - 0.06, x + 0.06, 3.0, z + 0.06, 'metal', true);
+    const yaw = Math.atan2(nx, nz);
+    box(x - 1.3, 2.1, z - 0.04, x + 1.3, 2.95, z + 0.04, 'metal', false, { tint: 0x1f5a32, rot: [0, yaw, 0] });
+    signs.push({ pos: [x + nx * 0.06, 2.52, z + nz * 0.06], w: 2.5, h: 0.75, normal: [nx, nz], text, fg: '#f4f4ea', bg: '#1f5a32' });
+  }
+  function billboard(x: number, z: number, nx: number, nz: number, text: string) {
+    const l = Math.hypot(nx, nz);
+    nx /= l;
+    nz /= l;
+    const px = -nz, pz = nx;
+    for (const s of [-1, 1]) {
+      const bx = x + px * 3.2 * s, bz = z + pz * 3.2 * s;
+      box(bx - 0.15, 0, bz - 0.15, bx + 0.15, 6.5, bz + 0.15, 'woodDark', true);
+    }
+    box(x - 3.8, 3.2, z - 0.1, x + 3.8, 6.4, z + 0.1, 'woodDark', false, { rot: [0, Math.atan2(nx, nz), 0] });
+    signs.push({ pos: [x + nx * 0.14, 4.8, z + nz * 0.14], w: 7.2, h: 2.8, normal: [nx, nz], text, fg: '#f2e6c8', bg: '#6a2a1e' });
+  }
+  // casa em ruína: paredes de alturas quebradas, sem teto, uma chaminé em pé
+  function ruin(x: number, z: number, w: number, d: number) {
+    const t = 0.3;
+    const wall = (x0: number, z0: number, x1: number, z1: number) => {
+      const alongX = Math.abs(x1 - x0) > Math.abs(z1 - z0);
+      const len = alongX ? x1 - x0 : z1 - z0;
+      for (let s = 0; s < len; s += 1.5) {
+        if (rnd() < 0.18) continue;
+        const h = rr(0.6, 3.4);
+        const e = Math.min(len, s + 1.5);
+        if (alongX) box(x0 + s, 0, z0 - t / 2, x0 + e, h, z0 + t / 2, 'brick', true, { tint: 0x8a6a5a });
+        else box(x0 - t / 2, 0, z0 + s, x0 + t / 2, h, z0 + e, 'brick', true, { tint: 0x8a6a5a });
+      }
+    };
+    wall(x - w / 2, z - d / 2, x + w / 2, z - d / 2);
+    wall(x - w / 2, z + d / 2, x + w / 2, z + d / 2);
+    wall(x - w / 2, z - d / 2, x - w / 2, z + d / 2);
+    wall(x + w / 2, z - d / 2, x + w / 2, z + d / 2);
+    box(x + w / 2 - 1.2, 0, z - 0.6, x + w / 2 - 0.1, 5.5, z + 0.6, 'brickDark', true);
+    box(x - w / 2 + 0.4, -0.1, z - d / 2 + 0.4, x + w / 2 - 0.4, 0.06, z + d / 2 - 0.4, 'floorWood', false, { tint: 0x5a4a3a });
+    rubble(x, z, 7, Math.min(w, d) / 3, ['brick', 'woodDark', 'stone'] as MaterialId[]);
   }
 
   function lavaPit(x: number, z: number, w: number, d: number) {
@@ -391,17 +495,127 @@ export function buildRota(): MapDef {
   }
   // poças de lava na beira da estrada (marcam o caminho na névoa)
   for (const [x, z, w, d] of [[-60, -18, 4, 3], [-226, 30, 3, 5], [-185, 216, 4, 3], [105, 228, 4, 3], [130, 36, 3, 4]] as [number, number, number, number][]) lavaPit(x, z, w, d);
-  // mata morta: árvores secas espalhadas fora da estrada e das paradas
-  for (let x = BOUNDS.minX + 8; x < BOUNDS.maxX - 8; x += 17) {
-    for (let z = BOUNDS.minZ + 8; z < BOUNDS.maxZ - 8; z += 17) {
-      const px = x + rr(-6, 6), pz = z + rr(-6, 6);
-      if (roadDist(px, pz) < 10 || inZone(px, pz, 6)) continue;
-      if (rnd() < 0.75) deadTree(px, pz);
-      else rubble(px, pz, 3, 1.5, ['stone', 'dirt'] as MaterialId[]);
+  // ---------- entre as paradas: postes de telefone, placas, ruínas, carga tombada ----------
+  for (let i = 0; i < path.length; i++) {
+    const [ax, az] = path[i];
+    const [bx, bz] = path[(i + 1) % path.length];
+    const len = Math.hypot(bx - ax, bz - az);
+    const dx = (bx - ax) / len, dz = (bz - az) / len;
+    // poste de telefone de madeira a cada 32 m, sempre do mesmo lado
+    for (let s = 8; s < len - 4; s += 32) {
+      const px = ax + dx * s + dz * 8, pz = az + dz * s - dx * 8;
+      if (inZone(px, pz, 3)) continue;
+      telephonePole(px, pz, Math.abs(dx) > Math.abs(dz));
     }
   }
-  crate(-90, -52, 1.2);
-  crate(-89, -50.6, 0.9);
+  // placa verde de estrada uns 45 m antes de cada parada
+  for (const st of stops) {
+    const k = (st.at - 2 + path.length) % path.length;
+    const [ax, az] = path[k];
+    const [bx, bz] = path[(k + 1) % path.length];
+    const len = Math.hypot(bx - ax, bz - az);
+    const dx = (bx - ax) / len, dz = (bz - az) / len;
+    const s = Math.max(4, len - 45);
+    const name = zones.find((zn) => zn.id === st.zone)!.name;
+    roadSign(ax + dx * s - dz * 6.5, az + dz * s + dx * 6.5, -dx, -dz, `${name.toUpperCase()} ↑`);
+  }
+  // casas em ruína e celeiro caído na névoa, perto o bastante da estrada para serem vistas
+  for (const [x, z, w, d] of [[-60, -60, 9, 7], [-212, -48, 8, 8], [-258, 30, 7, 9], [-205, 222, 9, 7], [32, 262, 8, 7], [165, 205, 7, 8], [128, 50, 9, 7]] as [number, number, number, number][]) {
+    ruin(x, z, w, d);
+  }
+  // caminhão tombado no acostamento e a carga espalhada
+  box(-130, 0, -83.3, -123, 2.6, -80.9, 'carPaint', true, { tint: 0x6a6a5a });
+  box(-133, 0, -83.5, -130, 2.2, -80.7, 'rust', true);
+  box(-132.6, 1.2, -83.55, -130.4, 2.0, -80.65, 'glass', false);
+  crate(-121, -86, 1.2);
+  crate(-122.6, -78.8, 1.0);
+  // fardos de feno entre a Fazenda e a estrada
+  for (const [x, z] of [[-226, 60], [-224, 62.5], [-252, 140], [-250.5, 142.5], [-262, 150]] as [number, number][]) {
+    box(x - 0.9, 0, z - 0.6, x + 0.9, 1.0, z + 0.6, 'wood', true, { tint: 0xc8a850 });
+  }
+  // outdoor velho
+  billboard(-90, -77, -0.83, 0.55, 'LANCHONETE · CAFÉ 24 H');
+  billboard(80, 222, 0.3, 0.95, 'VISITE A CIDADE');
+
+  // ---------- vegetação: mata fechada em manchas, campo aberto com moitas e capim, milharal ----------
+  // ruído suave (manchas de uns 45 m): decide onde a mata é fechada
+  const hash = (ix: number, iz: number) => {
+    let h = Math.imul(ix, 374761393) ^ Math.imul(iz, 668265263) ^ 0x5bd1e995;
+    h = Math.imul(h ^ (h >>> 13), 1274126177);
+    return ((h ^ (h >>> 16)) >>> 0) / 4294967296;
+  };
+  const noise = (x: number, z: number) => {
+    const gx = x / 45, gz = z / 45;
+    const ix = Math.floor(gx), iz = Math.floor(gz);
+    const fx = gx - ix, fz = gz - iz;
+    const sx = fx * fx * (3 - 2 * fx), sz = fz * fz * (3 - 2 * fz);
+    const a = hash(ix, iz) + (hash(ix + 1, iz) - hash(ix, iz)) * sx;
+    const c = hash(ix, iz + 1) + (hash(ix + 1, iz + 1) - hash(ix, iz + 1)) * sx;
+    return a + (c - a) * sz;
+  };
+  const nearLava = (x: number, z: number, pad: number) =>
+    lava.some((r) => x > r.minX - pad && x < r.maxX + pad && z > r.minZ - pad && z < r.maxZ + pad);
+  const inBounds = (x: number, z: number, pad: number) =>
+    x > BOUNDS.minX + pad && x < BOUNDS.maxX - pad && z > BOUNDS.minZ + pad && z < BOUNDS.maxZ - pad;
+  // milharais (o caminho do meio fica livre)
+  const fields: Rect[] = [
+    { minX: -296, minZ: 140, maxX: -266, maxZ: 186 },
+    { minX: -229, minZ: 0, maxX: -201, maxZ: 54 },
+  ];
+  const inField = (x: number, z: number, pad = 0) =>
+    fields.some((r) => x > r.minX - pad && x < r.maxX + pad && z > r.minZ - pad && z < r.maxZ + pad);
+  const free = (x: number, z: number, road: number, pad: number) =>
+    inBounds(x, z, 3) && roadDist(x, z) >= road && !inZone(x, z, pad) && !nearLava(x, z, 2.5) && !occupied(x, z);
+
+  for (const f of fields) {
+    const mid = (f.minX + f.maxX) / 2;
+    for (let x = f.minX; x <= f.maxX; x += 1.25) {
+      if (Math.abs(x - mid) < 1.6) continue;
+      for (let z = f.minZ; z <= f.maxZ; z += 0.9) {
+        if (rnd() < 0.08) continue;
+        foliage.push({ kind: 'corn', x: x + rr(-0.2, 0.2), z: z + rr(-0.25, 0.25), s: rr(0.85, 1.15), r: rr(0, Math.PI) });
+      }
+    }
+    fence(f.minX - 1, f.minZ - 1, f.maxX + 1, f.minZ - 1);
+    fence(f.minX - 1, f.maxZ + 1, f.maxX + 1, f.maxZ + 1);
+  }
+
+  for (let x = BOUNDS.minX + 6; x < BOUNDS.maxX - 6; x += 6) {
+    for (let z = BOUNDS.minZ + 6; z < BOUNDS.maxZ - 6; z += 6) {
+      const px = x + rr(-2.6, 2.6), pz = z + rr(-2.6, 2.6);
+      if (inField(px, pz, 2)) continue;
+      const n = noise(px, pz);
+      const far = roadDist(px, pz) > 70 && !inZone(px, pz, 30);
+      const roll = rnd();
+      if (n > 0.56) {
+        // mata fechada: pinheiros, árvores de copa e algumas secas
+        if (roll < (far ? 0.3 : 0.55) && free(px, pz, 9, 5)) {
+          const k = rnd();
+          if (k < 0.62) tree('pine', px, pz, rr(0.8, 1.35));
+          else if (k < 0.9) tree('oak', px, pz, rr(0.8, 1.3));
+          else deadTree(px, pz);
+        } else if (roll < 0.75 && free(px, pz, 6.5, 3)) foliage.push({ kind: 'bush', x: px, z: pz, s: rr(0.7, 1.3), r: rr(0, 6.3) });
+      } else {
+        // campo aberto: árvore solta, árvore seca, moita ou pedra
+        if (roll < 0.035 && free(px, pz, 9, 5)) tree(rnd() < 0.5 ? 'oak' : 'pine', px, pz, rr(0.9, 1.4));
+        else if (roll < 0.075 && free(px, pz, 9, 5)) deadTree(px, pz);
+        else if (roll < 0.19 && free(px, pz, 6, 3)) foliage.push({ kind: 'bush', x: px, z: pz, s: rr(0.6, 1.2), r: rr(0, 6.3) });
+        else if (roll < 0.215 && free(px, pz, 7, 4)) rock(px, pz, rr(0.5, 1.6));
+        else if (roll < 0.23 && free(px, pz, 7, 4)) stump(px, pz);
+      }
+    }
+  }
+  // capim alto perto da estrada e das paradas (mais longe a névoa esconde)
+  for (let x = BOUNDS.minX + 4; x < BOUNDS.maxX - 4; x += 3) {
+    for (let z = BOUNDS.minZ + 4; z < BOUNDS.maxZ - 4; z += 3) {
+      const px = x + rr(-1.4, 1.4), pz = z + rr(-1.4, 1.4);
+      const rd = roadDist(px, pz);
+      if (rd > 42 && !inZone(px, pz, 22)) continue;
+      if (rd < 4.8 || inZone(px, pz, 1) || inField(px, pz) || nearLava(px, pz, 1)) continue;
+      if (rnd() > 0.35 + noise(px * 1.7, pz * 1.7) * 0.5) continue;
+      foliage.push({ kind: 'grass', x: px, z: pz, s: rr(0.7, 1.4), r: rr(0, Math.PI) });
+    }
+  }
 
   // limites invisíveis
   const b = BOUNDS;
@@ -433,7 +647,10 @@ export function buildRota(): MapDef {
     forgeNeedsPower: true,
     fogCreatures: true,
     fogDensity: 0.03,
-    fogRoad: 0.06,
+    fogRoad: 0.075,
+    fogColor: 0x5a4434,
+    fogRoadColor: 0x6f6a61,
+    foliage,
     navRange: 75,
   };
 }

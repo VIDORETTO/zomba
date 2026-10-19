@@ -466,7 +466,7 @@ export function buildTown(): MapDef {
     for (let u = 16.2; u < 22.9; u += 0.5) qbox(q, u, u + 0.04, 0.6, 2.6, 24.36, 24.4, 'metal', false, { tint: 0x4a4030 });
     qbox(q, 17, 21, 0.15, 0.95, 15, 17, 'wood');
     for (const [u, v] of [[17.6, 15.5], [19.2, 16.4], [20.3, 15.4]] as [number, number][]) qbox(q, u, u + 0.5, 0.95, 1.2, v, v + 0.35, 'plaster', false, { tint: 0xc8b48a });
-    for (const [u, v] of [[22.8, 11], [23.6, 11.4], [23.2, 12.3]] as [number, number][]) qbox(q, u, u + 0.7, 0.15, 0.75, v, v + 0.6, 'sandbag', false, { tint: 0xa89870 });
+    for (const [u, v] of [[22.8, 11], [23.6, 11.4], [23.2, 12.3]] as [number, number][]) qbox(q, u, u + 0.7, 0.15, 0.75, v, v + 0.6, 'sandbag', true, { tint: 0xa89870 });
     {
       const c = inner(q, correio, 'u1', 17);
       wallBuy('autoshotgun', c.x, c.z, c.nx, c.nz);
