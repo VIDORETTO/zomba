@@ -12,6 +12,8 @@ export interface RayHit {
   nx: number;
   ny: number;
   nz: number;
+  // bloco atingido (sem bloco = chão)
+  block?: Block;
 }
 
 const CELL = 4;
@@ -168,6 +170,7 @@ export class World {
         nx: axis === 0 ? -Math.sign(dx) : 0,
         ny: axis === 1 ? -Math.sign(dy) : 0,
         nz: axis === 2 ? -Math.sign(dz) : 0,
+        block: b,
       };
     }
     return best;

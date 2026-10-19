@@ -269,12 +269,13 @@ input:focus { border-color: var(--blood-bright); }
 @keyframes pop { from { transform: translate(0, 0); opacity: 1; } to { transform: translate(var(--dx), var(--dy)); opacity: 0; } }
 
 .ammo { text-align: right; text-shadow: 0 2px 3px #000; }
-.weapon-name { font-size: 14px; color: var(--muted); letter-spacing: 0.05em; }
+.weapon-name { font-size: 15px; color: #d8cfbc; letter-spacing: 0.12em; text-transform: uppercase; }
 .ammo-nums { font-family: var(--serif); font-weight: 700; }
 .ammo-nums .mag { font-size: 44px; }
 .ammo-nums .mag.low { color: var(--blood-bright); }
 .ammo-nums .sep { font-size: 24px; color: var(--muted); margin: 0 6px; }
 .ammo-nums .reserve { font-size: 24px; color: var(--muted); }
+.ammo-nums .reserve.low { color: #e8a040; }
 
 .hint {
   position: absolute;
@@ -321,6 +322,24 @@ input:focus { border-color: var(--blood-bright); }
 }
 .marker b { display: block; font-size: 30px; color: var(--blood-bright); }
 .marker span { font-size: 13px; }
+.bus-info {
+  position: absolute;
+  top: 16px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 14px;
+  background: linear-gradient(90deg, transparent, rgba(0, 0, 0, 0.55) 18%, rgba(0, 0, 0, 0.55) 82%, transparent);
+  font-size: 14px;
+  letter-spacing: 0.04em;
+  text-shadow: 0 1px 2px #000;
+  white-space: nowrap;
+}
+.bus-info em { font-style: normal; color: var(--muted); }
+.bus-info .bus-arrow { font-style: normal; color: #f0c27a; display: inline-block; transition: transform 0.1s linear; }
+.bus-info.leaving span { color: #f0c27a; animation: blink 0.9s ease-in-out infinite; }
 .marker.pu b { color: currentColor; font-size: 24px; text-shadow: 0 0 6px currentColor, 0 0 14px rgba(90, 255, 120, 0.8), 0 1px 2px #000; }
 .marker.pu span { font-size: 12px; opacity: 0.9; }
 .marker.pu.edge b { font-size: 18px; }
@@ -406,10 +425,10 @@ input:focus { border-color: var(--blood-bright); }
 .quality small { font-size: 11px; }
 .quality small.bad { color: #e8a36a; }
 
-.perks { position: absolute; left: 34px; bottom: 148px; display: flex; gap: 6px; }
+.perks { position: absolute; left: 34px; bottom: 148px; display: flex; gap: 8px; }
 .perk-icon {
-  width: 34px;
-  height: 34px;
+  width: 40px;
+  height: 40px;
   display: grid;
   place-items: center;
   border-radius: 50%;
@@ -420,6 +439,7 @@ input:focus { border-color: var(--blood-bright); }
   font: 700 17px var(--serif);
   text-shadow: 0 1px 2px #000;
 }
+.perk-icon svg { width: 22px; height: 22px; filter: drop-shadow(0 1px 1px rgba(0, 0, 0, 0.7)); }
 .perk-icon.new { animation: perkIn 0.9s ease-out; }
 @keyframes perkIn { 0% { transform: scale(2.2); opacity: 0; } 60% { transform: scale(0.9); opacity: 1; } 100% { transform: none; } }
 .prompt small { display: block; margin-top: 3px; font-size: 13px; color: var(--muted); }

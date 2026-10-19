@@ -41,6 +41,12 @@ class ZombieView {
   readonly limp: number;
   readonly armStyle: number;
   readonly headTilt: number;
+  // tranco ao levar tiro (1 = acabou de levar, cai até 0), lado do tiro e se foi na cabeça
+  flinch = 0;
+  flinchSide = 0;
+  flinchHead = false;
+  // jeito de morrer: 0 = cai para a frente ou para trás, 1 = de joelhos e de cara, 2 = de lado girando
+  readonly deathStyle: number;
 
   constructor(readonly id: number, readonly kind: ZombieKind, readonly look: number, tex: TexSet) {
     const r = mulberry32(look);
@@ -73,6 +79,7 @@ class ZombieView {
     this.headTilt = (r() - 0.5) * 0.6;
     this.groanT = 1 + r() * 5;
     this.fallDir = r() < 0.5 ? 1 : -1;
+    this.deathStyle = Math.floor(r() * 3);
   }
 }
 
@@ -212,6 +219,20 @@ export class ZombieManager {
 
   view(id: number): View | undefined {
     return this.views.get(id);
+  }
+
+  // Zumbi levou tiro: tranco para trás (mais forte de escopeta), cabeça jogada se foi nela.
+  // dir = direção do tiro (sem ela, o tranco é para trás do zumbi)
+  flinch(id: number, part: string, dir: THREE.Vector3 | null, power = 1) {
+    const v = this.views.get(id);
+    if (!(v instanceof ZombieView)) return;
+    v.flinch = Math.min(1.3, v.flinch * 0.4 + power);
+    v.flinchHead = part === 'head';
+    if (dir) {
+      // lado do tiro no espaço do zumbi
+      const lx = dir.x * Math.cos(v.yaw) - dir.z * Math.sin(v.yaw);
+      v.flinchSide = Math.max(-1, Math.min(1, lx * 2));
+    } else v.flinchSide = (Math.random() - 0.5) * 1.2;
   }
 
   onEvent(e: GameEvent) {
@@ -602,6 +623,19 @@ export class ZombieManager {
       lean = 0.25 + 0.5 * b;
     }
 
+    // tranco do tiro: tronco e cabeça vão para trás, braços abrem, o corpo recua um passo
+    const f = v.flinch;
+    if (f > 0.001) {
+      lean -= f * 0.55;
+      armL += f * 0.7;
+      armR += f * 0.5;
+      h.torso.rotation.z += v.flinchSide * f * 0.35;
+      h.neck.rotation.x -= f * (v.flinchHead ? 0.9 : 0.25);
+      h.neck.rotation.z += v.flinchSide * f * (v.flinchHead ? 0.5 : 0.15);
+      v.flinch *= Math.exp(-dt * 7);
+    }
+    if (v.anim !== 'climb' && v.anim !== 'rise') h.body.position.z = -0.14 * f;
+
     h.armL.upper.rotation.x = armL;
     h.armR.upper.rotation.x = armR;
     h.armL.upper.rotation.z = -0.12;
@@ -650,10 +684,29 @@ export class ZombieManager {
         v.fling = null;
       }
     }
+    const style = v instanceof ZombieView && !v.fling ? v.deathStyle : 0;
+    h.root.rotation.order = 'YXZ';
+    if (style === 1) {
+      // cai de joelhos e depois de cara no chão
+      const kneel = clamp(v.deathT / 0.35, 0, 1);
+      const fall = clamp((v.deathT - 0.45) / 0.5, 0, 1);
+      h.body.position.y = -0.42 * kneel * (1 - fall) + 0.13 * fall * fall;
+      h.legL.lower.rotation.x = lerp(h.legL.lower.rotation.x, 1.6 * (1 - fall) + 0.3, Math.min(1, dt * 14));
+      h.legR.lower.rotation.x = lerp(h.legR.lower.rotation.x, 1.5 * (1 - fall) + 0.2, Math.min(1, dt * 14));
+      h.armL.upper.rotation.x = lerp(h.armL.upper.rotation.x, -0.2, Math.min(1, dt * 8));
+      h.armR.upper.rotation.x = lerp(h.armR.upper.rotation.x, -0.3, Math.min(1, dt * 8));
+      h.torso.rotation.x = lerp(h.torso.rotation.x, 0.3 * (1 - fall), Math.min(1, dt * 10));
+      h.root.rotation.x = (Math.PI / 2) * fall * fall;
+      if (v.deathT > 6) h.root.position.y -= dt * 0.25;
+      return;
+    }
     const k = clamp(v.deathT / 0.6, 0, 1);
     const e = k * k;
-    h.root.rotation.order = 'YXZ';
-    h.root.rotation.x = v.fallDir * (Math.PI / 2) * e;
+    if (style === 2) {
+      // gira e cai de lado
+      h.root.rotation.z = v.fallDir * (Math.PI / 2) * e;
+      h.root.rotation.y += dt * 2.2 * (1 - k) * v.fallDir;
+    } else h.root.rotation.x = v.fallDir * (Math.PI / 2) * e;
     h.body.position.y = 0.13 * e;
     h.legL.upper.rotation.x = lerp(h.legL.upper.rotation.x, 0.25, k);
     h.legR.upper.rotation.x = lerp(h.legR.upper.rotation.x, -0.15, k);

@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import type { Rect, Vec3 } from '../shared/map/types';
+import type { MaterialId, Rect, Vec3 } from '../shared/map/types';
 import { lerp } from '../shared/rng';
 import { FOG_COLOR, FOG_DENSITY } from './mapView';
 
@@ -183,11 +183,22 @@ class ParticlePool {
 
 const R = (a: number, b: number) => a + Math.random() * (b - a);
 
+// como cada material reage a um tiro
+type ImpactKind = 'metal' | 'wood' | 'brick' | 'dust' | 'glass' | 'dirt';
+const IMPACT: Partial<Record<MaterialId | 'ground', ImpactKind>> = {
+  metal: 'metal', rust: 'metal', carPaint: 'metal', lamp: 'metal', neon: 'metal', tire: 'dust',
+  wood: 'wood', woodDark: 'wood', boards: 'wood', floorWood: 'wood', awning: 'wood',
+  brick: 'brick', brickDark: 'brick', roof: 'brick',
+  glass: 'glass', glassLit: 'glass',
+  dirt: 'dirt', ground: 'dirt', sandbag: 'dirt',
+};
+
 export class FX {
   private readonly add: ParticlePool;
   private readonly norm: ParticlePool;
   private fires: Vec3[] = [];
   private lava: Rect[] = [];
+  private mist: Rect[] = [];
   private acc = new Map<string, number>();
   // raios de fogo dos Cães Infernais: o chão queima onde o raio caiu
   private bolts: { x: number; z: number; t: number }[] = [];
@@ -260,9 +271,10 @@ export class FX {
     this.bolts.push({ x, z, t: 0 });
   }
 
-  setWorld(fires: Vec3[], lava: Rect[]) {
+  setWorld(fires: Vec3[], lava: Rect[], mist: Rect[] = []) {
     this.fires = fires;
     this.lava = lava;
+    this.mist = mist;
   }
 
   resize(viewHeight: number, fov: number) {
@@ -332,6 +344,21 @@ export class FX {
           x: R(l.minX, l.maxX), y: 0.05, z: R(l.minZ, l.maxZ),
           vx: R(-0.2, 0.2), vy: R(0.6, 1.6), vz: R(-0.2, 0.2),
           life: R(1, 2.2), size: R(0.04, 0.08), r: 3, g: 1.1, b: 0.2, alpha: 1, alpha1: 0, drag: 0.3,
+        });
+      }
+    }
+
+    // névoa rasteira: tufos baixos e lentos (só perto do jogador)
+    for (let m = 0; m < this.mist.length; m++) {
+      const r = this.mist[m];
+      const cx = Math.max(r.minX, Math.min(cam.x, r.maxX)), cz = Math.max(r.minZ, Math.min(cam.z, r.maxZ));
+      if (Math.hypot(cx - cam.x, cz - cam.z) > 40) continue;
+      for (let i = this.rate(`mist${m}`, 9, dt); i > 0; i--) {
+        this.norm.spawn({
+          x: R(r.minX, r.maxX), y: R(0.1, 0.5), z: R(r.minZ, r.maxZ),
+          vx: R(0.1, 0.35), vy: R(0, 0.04), vz: R(-0.1, 0.1),
+          life: R(6, 9), size: R(1.6, 2.6), size1: R(3, 4.5),
+          r: 0.5, g: 0.48, b: 0.46, alpha: 0.09, alpha1: 0,
         });
       }
     }
@@ -412,20 +439,37 @@ export class FX {
     }
   }
 
-  impact(p: THREE.Vector3, nx: number, ny: number, nz: number) {
-    for (let i = 0; i < 8; i++) {
+  // Impacto de bala: fagulhas e poeira com a cara do material (metal solta faísca, madeira lasca, tijolo e
+  // concreto levantam pó, vidro brilha, terra espirra para cima)
+  impact(p: THREE.Vector3, nx: number, ny: number, nz: number, mat: MaterialId | 'ground' = 'concrete') {
+    const kind = IMPACT[mat] ?? 'dust';
+    const sparks = kind === 'metal' ? 14 : kind === 'glass' ? 6 : kind === 'dust' ? 4 : 2;
+    for (let i = 0; i < sparks; i++) {
       this.add.spawn({
         x: p.x, y: p.y, z: p.z,
         vx: nx * R(1, 4) + R(-1.5, 1.5), vy: ny * R(1, 4) + R(0, 2), vz: nz * R(1, 4) + R(-1.5, 1.5),
-        life: R(0.15, 0.35), size: 0.035, r: 3, g: 2, b: 0.8, alpha: 1, alpha1: 0, gravity: 9.8,
+        life: R(0.15, kind === 'metal' ? 0.5 : 0.3), size: kind === 'glass' ? 0.03 : 0.035,
+        r: kind === 'glass' ? 2.4 : 3, g: kind === 'glass' ? 2.6 : 2, b: kind === 'glass' ? 2.8 : 0.8, alpha: 1, alpha1: 0, gravity: 9.8,
       });
     }
-    for (let i = 0; i < 4; i++) {
+    // pó (cor do material), mais forte no tijolo, concreto e terra
+    const [dr, dg, db] = kind === 'brick' ? [0.42, 0.24, 0.18] : kind === 'wood' ? [0.32, 0.24, 0.16] : kind === 'dirt' ? [0.3, 0.24, 0.17] : [0.3, 0.28, 0.25];
+    const puffs = kind === 'metal' || kind === 'glass' ? 2 : kind === 'dirt' ? 6 : 5;
+    for (let i = 0; i < puffs; i++) {
       this.norm.spawn({
         x: p.x + nx * 0.05, y: p.y + ny * 0.05, z: p.z + nz * 0.05,
-        vx: nx * R(0.3, 1) + R(-0.3, 0.3), vy: ny * R(0.3, 1) + R(0, 0.4), vz: nz * R(0.3, 1) + R(-0.3, 0.3),
-        life: R(0.5, 0.9), size: 0.12, size1: 0.55,
-        r: 0.3, g: 0.28, b: 0.25, alpha: 0.55, alpha1: 0, drag: 2,
+        vx: nx * R(0.3, 1.2) + R(-0.3, 0.3), vy: ny * R(0.3, 1.2) + R(0, kind === 'dirt' ? 1.4 : 0.4), vz: nz * R(0.3, 1.2) + R(-0.3, 0.3),
+        life: R(0.6, 1.1), size: 0.12, size1: kind === 'dirt' ? 0.7 : 0.55,
+        r: dr, g: dg, b: db, alpha: 0.6, alpha1: 0, drag: 2,
+      });
+    }
+    // pedaços que caem: lascas de madeira, cacos de tijolo e de concreto, torrões de terra
+    const chunks = kind === 'metal' || kind === 'glass' ? 0 : 5;
+    for (let i = 0; i < chunks; i++) {
+      this.norm.spawn({
+        x: p.x, y: p.y, z: p.z,
+        vx: nx * R(1, 3) + R(-1.2, 1.2), vy: ny * R(1, 3) + R(0.5, 2.5), vz: nz * R(1, 3) + R(-1.2, 1.2),
+        life: R(0.5, 0.9), size: R(0.025, 0.05), r: dr * 0.8, g: dg * 0.8, b: db * 0.8, alpha: 1, alpha1: 1, gravity: 9.8,
       });
     }
   }

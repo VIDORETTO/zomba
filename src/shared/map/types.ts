@@ -5,6 +5,8 @@ export type MaterialId =
   | 'sidewalk'
   | 'dirt'
   | 'concrete'
+  // piso de concreto (pátios, galpões): placas com juntas, sem as manchas escorridas da parede
+  | 'pavement'
   | 'brick'
   | 'brickDark'
   | 'plaster'
@@ -202,6 +204,8 @@ export interface MapDef {
   fogRoadColor?: number;
   // árvores, moitas, capim, milharal e pedras
   foliage?: Foliage[];
+  // áreas com névoa rasteira (cemitério)
+  mist?: Rect[];
   // até onde (m) os zumbis acham caminho em volta dos jogadores
   navRange?: number;
 }

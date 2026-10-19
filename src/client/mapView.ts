@@ -6,7 +6,7 @@ import { chalkTexture, signTexture, type TexSet } from './textures';
 
 // Metros por repetição da textura. 0 = estica a textura em cada face.
 const SCALE: Record<MaterialId, number> = {
-  asphalt: 6, sidewalk: 3, dirt: 5, concrete: 4, brick: 3, brickDark: 3, plaster: 4,
+  asphalt: 6, sidewalk: 3, dirt: 5, concrete: 4, pavement: 6, brick: 3, brickDark: 3, plaster: 4,
   wood: 2.5, woodDark: 2.5, boards: 0, floorWood: 3, tile: 2, roof: 4, ceiling: 4,
   metal: 3, rust: 2, glass: 0, glassLit: 0, trim: 2, paintYellow: 1, paintWhite: 1,
   carPaint: 4, tire: 1, lamp: 0, lava: 3, awning: 2, sandbag: 1.5, stone: 1.5, neon: 0,
@@ -20,7 +20,7 @@ const DEFAULT_TINT: Partial<Record<MaterialId, number>> = {
   carPaint: 0x777777,
 };
 
-const NO_SHADOW = new Set<MaterialId>(['asphalt', 'dirt', 'paintYellow', 'paintWhite', 'lava', 'glass', 'glassLit', 'lamp']);
+const NO_SHADOW = new Set<MaterialId>(['asphalt', 'pavement', 'dirt', 'paintYellow', 'paintWhite', 'lava', 'glass', 'glassLit', 'lamp']);
 
 export const FOG_COLOR = 0x5c3c27;
 export const FOG_DENSITY = 0.032;

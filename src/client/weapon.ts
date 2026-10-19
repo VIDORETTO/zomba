@@ -6,6 +6,21 @@ import { buildGun, limb, type GunMats, type GunModel } from './gunModels';
 import type { Input } from './input';
 import { emberTexture, muzzleTexture } from './textures';
 
+function smokeTexture(): THREE.Texture {
+  const c = document.createElement('canvas');
+  c.width = c.height = 64;
+  const ctx = c.getContext('2d')!;
+  for (let i = 0; i < 5; i++) {
+    const x = 20 + Math.random() * 24, y = 20 + Math.random() * 24;
+    const g = ctx.createRadialGradient(x, y, 0, x, y, 20);
+    g.addColorStop(0, 'rgba(255,255,255,0.5)');
+    g.addColorStop(1, 'rgba(255,255,255,0)');
+    ctx.fillStyle = g;
+    ctx.fillRect(0, 0, 64, 64);
+  }
+  return new THREE.CanvasTexture(c);
+}
+
 export type WeaponSound = 'dry' | 'magOut' | 'magIn' | 'slide' | 'knifeSwing' | 'gulp' | 'shell' | 'switch';
 
 export interface WeaponCallbacks {
@@ -140,6 +155,10 @@ export class WeaponView {
   private readonly emberGeo = new THREE.BoxGeometry(0.006, 0.006, 0.006);
   private readonly emberMat = new THREE.MeshBasicMaterial({ color: new THREE.Color(4, 1.4, 0.3) });
   private readonly emberPool: THREE.Object3D[] = [];
+  // fumaça que sai do cano depois do tiro
+  private readonly smoke: { s: THREE.Sprite; t: number; life: number; v: THREE.Vector3 }[] = [];
+  private smokeNext = 0;
+  private readonly smokeTex = smokeTexture();
   private readonly shellMat = std(0x9a2a22, 0.5, 0.1);
   // o que a mão esquerda traz do colete: um cartucho, dois cartuchos, uma granada
   private readonly heldShell = new THREE.Group();
@@ -190,6 +209,20 @@ export class WeaponView {
       }),
     );
     this.flash.visible = false;
+    // duas chamas compridas de lado, para o clarão ter volume (vistas de lado, saem para a frente do cano)
+    for (const roll of [0, Math.PI / 2]) {
+      const side = new THREE.Mesh(
+        new THREE.PlaneGeometry(0.3, 0.1).translate(0.15, 0, 0).rotateY(Math.PI / 2).rotateZ(roll),
+        this.flash.material,
+      );
+      this.flash.add(side);
+    }
+    for (let i = 0; i < 12; i++) {
+      const s = new THREE.Sprite(new THREE.SpriteMaterial({ map: this.smokeTex, color: 0xb8b0a6, transparent: true, depthWrite: false, opacity: 0 }));
+      s.visible = false;
+      this.scene.add(s);
+      this.smoke.push({ s, t: 9, life: 1, v: new THREE.Vector3() });
+    }
 
     // facas: comum e pesada (lâmina maior)
     box(this.knifeBasic, 0.024, 0.03, 0.1, 0, 0, 0.03, std(0x111111, 0.8));
@@ -482,12 +515,26 @@ export class WeaponView {
     this.flashT = 0.045;
     this.flash.rotation.z = Math.random() * Math.PI;
     this.flash.scale.setScalar((0.8 + Math.random() * 0.5) * (def.cls === 'shotgun' ? 1.6 : def.cls === 'rifle' ? 1.25 : 1));
+    this.puffSmoke(def.cls === 'shotgun' ? 1.6 : 1);
     this.slideBack = 1;
     if (mdl.cycle) this.cycleT = 0;
     else if (!mdl.spinner) this.ejectCasing(def.cls === 'shotgun');
     if (mdl.spinner) this.spinTo += Math.PI / 3;
     if (this.ammo === 0 && def.cls === 'pistol') this.slideLocked = true;
     this.cb.fire(this.spread);
+  }
+
+  // fiapo de fumaça na boca do cano: sobe devagar e some
+  private puffSmoke(k: number) {
+    const it = this.smoke[this.smokeNext];
+    this.smokeNext = (this.smokeNext + 1) % this.smoke.length;
+    this.flash.updateWorldMatrix(true, false);
+    this.flash.getWorldPosition(it.s.position);
+    it.t = 0;
+    it.life = 0.7 + Math.random() * 0.5;
+    it.v.set((Math.random() - 0.5) * 0.04, 0.06 + Math.random() * 0.05, -0.18 - Math.random() * 0.1);
+    it.s.userData.k = k;
+    it.s.visible = true;
   }
 
   private setState(s: State) {
@@ -1169,6 +1216,18 @@ export class WeaponView {
     (this.flash.material as THREE.MeshBasicMaterial).color.setRGB(2.5, this.def.upgraded ? 0.9 : 2.2, this.def.upgraded ? 0.6 : 1.8);
     this.flashT -= dt;
     this.flash.visible = this.flashT > 0;
+    for (const it of this.smoke) {
+      if (!it.s.visible) continue;
+      it.t += dt;
+      if (it.t >= it.life) {
+        it.s.visible = false;
+        continue;
+      }
+      const u = it.t / it.life;
+      it.s.position.addScaledVector(it.v, dt);
+      it.s.scale.setScalar((0.02 + u * 0.07) * it.s.userData.k);
+      (it.s.material as THREE.SpriteMaterial).opacity = 0.14 * (1 - u) * Math.min(1, it.t * 20);
+    }
     this.flashLight.intensity = this.flashT > 0 ? 2.5 : 0;
   }
 }

@@ -3,6 +3,7 @@ import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
 import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
+import { ShaderPass } from 'three/addons/postprocessing/ShaderPass.js';
 import type { RunInput } from '../shared/board';
 import { BISPO, BLEEDOUT_TIME, PLAYER, PLAYER_COLORS, REVIVE_RANGE, TICK_DT } from '../shared/constants';
 import type { MapDef } from '../shared/map/types';
@@ -37,6 +38,7 @@ import { WeaponView } from './weapon';
 import { ZombieManager } from './zombies';
 import { BusView } from './busView';
 import { FogBanks, FoliageView } from './foliageView';
+import { Decals } from './decals';
 import { standingIn } from '../shared/busBody';
 
 export interface Settings {
@@ -72,6 +74,9 @@ export class Game {
   private readonly scene = new THREE.Scene();
   private readonly camera = new THREE.PerspectiveCamera(75, 1, 0.05, 500);
   private readonly composer: EffectComposer;
+  private readonly bloomPass: UnrealBloomPass;
+  // correção de cor, vinheta e granulação (qualidades alta e média)
+  private readonly gradePass: ShaderPass;
   private readonly world: World;
   private mapView: MapView;
   private readonly fx: FX;
@@ -84,6 +89,8 @@ export class Game {
   // vegetação e bancos de névoa rasteiros (mapas que têm)
   private foliage: FoliageView;
   private fogBanks: FogBanks | null = null;
+  // furos de bala, sangue, queimados e a bagunça fixa do mapa
+  private readonly decals: Decals;
   private zone: string | null | undefined = undefined;
   private fogK = 0;
   private lastPower = false;
@@ -168,6 +175,7 @@ export class Game {
     this.foliage = new FoliageView(this.scene, o.map, this.q);
     if (o.map.fogRoadColor !== undefined) this.fogBanks = new FogBanks(this.scene, Math.round(36 * this.q.particles) + 8);
     this.fx = new FX(this.scene, particleTexture(), this.q.particles);
+    this.decals = new Decals(this.scene, this.world, this.q.simpleMaterials);
     this.barricades = new Barricades(this.scene, o.map.entries, o.tex, this.q.simpleMaterials);
     this.boxView = new BoxView(this.scene, o.map.boxSpots, o.tex);
     this.powerupView = new PowerupView(this.scene);
@@ -176,7 +184,7 @@ export class Game {
       const d = Math.hypot(p.x - this.pc.pos.x, p.z - this.pc.pos.z);
       if (d > 12) this.hud.notify(`<b style="color:${POWERUPS[kind].color}">${POWERUPS[kind].name}</b> caiu a ${Math.round(d)} m.`);
     };
-    this.fx.setWorld(o.map.fires, o.map.lava);
+    this.fx.setWorld(o.map.fires, o.map.lava, o.map.mist);
     this.zombies = new ZombieManager(this.scene, o.tex, this.fx, this.audio);
     // alvo da corrente do Carrasco: o peito do jogador
     this.zombies.locate = (pid) => (pid === this.transport.localId ? new THREE.Vector3(this.pc.pos.x, this.pc.pos.y + 1.1, this.pc.pos.z) : this.playerPos(pid));
@@ -185,8 +193,16 @@ export class Game {
 
     this.composer = new EffectComposer(this.renderer);
     this.composer.addPass(new RenderPass(this.scene, this.camera));
-    this.composer.addPass(new UnrealBloomPass(new THREE.Vector2(512, 512), 0.55, 0.45, 0.82));
+    this.bloomPass = new UnrealBloomPass(new THREE.Vector2(512, 512), 0.55, 0.45, 0.82);
+    this.composer.addPass(this.bloomPass);
     this.composer.addPass(new OutputPass());
+    this.gradePass = new ShaderPass(GRADE_SHADER);
+    // a Rota é mais fria e lavada (névoa); a Cidade mais quente e contrastada
+    const rota = !!o.map.fogRoadColor;
+    this.gradePass.uniforms.sat.value = rota ? 0.86 : 0.92;
+    this.gradePass.uniforms.contrast.value = rota ? 1.06 : 1.1;
+    this.gradePass.uniforms.shadowTint.value.set(rota ? 0.97 : 1.02, 1.0, rota ? 1.04 : 0.96);
+    this.composer.addPass(this.gradePass);
 
     this.pc = new PlayerController(this.world);
     const [sx, sz] = o.map.playerSpawns[0];
@@ -383,6 +399,7 @@ export class Game {
             }
           }
           if (e.pid !== local || e.blast) {
+            this.zombies.flinch(e.zid, e.part, null, e.blast ? 1.2 : 0.8);
             const v = this.zombies.view(e.zid);
             if (v) {
               const p = v.h.root.position.clone();
@@ -394,6 +411,11 @@ export class Game {
           break;
         case 'zkill':
           this.zombies.onEvent(e);
+          // poça de sangue que se espalha sob o corpo (cão explode; arremessado ou engolido não deixa)
+          if (e.kind !== 3 && e.kind !== 5 && !e.fling && !e.sucked) {
+            const big = e.kind === 4 || e.kind === 6;
+            this.decals.floor('pool', e.x - Math.sin(e.yaw) * 0.6, e.z - Math.cos(e.yaw) * 0.6, (big ? 2.4 : 1.4) + Math.random() * 0.5, e.y + 0.3, true);
+          }
           if (e.pid === local) {
             const w = this.weapon.def.id;
             this.weaponKills[w] = (this.weaponKills[w] ?? 0) + 1;
@@ -776,6 +798,11 @@ export class Game {
         }
         case 'boom': {
           const p = new THREE.Vector3(e.x, e.y, e.z);
+          // explosão perto do chão deixa o chão queimado
+          if (e.kind !== 'ray') {
+            const g = this.world.groundHeight(e.x, e.z, 0.1, e.y);
+            if (e.y - g < 1.6) this.decals.floor('scorch', e.x, e.z, e.kind === 'fire' ? 1.6 : 2.8, e.y);
+          }
           if (e.kind === 'ray') this.fx.rayBurst(p);
           else if (e.kind === 'fire') {
             this.fx.fireBurst(p);
@@ -867,13 +894,27 @@ export class Game {
         const part = zh.object.userData.part as HitPart;
         hits.push({ zid: zh.object.userData.zid as number, part });
         this.fx.blood(zh.point, dir.clone().negate().lerp(dir, 0.6), part === 'head' ? 1.4 : 1);
+        this.zombies.flinch(zh.object.userData.zid as number, part, dir, def.cls === 'shotgun' ? 1.6 : def.cls === 'pistol' ? 0.8 : 1);
+        // respingo na parede ou no chão atrás do zumbi
+        if (Math.random() < 0.55) {
+          const back = this.world.raycast(zh.point.x, zh.point.y, zh.point.z, dir.x, dir.y, dir.z, 2.6);
+          if (back && !back.block?.hidden && !back.block?.door) {
+            const at = zh.point.clone().addScaledVector(dir, back.t);
+            this.decals.add('blood', at, new THREE.Vector3(back.nx, back.ny, back.nz), 0.5 + Math.random() * 0.5);
+          } else if (Math.random() < 0.5) {
+            this.decals.floor('blood', zh.point.x + dir.x * 0.6, zh.point.z + dir.z * 0.6, 0.45 + Math.random() * 0.35, zh.point.y);
+          }
+        }
         this.hud.hitmarker(false);
         this.audio.hitmarker(part === 'head');
         this.audio.bodyHit(zh.point, part === 'head');
       }
       if (!zhits.length && wh) {
         const p = origin.clone().addScaledVector(dir, wh.t);
-        this.fx.impact(p, wh.nx, wh.ny, wh.nz);
+        const b = wh.block;
+        this.fx.impact(p, wh.nx, wh.ny, wh.nz, b?.mat ?? (this.o.map.bus ? 'ground' : 'asphalt'));
+        // furo de bala (não em colisão invisível, porta que vai abrir ou lava)
+        if (!b?.hidden && !b?.door && b?.mat !== 'lava') this.decals.add('bullet', p, new THREE.Vector3(wh.nx, wh.ny, wh.nz), 0.16 + Math.random() * 0.06);
       }
     }
     this.transport.send({ t: 'shoot', weapon: def.id, hits });
@@ -1201,12 +1242,19 @@ export class Game {
     }
     this.updateMood(dt);
     this.fx.update(dt, this.camera.position);
+    this.decals.update(dt);
     this.mapView.update(this.t, this.camera.position);
     this.foliage.update(this.t, this.camera.position);
 
     this.renderer.autoClear = true;
-    if (this.q.bloom) this.composer.render(dt);
-    else this.renderer.render(this.scene, this.camera);
+    // alta e média passam pelo acabamento (a média sem o brilho); a baixa desenha direto
+    if (this.q.level !== 'baixa') {
+      this.bloomPass.enabled = this.q.bloom;
+      this.gradePass.uniforms.time.value = this.t;
+      // na rodada infernal a vinheta fecha um pouco mais
+      this.gradePass.uniforms.vignette.value = 0.38 + this.hellK * 0.2;
+      this.composer.render(dt);
+    } else this.renderer.render(this.scene, this.camera);
     if (life !== 'dead' && !this.over && !scoped) {
       this.renderer.autoClear = false;
       this.renderer.clearDepth();
@@ -1250,6 +1298,53 @@ export class Game {
     if (target === null) return false;
     this.hud.prompt(want !== null ? 'Consertando a barricada...' : 'Segure <b>F</b> para consertar a barricada <span class="price">+10</span>', want !== null ? (boards![target] ?? 0) / ENTRY_BOARDS : null);
     return true;
+  }
+
+  // Painel do ônibus: parado (onde e em quantos segundos sai) ou andando (para qual parada vai)
+  private updateBusInfo() {
+    const route = this.o.map.bus;
+    const b = this.buffer.latest?.s.bus;
+    if (!route || !b || this.over) {
+      this.hud.setBus(null);
+      return;
+    }
+    const name = (id: string | null) => this.o.map.zones?.find((z) => z.id === id)?.name ?? '';
+    // próxima parada: a primeira depois do trecho da estrada em que o ônibus está
+    const path = route.path;
+    let seg = 0;
+    let best = Infinity;
+    for (let i = 0; i < path.length; i++) {
+      const [ax, az] = path[i];
+      const [cx, cz] = path[(i + 1) % path.length];
+      const dx = cx - ax, dz = cz - az;
+      const t = clamp(((b.x - ax) * dx + (b.z - az) * dz) / (dx * dx + dz * dz || 1), 0, 1);
+      const d = Math.hypot(b.x - ax - dx * t, b.z - az - dz * t);
+      if (d < best) {
+        best = d;
+        seg = i;
+      }
+    }
+    let next = route.stops[0];
+    for (let k = 1; k <= path.length; k++) {
+      const s = route.stops.find((st) => st.at === (seg + k) % path.length);
+      if (s) {
+        next = s;
+        break;
+      }
+    }
+    const onBus = this.onBusNow();
+    let text: string;
+    if (b.stop) text = b.wait > 0.5 ? `Ônibus na ${name(b.stop)} · sai em ${Math.ceil(b.wait)} s` : `Ônibus saindo da ${name(b.stop)}`;
+    else text = onBus ? `No ônibus · próxima parada: ${name(next.zone)}` : `Ônibus indo para a ${name(next.zone)}`;
+    const dx = b.x - this.pc.pos.x, dz = b.z - this.pc.pos.z;
+    const dist = Math.round(Math.hypot(dx, dz));
+    let angle: number | null = null;
+    if (!onBus && dist > 6) {
+      let rel = Math.atan2(-dx, -dz) - this.pc.yaw;
+      rel = Math.atan2(Math.sin(rel), Math.cos(rel));
+      angle = (-rel * 180) / Math.PI;
+    }
+    this.hud.setBus({ text, angle, dist: onBus || dist <= 6 ? null : dist, leaving: !!b.stop && b.wait < 6 });
   }
 
   // jogador em pé dentro do ônibus agora
@@ -1614,6 +1709,7 @@ export class Game {
       }
     }
     this.hud.markers(markers);
+    this.updateBusInfo();
     this.hud.clickToPlay(!this.input.locked && !this.hud.overlayOpen && !this.over);
     if (this.t - this.infoT > 0.5) {
       this.infoT = this.t;
@@ -1784,6 +1880,7 @@ export class Game {
     this.mapView.dispose();
     this.foliage.dispose();
     this.fogBanks?.dispose();
+    this.decals.dispose();
     this.fx.dispose();
     this.barricades.dispose();
     this.boxView.dispose();
@@ -1797,6 +1894,40 @@ export class Game {
     this.composer.dispose();
   }
 }
+
+// Acabamento da imagem, aplicado depois da conversão de cor: saturação, contraste, tom das sombras,
+// vinheta nas bordas e uma granulação de filme bem leve.
+const GRADE_SHADER = {
+  uniforms: {
+    tDiffuse: { value: null as THREE.Texture | null },
+    time: { value: 0 },
+    sat: { value: 0.92 },
+    contrast: { value: 1.1 },
+    shadowTint: { value: new THREE.Vector3(1.02, 1, 0.96) },
+    vignette: { value: 0.38 },
+    grain: { value: 0.035 },
+  },
+  vertexShader: /* glsl */ `
+    varying vec2 vUv;
+    void main() { vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }`,
+  fragmentShader: /* glsl */ `
+    uniform sampler2D tDiffuse; uniform float time; uniform float sat; uniform float contrast;
+    uniform vec3 shadowTint; uniform float vignette; uniform float grain;
+    varying vec2 vUv;
+    float hash(vec2 p) { return fract(sin(dot(p, vec2(12.9898, 78.233))) * 43758.5453); }
+    void main() {
+      vec3 c = texture2D(tDiffuse, vUv).rgb;
+      float l = dot(c, vec3(0.299, 0.587, 0.114));
+      c = mix(vec3(l), c, sat);
+      c = (c - 0.5) * contrast + 0.5;
+      // sombras puxadas para o tom do mapa, luzes intactas
+      c *= mix(shadowTint, vec3(1.0), smoothstep(0.0, 0.6, l));
+      vec2 d = vUv - 0.5;
+      c *= 1.0 - vignette * smoothstep(0.25, 0.85, dot(d, d) * 2.2);
+      c += (hash(vUv * 731.0 + fract(time * 13.0)) - 0.5) * grain;
+      gl_FragColor = vec4(clamp(c, 0.0, 1.0), 1.0);
+    }`,
+};
 
 function canThrowKey(input: Input) {
   return input.wasPressed('KeyG');

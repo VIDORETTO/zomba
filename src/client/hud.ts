@@ -4,6 +4,22 @@ import { POWERUPS, type PowerupKind } from '../shared/powerups';
 import { emblemCanvas } from './emblems';
 import type { NetPlayer } from '../shared/protocol';
 
+// Símbolo de cada bebida (SVG 24×24, branco sobre a cor da bebida)
+const PERK_SVG: Record<PerkId, string> = {
+  // escudo
+  couraca: '<path d="M12 2 4 5v6c0 5 3.4 9.4 8 11 4.6-1.6 8-6 8-11V5z"/>',
+  // coração com cruz
+  folego: '<path d="M12 21s-8-5.2-8-11a4.5 4.5 0 0 1 8-2.8A4.5 4.5 0 0 1 20 10c0 5.8-8 11-8 11z"/><path d="M11 9h2v2h2v2h-2v2h-2v-2H9v-2h2z" fill="rgba(0,0,0,.45)"/>',
+  // raio
+  reflexo: '<path d="M13 2 4 14h7l-2 8 9-12h-7z"/>',
+  // duas balas
+  gatilho: '<path d="M7 3c1.7 1.5 2.5 3.5 2.5 6v10h-5V9C4.5 6.5 5.3 4.5 7 3zm10 0c1.7 1.5 2.5 3.5 2.5 6v10h-5V9c0-2.5.8-4.5 2.5-6z"/><path d="M4.5 16h5v1.5h-5zm10 0h5v1.5h-5z" fill="rgba(0,0,0,.45)"/>',
+  // pegada
+  passo: '<ellipse cx="11" cy="15" rx="4.2" ry="6"/><circle cx="8.5" cy="5.5" r="1.6"/><circle cx="12" cy="4.2" r="1.7"/><circle cx="15.3" cy="5.5" r="1.5"/><circle cx="17.4" cy="8.4" r="1.3"/>',
+  // ferradura
+  mula: '<path d="M5 4h4v8a3 3 0 0 0 6 0V4h4v8a7 7 0 0 1-14 0z"/><path d="M5 4h4v2.5H5zm10 0h4v2.5h-4z" fill="rgba(0,0,0,.45)"/>',
+};
+
 function el<K extends keyof HTMLElementTagNameMap>(tag: K, cls: string, parent?: HTMLElement, html?: string) {
   const e = document.createElement(tag);
   e.className = cls;
@@ -78,7 +94,7 @@ export class Hud {
   private hitT = 0;
   private hurt = 0;
   // últimos valores escritos na página: só reescreve quando muda (evita retrabalho do navegador)
-  private last = { gap: -1, cross: true, hit: '', vig: '', hurt: '', mag: '', res: '', name: '', low: false };
+  private last = { gap: -1, cross: true, hit: '', vig: '', hurt: '', mag: '', res: '', name: '', low: false, resLow: false };
   private lastRound = -1;
   private scoreRows = new Map<string, HTMLElement>();
 
@@ -218,6 +234,9 @@ export class Hud {
     if (L.res !== String(reserve)) this.ammoRes.textContent = L.res = String(reserve);
     const low = mag <= Math.ceil(magSize * 0.25);
     if (L.low !== low) this.ammoMag.classList.toggle('low', (L.low = low));
+    // reserva acabando: cor de alerta
+    const resLow = reserve <= magSize;
+    if (L.resLow !== resLow) this.ammoRes.classList.toggle('low', (L.resLow = resLow));
     let hint = '';
     if (mag === 0 && reserve === 0) hint = 'Sem munição';
     else if (mag < magSize && mag <= Math.ceil(magSize * 0.25) && reserve > 0) hint = 'Pressione <b>R</b> para recarregar';
@@ -270,7 +289,7 @@ export class Hud {
     this.perksEl.innerHTML = '';
     for (const id of perks) {
       const d = PERKS[id];
-      const e = el('div', `perk-icon${id === added ? ' new' : ''}`, this.perksEl, d.icon);
+      const e = el('div', `perk-icon${id === added ? ' new' : ''}`, this.perksEl, PERK_SVG[id] ? `<svg viewBox="0 0 24 24" fill="#fff">${PERK_SVG[id]}</svg>` : d.icon);
       e.style.setProperty('--c', d.color);
       e.title = d.name;
     }
@@ -357,6 +376,26 @@ export class Hud {
     const e = el('div', 'note', this.feed, html);
     setTimeout(() => e.classList.add('out'), 4500);
     setTimeout(() => e.remove(), 5200);
+  }
+
+  // Painel do ônibus (mapa Rota): onde ele está, quando sai e uma seta apontando para ele
+  private busEl: HTMLElement | null = null;
+  private busKey = '';
+  setBus(info: { text: string; angle: number | null; dist: number | null; leaving: boolean } | null) {
+    if (!this.busEl) this.busEl = el('div', 'bus-info hidden', this.root, '<i class="bus-arrow">▲</i><span></span><em></em>');
+    const e = this.busEl;
+    e.classList.toggle('hidden', !info);
+    if (!info) return;
+    const key = info.text + '|' + (info.dist ?? '') + '|' + info.leaving;
+    if (key !== this.busKey) {
+      this.busKey = key;
+      e.querySelector('span')!.textContent = info.text;
+      e.querySelector('em')!.textContent = info.dist === null ? '' : `${info.dist} m`;
+      e.classList.toggle('leaving', info.leaving);
+    }
+    const arrow = e.querySelector<HTMLElement>('.bus-arrow')!;
+    arrow.style.visibility = info.angle === null ? 'hidden' : 'visible';
+    if (info.angle !== null) arrow.style.transform = `rotate(${info.angle.toFixed(1)}deg)`;
   }
 
   netinfo(text: string) {

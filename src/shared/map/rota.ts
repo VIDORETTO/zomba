@@ -71,7 +71,7 @@ export function buildRota(): MapDef {
   const pads: [number, number, number, number][] = [
     [-24, -26, 24, 16], [-196, -146, -146, -96], [-262, 80, -206, 124], [-70, 222, 0, 280], [164, 100, 222, 160],
   ];
-  for (const [x0, z0, x1, z1] of pads) box(x0, -0.2, z0, x1, 0.03, z1, 'concrete', false, { tint: 0x8a8378 });
+  for (const [x0, z0, x1, z1] of pads) box(x0, -0.2, z0, x1, 0.03, z1, 'pavement', false, { tint: 0xa8a296 });
 
   // ---------- ajudantes deste mapa ----------
 

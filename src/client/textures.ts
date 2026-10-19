@@ -249,6 +249,45 @@ export function buildTextures(): TexSet {
     t.concrete = finish(c);
     t.stone = t.concrete;
   }
+  {
+    // piso de concreto: placas de 3 m com juntas, manchas de óleo, rachaduras e mato nas frestas
+    const s = 512;
+    const [c, ctx] = canvas(s);
+    noiseFill(ctx, s, [128, 124, 116], 0.16, 6, 41);
+    for (let i = 0; i < 1800; i++) {
+      const g = 90 + rnd() * 80;
+      ctx.fillStyle = `rgba(${g},${g * 0.97},${g * 0.92},0.35)`;
+      ctx.fillRect(rnd() * s, rnd() * s, 1.5, 1.5);
+    }
+    blotches(ctx, s, 9, 'rgba(18,16,14,0.32)', 14, 60, rnd);
+    blotches(ctx, s, 5, 'rgba(40,46,30,0.22)', 10, 30, rnd);
+    ctx.strokeStyle = 'rgba(38,35,31,0.85)';
+    ctx.lineWidth = 2.5;
+    for (let k = 0; k <= 2; k++) {
+      ctx.beginPath();
+      ctx.moveTo(0, k * 256);
+      ctx.lineTo(s, k * 256);
+      ctx.moveTo(k * 256, 0);
+      ctx.lineTo(k * 256, s);
+      ctx.stroke();
+    }
+    ctx.strokeStyle = 'rgba(70,82,48,0.6)';
+    ctx.lineWidth = 1.5;
+    for (let i = 0; i < 40; i++) {
+      const along = rnd() < 0.5, k = rnd() < 0.5 ? 0 : 256, p = rnd() * s;
+      ctx.beginPath();
+      if (along) {
+        ctx.moveTo(p, k);
+        ctx.lineTo(p + 3, k - 4 - rnd() * 4);
+      } else {
+        ctx.moveTo(k, p);
+        ctx.lineTo(k + 4 + rnd() * 4, p + 3);
+      }
+      ctx.stroke();
+    }
+    cracks(ctx, s, 10, 'rgba(30,28,25,0.7)', 1.2, rnd);
+    t.pavement = finish(c);
+  }
   t.brick = finish(bricks(512, [110, 104, 96], [[138, 62, 42], [120, 52, 36], [150, 74, 50], [104, 48, 34]], 5));
   t.brickDark = finish(bricks(512, [70, 66, 62], [[78, 40, 30], [66, 34, 28], [90, 50, 36], [58, 36, 30]], 6));
   {

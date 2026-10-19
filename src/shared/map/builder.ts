@@ -137,7 +137,8 @@ export function createBuilder(seed: number) {
       qbox(q, r.u0 - 0.08, r.u1 + 0.08, 0, 0.55, r.v0 - 0.08, r.v1 + 0.08, b.trim, false, trimX);
     } else {
       const t = 0.35;
-      qbox(q, r.u0 + t, r.u1 - t, 0, 0.15, r.v0 + t, r.v1 - t, b.enter.floor, true);
+      // concreto no chão vira piso (placas com juntas), não a textura escorrida das paredes
+      qbox(q, r.u0 + t, r.u1 - t, 0, 0.15, r.v0 + t, r.v1 - t, b.enter.floor === 'concrete' ? 'pavement' : b.enter.floor, true);
       qbox(q, r.u0 + t, r.u1 - t, h - 0.3, h, r.v0 + t, r.v1 - t, 'ceiling', false);
       for (const f of ['u0', 'u1', 'v0', 'v1'] as Face[]) {
         let [a0, a1] = faceRange(r, f);

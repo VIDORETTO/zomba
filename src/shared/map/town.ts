@@ -1,6 +1,6 @@
 import { SIGHTS } from '../weapons';
 import { createBuilder, type BSpec, type Face, type QRect, type Quad } from './builder';
-import type { MapDef, MaterialId, Vec3 } from './types';
+import type { Foliage, MapDef, MaterialId, Rect, Vec3 } from './types';
 
 // "Cidade": um cruzamento de duas ruas com uma fenda de lava no meio,
 // quatro quarteirões com becos e quintais que formam voltas para "treinar" zumbis.
@@ -20,6 +20,9 @@ export function buildTown(): MapDef {
   const { rnd, rr, blocks, lights, signs, fires, lava, zombieSpawns, doors, boxSpots, interactables, entries } = B;
   const { box, qbox, qp, faceSlab, doorUse, building, car, lamp, barrel, crate, rubble, zombieEntry, machine, ammoCrate, wallBuy, woodDoor, debris, boxSpot } = B;
   // cada quarteirão tem uma área atrás dos becos; os zumbis só surgem nela depois que ela abre
+  // capim (desenhado pelo navegador) e névoa rasteira (cemitério)
+  const foliage: Foliage[] = [];
+  const mist: Rect[] = [];
   const areaOf = (q: Quad) => (q === NW ? 'q-no' : q === NE ? 'q-ne' : q === SW ? 'q-so' : 'cemiterio');
   const addSpawn = (q: Quad, u: number, v: number) => {
     const [x, z] = qp(q, u, v);
@@ -557,14 +560,41 @@ export function buildTown(): MapDef {
       for (let v = 27; v <= 41; v += 2.8) {
         if (rnd() < 0.2) continue;
         const [gx, gz] = qp(q, u + rr(-0.3, 0.3), v + rr(-0.3, 0.3));
-        if (rnd() < 0.65) {
-          box(gx - 0.35, 0, gz - 0.1, gx + 0.35, rr(0.75, 1.05), gz + 0.1, 'stone', true);
-        } else {
+        // lápides de vários tipos, em tons de pedra diferentes
+        const tint = [0x9a948a, 0x8a8478, 0xb0a898, 0x7a766c][Math.floor(rnd() * 4)];
+        const kind = rnd();
+        if (kind < 0.32) {
+          // lápide de topo arredondado (degraus)
+          const h = rr(0.7, 0.95);
+          box(gx - 0.33, 0, gz - 0.1, gx + 0.33, h, gz + 0.1, 'stone', true, { tint });
+          box(gx - 0.24, h, gz - 0.1, gx + 0.24, h + 0.1, gz + 0.1, 'stone', false, { tint });
+          box(gx - 0.12, h + 0.1, gz - 0.1, gx + 0.12, h + 0.16, gz + 0.1, 'stone', false, { tint });
+        } else if (kind < 0.52) {
+          // cruz
+          box(gx - 0.07, 0, gz - 0.07, gx + 0.07, rr(1.2, 1.5), gz + 0.07, 'stone', true, { tint });
+          box(gx - 0.34, 0.82, gz - 0.06, gx + 0.34, 0.96, gz + 0.06, 'stone', false, { tint });
+        } else if (kind < 0.66) {
+          // obelisco sobre base
+          box(gx - 0.3, 0, gz - 0.25, gx + 0.3, 0.3, gz + 0.25, 'stone', true, { tint });
+          box(gx - 0.13, 0.3, gz - 0.13, gx + 0.13, rr(1.6, 2.1), gz + 0.13, 'stone', true, { tint });
+        } else if (kind < 0.84) {
+          // lápide caída ou torta
           box(gx - 0.35, -0.2, gz - 0.1, gx + 0.35, rr(0.6, 0.9), gz + 0.1, 'stone', false, {
-            rot: [rr(-0.35, 0.35), rr(-0.3, 0.3), rr(-0.25, 0.25)],
+            tint, rot: [rr(-0.35, 0.35), rr(-0.3, 0.3), rr(-0.25, 0.25)],
           });
+        } else {
+          // túmulo deitado com lápide baixa
+          box(gx - 0.3, 0, gz - 0.08, gx + 0.3, 0.55, gz + 0.08, 'stone', true, { tint });
+          box(gx - 0.42, 0, gz + q.sz * 0.15, gx + 0.42, 0.22, gz + q.sz * 1.45, 'stone', false, { tint });
         }
         box(gx - 0.4, 0, gz + q.sz * 0.15, gx + 0.4, 0.07, gz + q.sz * 1.4, 'dirt', false, { tint: 0x5a4632 });
+        // flores murchas em alguns túmulos
+        if (rnd() < 0.3) {
+          const fz = gz + q.sz * 0.35;
+          box(gx - 0.12, 0, fz - 0.05, gx + 0.12, 0.1, fz + 0.05, 'stone', false, { tint: 0x5a5650 });
+          box(gx - 0.1, 0.1, fz - 0.04, gx + 0.1, 0.18, fz + 0.04, 'awning', false, { tint: rnd() < 0.5 ? 0x8a2a2a : 0xc8c0a0 });
+        }
+        foliage.push({ kind: 'grass', x: gx + rr(-0.6, 0.6), z: gz + q.sz * rr(0.5, 1.2), s: rr(0.5, 0.8), r: rr(0, 3) });
       }
     }
     let [x, z] = qp(q, 28, 44);
@@ -578,6 +608,16 @@ export function buildTown(): MapDef {
     for (const [u, v] of [[34, 30], [40, 34], [44, 40], [30, 44], [38, 45], [27.5, 28]] as [number, number][]) {
       addSpawn(q, u, v);
     }
+    // capim alto nos cantos e névoa baixa sobre os túmulos
+    for (let i = 0; i < 60; i++) {
+      const u = rr(29, 47), v = rr(26.5, 47);
+      if (rnd() < 0.5 && u > 30 && u < 46 && v > 27 && v < 42) continue;
+      const [gx, gz] = qp(q, u, v);
+      foliage.push({ kind: 'grass', x: gx, z: gz, s: rr(0.6, 1.1), r: rr(0, 3) });
+    }
+    const [m0x, m0z] = qp(q, 29, 26.5);
+    const [m1x, m1z] = qp(q, 47.4, 47.4);
+    mist.push({ minX: Math.min(m0x, m1x), minZ: Math.min(m0z, m1z), maxX: Math.max(m0x, m1x), maxZ: Math.max(m0z, m1z) });
   }
 
   // ---------- postes de luz ----------
@@ -791,5 +831,7 @@ export function buildTown(): MapDef {
     },
     // o Bispo sobe da fenda de lava do cruzamento; ao trocar de fase reaparece numa das ruas
     ritual: { candles: ritualCandles, arena: [[0, 0], [0, -30], [0, 30], [-30, 0], [30, 0]] },
+    foliage,
+    mist,
   };
 }
