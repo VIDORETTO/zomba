@@ -15,6 +15,8 @@ export const PLAYER = {
   sprintSpeed: 6.9,
   adsSpeed: 2.8,
   crouchSpeed: 2.3,
+  // caído: rasteja devagar
+  crawlSpeed: 0.85,
   sprintTime: 4.0,
   sprintRecover: 2.5,
   accel: 42,

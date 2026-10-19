@@ -78,6 +78,7 @@ export function checkRun(r: Partial<RunInput> | null | undefined, maps: string[]
   const seconds = int(r.seconds, 0, 1e7);
   if (round === null || startRound === null || players === null || kills === null || headshots === null || downs === null || revives === null || seconds === null) return 'números inválidos';
   if (startRound > round) return 'rodada inicial maior que a final';
+  if (mode === 'solo' && players !== 1) return 'partida solo com mais de um jogador';
   if (headshots > kills) return 'mais tiros na cabeça que abates';
   // cada rodada vencida tem pelo menos o intervalo entre rodadas
   if (seconds < (round - startRound) * INTERMISSION_TIME * 0.8) return 'partida rápida demais';

@@ -5,6 +5,8 @@ export class Input {
   private readonly released = new Set<string>();
   private dx = 0;
   private dy = 0;
+  // instante em que o mouse foi capturado (os primeiros movimentos depois disso vêm com saltos)
+  private lockedAt = 0;
   locked = false;
   onUnlock: (() => void) | null = null;
 
@@ -24,6 +26,9 @@ export class Input {
   private kd = (e: KeyboardEvent) => {
     if (!this.locked && !this.alwaysActive) return;
     if (e.code === 'Tab' || e.code === 'Space') e.preventDefault();
+    // agachar segurando Ctrl: Ctrl+D, Ctrl+S, Ctrl+F etc. não podem abrir janelas do navegador no meio do jogo
+    // (Ctrl+W o navegador não deixa bloquear; a Game pede confirmação antes de fechar a aba)
+    if (e.ctrlKey && this.locked) e.preventDefault();
     if (!e.repeat) {
       this.down.add(e.code);
       this.pressed.add(e.code);
@@ -46,6 +51,10 @@ export class Input {
   };
   private mm = (e: MouseEvent) => {
     if (!this.locked) return;
+    // Chrome e Firefox às vezes mandam um salto enorme logo ao capturar o mouse (ou do nada): a câmera
+    // daria uma volta sozinha. Movimento de verdade nunca chega a tanto num único evento.
+    if (performance.now() - this.lockedAt < 80) return;
+    if (Math.abs(e.movementX) > 600 || Math.abs(e.movementY) > 600) return;
     this.dx += e.movementX;
     this.dy += e.movementY;
   };
@@ -57,6 +66,7 @@ export class Input {
   private ctx = (e: Event) => e.preventDefault();
   private plc = () => {
     this.locked = document.pointerLockElement === this.el;
+    if (this.locked) this.lockedAt = performance.now();
     if (!this.locked) {
       this.down.clear();
       this.onUnlock?.();

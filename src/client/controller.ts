@@ -92,10 +92,13 @@ export class PlayerController {
       this.yaw += dy;
     }
     this.prevBus = this.bus ? { ...this.bus } : null;
-    const frozen = f.frozen || f.downed;
+    // caído ainda se arrasta, mas sem agachar, correr nem pular
+    const frozen = f.frozen;
+    const down = f.downed;
+    if (down) this.crouched = false;
 
-    if (!frozen && input.wasPressed('KeyC')) this.crouched = !this.crouched;
-    const wantCrouch = !frozen && (this.crouched || input.isDown('ControlLeft'));
+    if (!frozen && !down && input.wasPressed('KeyC')) this.crouched = !this.crouched;
+    const wantCrouch = !frozen && !down && (this.crouched || input.isDown('ControlLeft'));
     this.crouchT = lerp(this.crouchT, wantCrouch ? 1 : 0, 1 - Math.exp(-dt * 12));
 
     let fwd = 0;
@@ -119,7 +122,7 @@ export class PlayerController {
     this.sprintLock = Math.max(0, this.sprintLock - dt);
     const sprintKey = input.isDown('ShiftLeft') || input.isDown('ShiftRight');
     if (sprintKey && wantCrouch && fwd > 0) this.crouched = false;
-    const canSprint = sprintKey && fwd > 0 && !wantCrouch && !f.ads && !f.blockSprint && this.onGround && this.sprintLock <= 0;
+    const canSprint = sprintKey && fwd > 0 && !down && !wantCrouch && !f.ads && !f.blockSprint && this.onGround && this.sprintLock <= 0;
     if (canSprint && this.stamina > 0) {
       this.sprinting = true;
       this.stamina -= dt;
@@ -142,6 +145,7 @@ export class PlayerController {
     else if (wantCrouch) speed = PLAYER.crouchSpeed;
     if (f.ads && !this.sprinting) speed = Math.min(speed, PLAYER.adsSpeed);
     if (fwd < 0) speed *= 0.85;
+    if (down) speed = PLAYER.crawlSpeed;
 
     const tx = wx * speed;
     const tz = wz * speed;
@@ -165,7 +169,7 @@ export class PlayerController {
       }
     }
 
-    if (!frozen && input.wasPressed('Space') && this.onGround) {
+    if (!frozen && !down && input.wasPressed('Space') && this.onGround) {
       if (this.crouchT > 0.5) {
         this.crouched = false;
       } else {

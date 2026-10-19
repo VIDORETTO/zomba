@@ -1112,5 +1112,65 @@ check('mapa tem 6 máquinas e 3 caixotes', map.interactables.filter((i) => i.kin
   check('simulação do Rota leve (menos de 4 ms por passo)', ms < 4, `${ms.toFixed(2)} ms`);
 }
 
+// --- banco conferido pela simulação, arma repetida, jogador caído rastejando, Vórtice nos chefões ---
+{
+  const s = new GameSim(map, false);
+  s.addPlayer('a', 'A', 0, 1, 1500);
+  s.addPlayer('b', 'B', 1, 1, 0);
+  s.start();
+  const a = s.players.get('a')!;
+  const b = s.players.get('b')!;
+  a.points = b.points = 5000;
+  for (const pid of ['a', 'b']) goTo(s, pid, 'bank-withdraw');
+  s.handle('a', { t: 'interact', id: 'bank-withdraw', weapon: 'pistol' });
+  s.handle('a', { t: 'interact', id: 'bank-withdraw', weapon: 'pistol' });
+  check('saque só até o saldo informado ao entrar', a.points === 5900, `pontos ${a.points}`);
+  s.handle('b', { t: 'interact', id: 'bank-withdraw', weapon: 'pistol' });
+  check('sem saldo no banco o saque é recusado', b.points === 5000 && has(events(s), 'deny', (e) => e.e === 'deny' && e.pid === 'b'));
+  goTo(s, 'b', 'bank-deposit');
+  s.handle('b', { t: 'interact', id: 'bank-deposit', weapon: 'pistol' });
+  goTo(s, 'b', 'bank-withdraw');
+  s.handle('b', { t: 'interact', id: 'bank-withdraw', weapon: 'pistol' });
+  check('depositou na partida, pode sacar', b.points === 4900, `pontos ${b.points}`);
+  const full = new GameSim(map, true);
+  full.addPlayer('c', 'C', 0, 1, 250000);
+  full.start();
+  const c = full.players.get('c')!;
+  c.points = 5000;
+  goTo(full, 'c', 'bank-deposit');
+  full.handle('c', { t: 'interact', id: 'bank-deposit', weapon: 'pistol' });
+  check('banco cheio recusa depósito (sem sumir com os pontos)', c.points === 5000 && has(events(full), 'deny', (e) => e.e === 'deny' && e.reason === 'cheio'));
+
+  // arma que o jogador já tem não entra repetida
+  a.weapons = ['pistol', 'smg'];
+  raw(s).giveWeapon(a, 'smg', 'pistol');
+  check('arma repetida vira munição, não segunda cópia', a.weapons.join() === 'pistol,smg' && has(events(s), 'refill'));
+
+  // caído rasteja: a posição continua valendo
+  raw(s).damagePlayer(a, 999, a.x, a.z, false);
+  const x0 = a.x;
+  s.handle('a', { t: 'state', x: a.x + 0.5, y: 0, z: a.z, yaw: 0, pitch: 0, crouch: true, speed: 0.8 });
+  check('jogador caído rasteja (posição aceita, sem agachar)', a.life === 'downed' && Math.abs(a.x - x0 - 0.5) < 1e-6 && !a.crouch);
+
+  // Vórtice num chefão: dano em pulsos, não 10 pontos a cada passo
+  const v = new GameSim(map, true, { startRound: 8 });
+  v.addPlayer('a', 'A', 0);
+  v.start();
+  const va = v.players.get('a')!;
+  v.tick(0.05);
+  raw(v).spawnBoss();
+  const boss = [...raw(v).zombies.values()].find((z: { kind: number }) => z.kind === 4);
+  Object.assign(boss, { anim: 'move', speed: 0 });
+  raw(v).vortices.push({ id: 999, x: boss.x, y: 1, z: boss.z, r: 7.5, t: 0, dur: 6, pid: 'a', damage: 4000, pulse: 0 });
+  const p0 = va.points;
+  events(v);
+  let hits = 0;
+  for (let i = 0; i < 42; i++) {
+    raw(v).updateVortices(0.05);
+    hits += events(v).filter((e) => e.e === 'zhit').length;
+  }
+  check('Vórtice machuca o chefão em pulsos (4 acertos em 2,1 s)', hits === 4 && va.points - p0 === 40, `${hits} acertos, +${va.points - p0}`);
+}
+
 console.log(`\n${passes} ok, ${fails} falharam`);
 process.exit(fails ? 1 : 0);

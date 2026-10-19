@@ -8,7 +8,7 @@ import { LocalTransport, NetClient, defaultServerUrl, type Transport } from './n
 import { detectGpu } from './quality';
 import { buildTextures, type TexSet } from './textures';
 import { animateEmblem, emblemCanvas } from './emblems';
-import { allProfiles, favoriteWeapon, getProfile, levelOf, runs } from './profile';
+import { allProfiles, bankBalance, favoriteWeapon, getProfile, levelOf, runs } from './profile';
 import { MAX_START_ROUND, levelFromXp, rankOf, startPoints } from '../shared/progress';
 import { WEAPONS } from '../shared/weapons';
 import type { BoardMode, BoardStart, RunInput } from '../shared/board';
@@ -218,7 +218,7 @@ function exitGame() {
 
 $('btn-solo').addEventListener('click', () => {
   ensureAudio();
-  startGame(new LocalTransport(getMap(prefs.mapId), playerName(), { startRound: prefs.startRound, level: playerLevel() }), prefs.mapId);
+  startGame(new LocalTransport(getMap(prefs.mapId), playerName(), { startRound: prefs.startRound, level: playerLevel(), bank: bankBalance(playerName()) }), prefs.mapId);
 });
 
 // ---------- co-op ----------
@@ -432,7 +432,7 @@ function renderLobby(code: string, hostId: string, players: LobbyPlayer[], start
 
 $('btn-create').addEventListener('click', async () => {
   const c = await connect();
-  c?.create(playerName(), playerLevel(), prefs.startRound, prefs.mapId, getAccount()?.token);
+  c?.create(playerName(), playerLevel(), prefs.startRound, prefs.mapId, getAccount()?.token, bankBalance(playerName()));
 });
 $('btn-join').addEventListener('click', async () => {
   const code = $<HTMLInputElement>('in-code').value.trim().toUpperCase();
@@ -441,7 +441,7 @@ $('btn-join').addEventListener('click', async () => {
     return;
   }
   const c = await connect();
-  c?.join(code, playerName(), playerLevel(), getAccount()?.token);
+  c?.join(code, playerName(), playerLevel(), getAccount()?.token, bankBalance(playerName()));
 });
 $('btn-start').addEventListener('click', () => net?.start());
 $('lobby-round').addEventListener('input', () => {

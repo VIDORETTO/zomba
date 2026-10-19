@@ -182,8 +182,9 @@ export interface LobbyPlayer {
 export type ClientMsg =
   | PlayerInput
   // token = conta do placar online (opcional): o servidor registra a partida de co-op no nome dela
-  | { t: 'create'; name: string; level: number; startRound: number; mapId: string; token?: string }
-  | { t: 'join'; code: string; name: string; level: number; token?: string }
+  // bank = saldo do banco guardado no navegador (limita os saques na partida)
+  | { t: 'create'; name: string; level: number; startRound: number; mapId: string; token?: string; bank?: number }
+  | { t: 'join'; code: string; name: string; level: number; token?: string; bank?: number }
   | { t: 'config'; startRound: number; mapId: string }
   | { t: 'start' }
   | { t: 'ping'; n: number };

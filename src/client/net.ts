@@ -26,9 +26,9 @@ export class LocalTransport implements Transport {
   private readonly sim: GameSim;
   private acc = 0;
 
-  constructor(map: MapDef, name: string, opts: { startRound?: number; level?: number } = {}) {
+  constructor(map: MapDef, name: string, opts: { startRound?: number; level?: number; bank?: number } = {}) {
     this.sim = new GameSim(map, true, { startRound: opts.startRound });
-    this.sim.addPlayer(this.localId, name, 0, opts.level ?? 1);
+    this.sim.addPlayer(this.localId, name, 0, opts.level ?? 1, opts.bank ?? 0);
     this.sim.start();
   }
 
@@ -135,12 +135,12 @@ export class NetClient implements Transport {
   }
 
   // token: conta do placar online (o servidor registra a partida de co-op nela)
-  create(name: string, level: number, startRound: number, mapId: string, token?: string) {
-    this.raw({ t: 'create', name, level, startRound, mapId, token });
+  create(name: string, level: number, startRound: number, mapId: string, token?: string, bank?: number) {
+    this.raw({ t: 'create', name, level, startRound, mapId, token, bank });
   }
 
-  join(code: string, name: string, level: number, token?: string) {
-    this.raw({ t: 'join', code, name, level, token });
+  join(code: string, name: string, level: number, token?: string, bank?: number) {
+    this.raw({ t: 'join', code, name, level, token, bank });
   }
 
   config(startRound: number, mapId: string) {

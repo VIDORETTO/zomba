@@ -25,6 +25,8 @@ interface SimPlayer extends NetPlayer {
   repairT: number;
   repairPts: number;
   lastLaunch: number;
+  // saldo do banco que o navegador informou ao entrar (a simulação confere saques e depósitos)
+  bank: number;
 }
 
 interface SimGrenade {
@@ -154,7 +156,7 @@ export class GameSim {
   private grenades: SimGrenade[] = [];
   private nextGid = 1;
   // buracos negros do Vórtice e os zumbis que eles estão puxando neste passo
-  private vortices: { id: number; x: number; y: number; z: number; r: number; t: number; dur: number; pid: string; damage: number }[] = [];
+  private vortices: { id: number; x: number; y: number; z: number; r: number; t: number; dur: number; pid: string; damage: number; pulse: number }[] = [];
   private readonly sucked = new Set<number>();
   // como o próximo zumbi morto morre (arremessado, engolido, eletrocutado): vai junto no evento
   private killFx: { fling?: [number, number, number]; sucked?: boolean; shock?: boolean } | null = null;
@@ -221,7 +223,7 @@ export class GameSim {
     this.nav.rebuild();
   }
 
-  addPlayer(id: string, name: string, slot: number, level = 1) {
+  addPlayer(id: string, name: string, slot: number, level = 1, bank = 0) {
     const [x, z] = this.world.map.playerSpawns[slot % this.world.map.playerSpawns.length];
     this.players.set(id, {
       id, name, slot, x, y: 0, z, yaw: 0, pitch: 0, crouch: false, speed: 0,
@@ -231,6 +233,7 @@ export class GameSim {
       weapons: ['pistol'], grenades: GRENADE.start, heavyKnife: false, sights: {},
       lastHurt: -99, lavaTimer: 0, reviveTarget: null, knifeReady: 0, selfReviveT: 0,
       repairEntry: null, repairT: 0, repairPts: 0, lastLaunch: -99,
+      bank: Math.max(0, Math.min(BANK.limit, Math.floor(Number(bank) || 0))),
     });
   }
 
@@ -238,6 +241,7 @@ export class GameSim {
     const p = this.players.get(id);
     if (!p) return;
     this.players.delete(id);
+    this.fogT.delete(id);
     this.emit({ e: 'pleave', pid: id, name: p.name });
     this.checkGameOver();
   }
@@ -268,14 +272,13 @@ export class GameSim {
         if (![msg.x, msg.y, msg.z, msg.yaw, msg.pitch, msg.speed].every(Number.isFinite)) return;
         p.yaw = msg.yaw;
         p.pitch = msg.pitch;
-        if (p.life === 'alive') {
-          const b = this.world.map.bounds;
-          p.x = clamp(msg.x, b.minX, b.maxX);
-          p.y = clamp(msg.y, -1, 30);
-          p.z = clamp(msg.z, b.minZ, b.maxZ);
-          p.crouch = msg.crouch;
-          p.speed = msg.speed;
-        }
+        // caído também se mexe: rasteja devagar (o navegador limita a velocidade)
+        const b = this.world.map.bounds;
+        p.x = clamp(msg.x, b.minX, b.maxX);
+        p.y = clamp(msg.y, -1, 30);
+        p.z = clamp(msg.z, b.minZ, b.maxZ);
+        p.crouch = p.life === 'alive' && msg.crouch;
+        p.speed = msg.speed;
         break;
       }
       case 'shoot': {
@@ -384,11 +387,15 @@ export class GameSim {
 
     if (it.kind === 'bank') {
       if (it.bank === 'deposit') {
+        if (p.bank + BANK.step > BANK.limit) return deny('cheio');
         if (p.points < BANK.step) return deny('pontos');
         p.points -= BANK.step;
+        p.bank += BANK.step;
         this.emit({ e: 'points', pid: p.id, delta: -BANK.step });
       } else {
-        // o saldo fica no navegador do jogador, que só pede o saque quando tem saldo
+        // o saldo mora no navegador do jogador; a simulação só deixa sacar o que ele informou ao entrar
+        if (p.bank < BANK.step) return deny('esgotado');
+        p.bank -= BANK.step;
         p.points += BANK.step - BANK.fee;
         this.emit({ e: 'points', pid: p.id, delta: BANK.step - BANK.fee });
       }
@@ -575,6 +582,11 @@ export class GameSim {
 
   // Dá uma arma ao jogador; com o inventário cheio, troca a que está na mão.
   private giveWeapon(p: SimPlayer, w: string, held: string) {
+    // já tem essa arma (comprou na parede enquanto a caixa girava, por exemplo): vira munição cheia
+    if (p.weapons.includes(w)) {
+      this.emit({ e: 'refill', pid: p.id, weapon: w });
+      return;
+    }
     const slots = 2 + (p.perks.includes('mula') ? 1 : 0);
     let replaced: string | null = null;
     if (p.weapons.length >= slots) {
@@ -1536,7 +1548,7 @@ export class GameSim {
     const v = def?.vortex ?? { radius: 7.5, time: 6 };
     const y = Math.max(g.y, 0.2) + 1.0;
     const id = this.nextGid++;
-    this.vortices.push({ id, x: g.x, y, z: g.z, r: v.radius, t: 0, dur: v.time, pid: g.pid, damage: def?.damage ?? 4000 });
+    this.vortices.push({ id, x: g.x, y, z: g.z, r: v.radius, t: 0, dur: v.time, pid: g.pid, damage: def?.damage ?? 4000, pulse: 0 });
     this.emit({ e: 'vortex', phase: 'open', id, x: r3(g.x), y: r3(y), z: r3(g.z), r: v.radius, dur: v.time });
   }
 
@@ -1552,13 +1564,17 @@ export class GameSim {
         continue;
       }
       const owner = this.players.get(v.pid);
+      // chefões levam o dano em pulsos de meio segundo (um acerto, não um por passo)
+      v.pulse += dt;
+      const pulse = v.pulse >= WONDER.vortexPulse;
+      if (pulse) v.pulse -= WONDER.vortexPulse;
       for (const z of [...this.zombies.values()]) {
         if (this.sucked.has(z.id)) continue;
         const dx = v.x - z.x, dz = v.z - z.z;
         const d = Math.hypot(dx, dz);
         if (d > v.r) continue;
         if (isChief(z)) {
-          if (owner) this.damageZombie(z, v.damage * 0.25 * dt, owner, 'body', false, true);
+          if (owner && pulse) this.damageZombie(z, v.damage * 0.25 * WONDER.vortexPulse, owner, 'body', false, true);
           continue;
         }
         // sai da janela, se estava nela, e vai sendo puxado (cada vez mais rápido perto do centro)

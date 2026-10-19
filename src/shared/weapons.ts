@@ -278,7 +278,8 @@ export const PROJECTILES: Record<NonNullable<WeaponDef['projectile']>, Projectil
 };
 
 // Medidas das armas maravilha: abertura do cone do vento (rad), empurrão e subida dos zumbis arremessados,
-// distância do salto do arpão (m), força com que o vórtice puxa (m/s) e o raio do centro que mata.
+// distância do salto do arpão (m), força com que o vórtice puxa (m/s), o raio do centro que mata
+// e de quanto em quanto tempo o vórtice machuca os chefões (s).
 export const WONDER = {
   windCone: 0.42,
   windPush: 16,
@@ -286,6 +287,7 @@ export const WONDER = {
   arcJump: 7,
   vortexPull: 7,
   vortexCore: 0.9,
+  vortexPulse: 0.5,
 };
 
 // Caixa Misteriosa: pesos do sorteio (somam 100).

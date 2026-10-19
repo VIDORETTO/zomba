@@ -3,7 +3,7 @@
 Jogo de sobrevivência contra zumbis em rodadas, inspirado no modo Zombies clássico.
 Roda no navegador; o mesmo código depois vira versão de PC (Electron ou Tauri).
 
-**Estado atual: protótipo 0.2.** Mapa Cidade, solo e co-op online até 4 jogadores, com barricadas, portas, armas de parede, Caixa Misteriosa, bebidas, itens que caem e a Forja.
+**Estado atual: protótipo 0.3.** Mapa Cidade, solo e co-op online até 4 jogadores, com barricadas, portas, armas de parede, Caixa Misteriosa, bebidas, itens que caem e a Forja.
 
 ## Como rodar
 
@@ -63,7 +63,7 @@ O placar mora no mesmo servidor do co-op, no arquivo `data/placar.json` (ou na p
 - Zumbis que saem da terra, andam, correm e disparam conforme a rodada; procuram o caminho pela cidade e atacam de perto. Tiro na cabeça arranca a cabeça.
 - Rodadas com quantidade e vida de zumbis crescentes (fórmula do modo clássico), contador de rodadas em marcas de giz e vinhetas sonoras entre rodadas.
 - Pontos: 10 por acerto, 60 por abate, 100 na cabeça e 130 na faca.
-- Vida que regenera, queda, reanimação por aliado (co-op), sangramento de 30 s e volta na rodada seguinte.
+- Vida que regenera, queda (caído, o jogador rasteja devagar e saca a pistola), reanimação por aliado (co-op), sangramento de 30 s e volta na rodada seguinte.
 - Mapa **Cidade**: cruzamento com fenda de lava (queima quem pisa), doze prédios em que se entra (banco, bar, hotel, cinema, igreja, correio, mercearia, farmácia, lanchonete, oficina, barbearia e armazém), cemitério e becos que formam voltas.
 - Áudio todo sintetizado (tiros, gemidos posicionais, passos por tipo de chão, música das rodadas, vento).
 - HUD: pontos com cor por jogador, munição, mira dinâmica, marcador de acerto, direção do dano, aliados caídos na tela e tela de fim de jogo com estatísticas.

@@ -91,6 +91,8 @@ export class Game {
   private repairEntry: number | null = null;
   private shadowRefreshT = 0;
   private pendingSwitch: string | null = null;
+  // arma da mão quando caiu (volta para ela ao levantar; caído, usa a pistola)
+  private lastStandFrom: string | null = null;
   private readonly nadeMeshes = new Map<number, THREE.Mesh>();
   private readonly nadeGeo = new THREE.SphereGeometry(0.06, 10, 8);
   private readonly nadeMat = new THREE.MeshStandardMaterial({ color: 0x3d4a30, roughness: 0.7 });
@@ -210,8 +212,16 @@ export class Game {
     this.transport.onEvents = (l) => this.onEvents(l);
 
     window.addEventListener('resize', this.resize);
+    if (!AUTOPLAY) window.addEventListener('beforeunload', this.onBeforeUnload);
     this.resize();
   }
+
+  // Ctrl+W (agachando com Ctrl e andando com W) ou F5 no meio da partida: o navegador pergunta antes de sair
+  private onBeforeUnload = (e: BeforeUnloadEvent) => {
+    if (this.over || this.disposed) return;
+    e.preventDefault();
+    e.returnValue = '';
+  };
 
   start() {
     this.audio.startAmbience();
@@ -400,14 +410,18 @@ export class Game {
           break;
         case 'pdown':
           if (e.pid === local) {
-            this.weapon.raise();
+            this.lastStandFrom = this.weapon.def.id;
+            // caído, saca a pistola se tiver uma (a terceira arma vai embora junto com a Mula)
+            const pistol = this.me?.weapons.slice(0, 2).find((w) => WEAPONS[w]?.cls === 'pistol' && !WEAPONS[w].projectile);
+            if (pistol && pistol !== this.weapon.def.id) this.weapon.switchTo(pistol);
+            else this.weapon.raise();
             this.reviveTarget = null;
           } else {
             this.hud.notify(`${this.nameOf(e.pid)} caiu! Reanime com <b>F</b>.`);
           }
           break;
         case 'previve':
-          if (e.pid === local) this.weapon.raise();
+          if (e.pid === local) this.standUp();
           else if (e.by === local) this.hud.notify(`Você reanimou ${this.nameOf(e.pid)}.`);
           break;
         case 'pdead':
@@ -418,6 +432,7 @@ export class Game {
           if (e.pid === local) {
             this.pc.spawn(e.x, e.z, e.z > 0 ? 0 : Math.PI);
             this.weapon.reset();
+            this.lastStandFrom = null;
           }
           break;
         case 'shot': {
@@ -764,7 +779,7 @@ export class Game {
           break;
         case 'selfrevive':
           if (e.pid === local) {
-            this.weapon.raise();
+            this.standUp();
             this.hud.notify('<b>Segundo Fôlego</b>: você se levantou! Suas bebidas se foram.');
           }
           break;
@@ -773,6 +788,14 @@ export class Game {
           break;
       }
     }
+  }
+
+  // levantou: volta para a arma que estava na mão quando caiu
+  private standUp() {
+    const from = this.lastStandFrom;
+    this.lastStandFrom = null;
+    if (from && from !== this.weapon.def.id && this.me?.weapons.includes(from)) this.weapon.switchTo(from);
+    else this.weapon.raise();
   }
 
   private nameOf(pid: string) {
@@ -1085,7 +1108,8 @@ export class Game {
       ads: this.weapon.ads > 0.3,
       blockSprint: this.blockSprintT > 0 || this.weapon.reloading,
       downed: life !== 'alive',
-      frozen: !active || this.over,
+      // caído sendo reanimado por um aliado fica parado (senão sai do alcance dele)
+      frozen: !active || this.over || (life === 'downed' && !this.transport.solo && (this.me?.revive ?? 0) > 0),
     }, this.zombies.bodies());
 
     this.weapon.update(dt, this.t, this.input, this.pc, active ? look : [0, 0], active && life !== 'dead');
@@ -1521,7 +1545,7 @@ export class Game {
 
     if (life === 'downed' && !this.over) {
       if (this.transport.solo) this.hud.downed(true, this.me?.revive ?? 0, 'Segundo Fôlego: levantando...');
-      else this.hud.downed(true, (this.me?.bleed ?? 0) / BLEEDOUT_TIME, 'Aguente firme. Um aliado pode reanimar você.');
+      else this.hud.downed(true, (this.me?.bleed ?? 0) / BLEEDOUT_TIME, 'Aguente firme. Rasteje com W A S D até um aliado reanimar você.');
     } else {
       this.hud.downed(false);
     }
@@ -1711,6 +1735,7 @@ export class Game {
     this.renderer.renderLists.dispose();
 
     window.removeEventListener('resize', this.resize);
+    window.removeEventListener('beforeunload', this.onBeforeUnload);
     this.renderer.domElement.removeEventListener('click', this.onCanvasClick);
     this.input.unlock();
     this.input.dispose();

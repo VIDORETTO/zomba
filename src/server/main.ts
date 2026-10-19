@@ -1,10 +1,11 @@
 import { createReadStream, existsSync, statSync } from 'node:fs';
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
-import { extname, join, normalize, resolve } from 'node:path';
+import { extname, join, normalize, resolve, sep } from 'node:path';
 import { WebSocket, WebSocketServer } from 'ws';
 import { MAX_PLAYERS, NET_PORT, TICK_DT, TICK_RATE } from '../shared/constants';
 import { MAPS, getMap, isMapId } from '../shared/map';
 import { BOARD, checkRun } from '../shared/board';
+import { BANK } from '../shared/progress';
 import { Board } from './board';
 import type { ClientMsg, ServerMsg } from '../shared/protocol';
 import { GameSim } from '../shared/sim';
@@ -15,6 +16,7 @@ interface Client {
   name: string;
   slot: number;
   level: number;
+  bank: number;
   room: Room | null;
   // conta do placar online (nome), se o jogador entrou nela
   account: string | null;
@@ -59,6 +61,11 @@ function limited(ip: string) {
   posts.set(ip, list);
   return list.length > BOARD.ratePerMinute;
 }
+// esquece os endereços que não mandam nada há mais de um minuto
+setInterval(() => {
+  const now = Date.now();
+  for (const [ip, list] of posts) if (!list.some((t) => now - t < 60000)) posts.delete(ip);
+}, 60000).unref();
 
 function reply(res: ServerResponse, status: number, body: unknown) {
   res.writeHead(status, {
@@ -174,19 +181,52 @@ const http = createServer((req, res) => {
     res.end('Servidor Zomba rodando. Em desenvolvimento, abra o jogo pelo Vite (porta 5173).');
     return;
   }
-  const url = decodeURIComponent((req.url ?? '/').split('?')[0]);
+  let url: string;
+  try {
+    url = decodeURIComponent(rawPath);
+  } catch {
+    // endereço com % malformado: recusa em vez de derrubar o servidor
+    res.writeHead(400).end();
+    return;
+  }
   let file = normalize(join(DIST, url));
-  if (!file.startsWith(DIST)) {
+  if (file !== DIST && !file.startsWith(DIST + sep)) {
     res.writeHead(403).end();
     return;
   }
   if (!existsSync(file) || statSync(file).isDirectory()) file = join(DIST, 'index.html');
-  res.writeHead(200, { 'content-type': MIME[extname(file)] ?? 'application/octet-stream' });
-  createReadStream(file).pipe(res);
+  const stream = createReadStream(file);
+  stream.on('error', () => {
+    if (!res.headersSent) res.writeHead(404);
+    res.end();
+  });
+  stream.once('open', () => {
+    res.writeHead(200, { 'content-type': MIME[extname(file)] ?? 'application/octet-stream' });
+    stream.pipe(res);
+  });
 });
 
 // mensagens do jogo são pequenas; recusa as enormes
 const wss = new WebSocketServer({ server: http, maxPayload: 64 * 1024 });
+wss.on('error', (err) => console.error('[ws] erro:', err.message));
+
+// Conexão que caiu sem avisar (Wi-Fi, notebook fechado) não fecha sozinha: sem resposta ao ping, o servidor
+// derruba, e o jogador some da sala em vez de ficar parado lá como um fantasma.
+const HEARTBEAT_MS = 10000;
+const awake = new WeakMap<WebSocket, boolean>();
+setInterval(() => {
+  for (const ws of wss.clients) {
+    if (awake.get(ws) === false) {
+      ws.terminate();
+      continue;
+    }
+    awake.set(ws, false);
+    ws.ping();
+  }
+}, HEARTBEAT_MS).unref();
+
+// mensagens por segundo que um jogador pode mandar (o jogo manda umas 40; o resto é ignorado)
+const MSG_PER_SECOND = 200;
 
 function send(c: Client, msg: ServerMsg) {
   if (c.ws.readyState === WebSocket.OPEN) c.ws.send(JSON.stringify(msg));
@@ -250,7 +290,7 @@ function startRoom(room: Room) {
   const map = getMap(room.mapId);
   const sim = new GameSim(map, false, { startRound: room.startRound });
   for (const c of room.clients.values()) {
-    sim.addPlayer(c.id, c.name, c.slot, c.level);
+    sim.addPlayer(c.id, c.name, c.slot, c.level, c.bank);
     send(c, { t: 'started', mapId: map.id, you: c.id });
   }
   sim.start();
@@ -276,20 +316,34 @@ function startRoom(room: Room) {
 }
 
 const cleanLevel = (n: unknown) => Math.max(1, Math.min(60, Math.floor(Number(n) || 1)));
+const cleanBank = (n: unknown) => Math.max(0, Math.min(BANK.limit, Math.floor(Number(n) || 0)));
 const cleanRound = (n: unknown) => Math.max(1, Math.min(100, Math.floor(Number(n) || 1)));
 const cleanName = (n: unknown) => String(n ?? '').replace(/[^\p{L}\p{N} _-]/gu, '').trim().slice(0, 16) || 'Jogador';
 
 wss.on('connection', (ws) => {
-  const c: Client = { id: `p${nextId++}`, ws, name: 'Jogador', slot: 0, level: 1, room: null, account: null };
+  const c: Client = { id: `p${nextId++}`, ws, name: 'Jogador', slot: 0, level: 1, bank: 0, room: null, account: null };
   send(c, { t: 'welcome', id: c.id });
+  awake.set(ws, true);
+  ws.on('pong', () => awake.set(ws, true));
+  // sem isto, um erro na conexão (mensagem grande demais, quadro inválido) derruba o servidor inteiro
+  ws.on('error', (err) => console.error(`[${c.id}] erro na conexão:`, err.message));
+  let windowStart = Date.now();
+  let inWindow = 0;
 
   ws.on('message', (raw) => {
+    const now = Date.now();
+    if (now - windowStart >= 1000) {
+      windowStart = now;
+      inWindow = 0;
+    }
+    if (++inWindow > MSG_PER_SECOND) return;
     let msg: ClientMsg;
     try {
       msg = JSON.parse(String(raw));
     } catch {
       return;
     }
+    if (!msg || typeof msg !== 'object') return;
     switch (msg.t) {
       case 'ping':
         send(c, { t: 'pong', n: msg.n });
@@ -298,6 +352,7 @@ wss.on('connection', (ws) => {
         leave(c);
         c.name = cleanName(msg.name);
         c.level = cleanLevel(msg.level);
+        c.bank = cleanBank(msg.bank);
         c.account = board.nameOf(msg.token);
         c.slot = 0;
         const room: Room = {
@@ -320,6 +375,7 @@ wss.on('connection', (ws) => {
         leave(c);
         c.name = cleanName(msg.name);
         c.level = cleanLevel(msg.level);
+        c.bank = cleanBank(msg.bank);
         c.account = board.nameOf(msg.token);
         c.slot = slot;
         c.room = room;
