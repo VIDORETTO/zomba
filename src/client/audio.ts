@@ -1,8 +1,18 @@
 import * as THREE from 'three';
 
-// Todos os sons são sintetizados com Web Audio. Mais tarde dá para trocar por gravações.
+// Sons sintetizados com Web Audio, com gravações CC0 (public/sfx, ver tools/build-sfx.mjs) para tiros,
+// passos, tábuas, impactos e as vozes dos zumbis. Se uma gravação não carregar, o som sintetizado toca no lugar.
 
 export type Surface = 'hard' | 'wood' | 'dirt';
+export type GunSound = 'pistol' | 'rifle' | 'smg' | 'shotgun' | 'magnum' | 'sniper';
+
+// gravações e quantas variações cada uma tem (arquivos <nome>-<n>.ogg)
+const SAMPLES: Record<string, number> = {
+  'gun-pistol': 3, 'gun-magnum': 2, 'gun-rifle': 3, 'gun-smg': 2, 'gun-shotgun': 3, 'gun-sniper': 2,
+  'tail-pistol': 1, 'tail-magnum': 1, 'tail-rifle': 1, 'tail-smg': 1, 'tail-shotgun': 1, 'tail-sniper': 1,
+  'step-hard': 5, 'step-wood': 5, 'step-dirt': 5, 'board-break': 4, 'board-fix': 3, flesh: 4,
+  'z-moan': 16, 'z-growl': 10, 'z-attack': 7, 'z-death': 5,
+};
 
 const R = (a: number, b: number) => a + Math.random() * (b - a);
 
@@ -21,6 +31,11 @@ export class AudioEngine {
   private bus: { panner: PannerNode; gain: GainNode; lp: BiquadFilterNode; o1: OscillatorNode; o2: OscillatorNode } | null = null;
   // última posição do ouvinte (uivos ao longe na rodada infernal)
   private readonly lastListener = new THREE.Vector3();
+  private readonly samples = new Map<string, AudioBuffer[]>();
+  // última variação tocada de cada som (para não repetir a mesma em seguida)
+  private readonly lastPick = new Map<string, number>();
+  // último eco de tiro de cada arma (rajada não empilha eco)
+  private readonly tailT = new Map<string, number>();
 
   constructor() {
     this.ctx = new AudioContext();
@@ -47,6 +62,43 @@ export class AudioEngine {
     }
     this.shaper.curve = curve;
     this.shaper.connect(this.sfx);
+    this.loadSamples();
+  }
+
+  private loadSamples() {
+    for (const [name, n] of Object.entries(SAMPLES)) {
+      for (let i = 0; i < n; i++) {
+        fetch(`${import.meta.env.BASE_URL}sfx/${name}-${i}.ogg`)
+          .then((r) => (r.ok ? r.arrayBuffer() : Promise.reject(new Error(String(r.status)))))
+          .then((b) => this.ctx.decodeAudioData(b))
+          .then((buf) => {
+            const list = this.samples.get(name) ?? [];
+            list.push(buf);
+            this.samples.set(name, list);
+          })
+          .catch(() => {
+            // sem a gravação: fica o som sintetizado
+          });
+      }
+    }
+  }
+
+  // Toca uma variação da gravação (nunca a mesma duas vezes seguidas) e devolve quanto dura em segundos.
+  // 0 = a gravação ainda não carregou.
+  private sample(name: string, dst: AudioNode, vol: number, rate = 1, at = this.now): number {
+    const list = this.samples.get(name);
+    if (!list?.length) return 0;
+    let i = Math.floor(Math.random() * list.length);
+    if (list.length > 1 && i === this.lastPick.get(name)) i = (i + 1) % list.length;
+    this.lastPick.set(name, i);
+    const src = this.ctx.createBufferSource();
+    src.buffer = list[i];
+    src.playbackRate.value = rate;
+    const g = this.gain(vol, dst);
+    src.connect(g);
+    src.onended = () => g.disconnect();
+    src.start(at);
+    return list[i].duration / rate;
   }
 
   resume() {
@@ -55,6 +107,11 @@ export class AudioEngine {
 
   setVolume(v: number) {
     this.master.gain.value = v;
+  }
+
+  // música e vinhetas (rodada, caixa, bebidas), separado dos efeitos
+  setMusicVolume(v: number) {
+    this.music.gain.value = 0.55 * v;
   }
 
   private get now() {
@@ -142,8 +199,28 @@ export class AudioEngine {
 
   // ---------- armas ----------
 
-  // Tiro sintetizado; cada família de arma tem seu timbre.
-  gunshot(pos?: THREE.Vector3, cls: 'pistol' | 'rifle' | 'smg' | 'shotgun' | 'magnum' = 'pistol') {
+  // Tiro em camadas: o estalo gravado de perto e o eco gravado de longe por cima do corpo e do soco
+  // grave sintetizados (o estalo gravado dura poucos milissegundos; o corpo dá o peso do tiro).
+  // Sem as gravações, o tiro é todo sintetizado.
+  gunshot(pos?: THREE.Vector3, cls: GunSound = 'pistol') {
+    const t = this.now;
+    const vol = pos ? 0.8 : 1;
+    const dst = pos ? this.out(pos, 6) : this.sfx;
+    const rate = R(0.96, 1.04);
+    const synth = cls === 'sniper' ? 'magnum' : cls;
+    if (this.sample(`gun-${cls}`, dst, vol, rate)) {
+      if (t - (this.tailT.get(cls) ?? -1) > 0.11) {
+        this.tailT.set(cls, t);
+        this.sample(`tail-${cls}`, dst, 0.45 * vol, rate);
+      }
+      this.synthShot(pos, synth, dst, true);
+      return;
+    }
+    this.synthShot(pos, synth);
+  }
+
+  // layer = só o corpo e o soco grave (para ir por baixo da gravação)
+  private synthShot(pos: THREE.Vector3 | undefined, cls: Exclude<GunSound, 'sniper'>, out?: AudioNode, layer = false) {
     const P = {
       pistol: { body: 0.9, decay: 0.22, crack: 0.55, thump: 1.0, thumpF: 140, tail: 0.22, lpEnd: 700 },
       rifle: { body: 1.0, decay: 0.26, crack: 0.85, thump: 1.1, thumpF: 120, tail: 0.32, lpEnd: 950 },
@@ -152,8 +229,8 @@ export class AudioEngine {
       magnum: { body: 1.25, decay: 0.36, crack: 1.0, thump: 1.5, thumpF: 105, tail: 0.5, lpEnd: 620 },
     }[cls];
     const t = this.now;
-    const dst = pos ? this.out(pos, 6) : this.shaper;
-    const vol = pos ? 0.8 : 1;
+    const dst = layer ? (pos ? out! : this.shaper) : pos ? this.out(pos, 6) : this.shaper;
+    const vol = (pos ? 0.8 : 1) * (layer ? 0.6 : 1);
 
     const body = this.noiseSrc(t, P.decay + 0.1);
     const lp = this.filter('lowpass', 4200, 0.7);
@@ -163,17 +240,18 @@ export class AudioEngine {
     this.env(g1, t, P.body * vol, 0.002, P.decay);
     body.connect(lp).connect(g1);
 
-    const crack = this.noiseSrc(t, 0.08);
-    const hp = this.filter('highpass', 2500, 0.8);
-    const g2 = this.gain(0, dst);
-    this.env(g2, t, P.crack * vol, 0.001, 0.05);
-    crack.connect(hp).connect(g2);
-
     const thump = this.osc('sine', P.thumpF, t, 0.25);
     thump.frequency.exponentialRampToValueAtTime(40, t + 0.16);
     const g3 = this.gain(0, dst);
     this.env(g3, t, P.thump * vol, 0.002, 0.2);
     thump.connect(g3);
+    if (layer) return;
+
+    const crack = this.noiseSrc(t, 0.08);
+    const hp = this.filter('highpass', 2500, 0.8);
+    const g2 = this.gain(0, dst);
+    this.env(g2, t, P.crack * vol, 0.001, 0.05);
+    crack.connect(hp).connect(g2);
 
     // eco da rua
     const tail = this.noiseSrc(t + 0.03, 1.2);
@@ -346,6 +424,7 @@ export class AudioEngine {
   }
 
   knifeHit() {
+    this.sample('flesh', this.sfx, 0.3, R(0.8, 0.95));
     const t = this.now;
     const o = this.osc('sine', 110, t, 0.15);
     o.frequency.exponentialRampToValueAtTime(45, t + 0.12);
@@ -365,6 +444,9 @@ export class AudioEngine {
   }
 
   footstep(surface: Surface, loud = 1) {
+    // a madeira gravada soa mais forte que o concreto e a terra
+    const lv = surface === 'wood' ? 0.05 : surface === 'dirt' ? 0.085 : 0.095;
+    if (this.sample(`step-${surface}`, this.sfx, R(0.85, 1.1) * lv * loud, R(0.92, 1.08))) return;
     const t = this.now;
     const s = this.noiseSrc(t, 0.12);
     const f = this.filter('lowpass', surface === 'wood' ? 750 : surface === 'dirt' ? 450 : 1100, surface === 'wood' ? 4 : 1);
@@ -437,8 +519,17 @@ export class AudioEngine {
     n.connect(nf).connect(ng);
   }
 
-  zombieGroan(pos: THREE.Vector3, kind: number) {
+  // Vozes dos zumbis: quem anda geme grave e arrastado; quem corre ou dispara rosna e grita, como no modo
+  // clássico. pitch = tom próprio de cada zumbi (cada um tem a sua voz).
+  zombieGroan(pos: THREE.Vector3, kind: number, pitch = 1) {
     if (this.groans >= 6) return;
+    const name = kind === 0 ? 'z-moan' : kind === 2 ? 'z-growl' : Math.random() < 0.6 ? 'z-growl' : 'z-moan';
+    const len = this.sample(name, this.out(pos, 2.5), kind === 0 ? 0.55 : 0.5, pitch * R(0.95, 1.05));
+    if (len) {
+      this.groans++;
+      setTimeout(() => this.groans--, len * 1000);
+      return;
+    }
     this.groans++;
     const dur = kind === 0 ? R(0.9, 1.6) : R(0.5, 1.0);
     const f0 = kind === 0 ? R(70, 110) : R(110, 170);
@@ -446,12 +537,14 @@ export class AudioEngine {
     setTimeout(() => this.groans--, dur * 1000);
   }
 
-  zombieAttack(pos: THREE.Vector3) {
+  zombieAttack(pos: THREE.Vector3, pitch = 1) {
+    if (this.sample('z-attack', this.out(pos, 2.5), 0.45, pitch * R(0.95, 1.08))) return;
     const f = R(150, 210);
     this.voice(pos, f, f * 0.65, 0.45, 0.9, 0.8);
   }
 
-  zombieDeath(pos: THREE.Vector3) {
+  zombieDeath(pos: THREE.Vector3, pitch = 1) {
+    if (this.sample('z-death', this.out(pos, 2.5), 0.42, pitch * R(0.95, 1.05))) return;
     const f = R(90, 130);
     this.voice(pos, f, f * 0.45, 0.8, 0.6, 0.4);
   }
@@ -919,6 +1012,10 @@ export class AudioEngine {
   }
 
   bodyHit(pos: THREE.Vector3, head: boolean) {
+    if (this.sample('flesh', this.out(pos, 3), head ? 0.07 : 0.05, R(0.9, 1.1) * (head ? 1.15 : 1))) {
+      if (head) this.click(900, 1.5, 0.05, 0.35, 0, pos);
+      return;
+    }
     this.click(head ? 700 : 400, 1.5, 0.08, head ? 0.6 : 0.4, 0, pos);
   }
 
@@ -948,6 +1045,10 @@ export class AudioEngine {
   boardBreak(pos: THREE.Vector3) {
     const t = this.now;
     const dst = this.out(pos, 3);
+    if (this.sample('board-break', dst, 0.42, R(0.9, 1.1))) {
+      for (let i = 0; i < 2; i++) this.click(R(1500, 3000), 3, 0.03, 0.2, R(0.02, 0.12), pos);
+      return;
+    }
     const s = this.noiseSrc(t, 0.25);
     const f = this.filter('bandpass', R(900, 1400), 1.2);
     const g = this.gain(0, dst);
@@ -964,6 +1065,8 @@ export class AudioEngine {
   boardFix(pos: THREE.Vector3) {
     const t = this.now;
     const dst = this.out(pos, 3);
+    // duas marteladas
+    if (this.sample('board-fix', dst, 0.7, R(0.95, 1.08)) && this.sample('board-fix', dst, 0.6, R(0.95, 1.08), t + 0.16)) return;
     for (const d of [0, 0.16]) {
       const o = this.osc('sine', R(180, 220), t + d, 0.12);
       o.frequency.exponentialRampToValueAtTime(90, t + d + 0.1);

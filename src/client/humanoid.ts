@@ -36,6 +36,37 @@ export interface HumanoidLook {
   bulk?: number;
 }
 
+// Sombra difusa no chão debaixo do personagem. O mapa de sombra do sol é calculado uma vez só
+// (o cenário não se mexe), então quem anda leva a própria mancha escura.
+let blobGeo: THREE.PlaneGeometry | null = null;
+let blobMat: THREE.MeshBasicMaterial | null = null;
+export function blobShadow(radius: number): THREE.Mesh {
+  if (!blobGeo) {
+    blobGeo = new THREE.PlaneGeometry(1, 1);
+    blobGeo.rotateX(-Math.PI / 2);
+  }
+  if (!blobMat) {
+    const c = document.createElement('canvas');
+    c.width = c.height = 64;
+    const ctx = c.getContext('2d')!;
+    const g = ctx.createRadialGradient(32, 32, 0, 32, 32, 32);
+    g.addColorStop(0, 'rgba(0,0,0,0.85)');
+    g.addColorStop(0.5, 'rgba(0,0,0,0.6)');
+    g.addColorStop(1, 'rgba(0,0,0,0)');
+    ctx.fillStyle = g;
+    ctx.fillRect(0, 0, 64, 64);
+    const map = new THREE.CanvasTexture(c);
+    map.colorSpace = THREE.SRGBColorSpace;
+    blobMat = new THREE.MeshBasicMaterial({ map, transparent: true, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2 });
+  }
+  const m = new THREE.Mesh(blobGeo, blobMat);
+  m.scale.set(radius * 2, 1, radius * 2);
+  m.position.y = 0.025;
+  m.renderOrder = -1;
+  m.name = 'blob';
+  return m;
+}
+
 const boxCache = new Map<string, THREE.BoxGeometry>();
 function boxGeo(w: number, h: number, d: number): THREE.BoxGeometry {
   const k = `${w.toFixed(3)},${h.toFixed(3)},${d.toFixed(3)}`;
@@ -65,6 +96,7 @@ export function buildHumanoid(look: HumanoidLook): Humanoid {
   const body = new THREE.Group();
   body.scale.setScalar(look.scale ?? 1);
   root.add(body);
+  root.add(blobShadow(0.48 * (look.scale ?? 1) * Math.sqrt(b)));
 
   const hips = new THREE.Group();
   hips.position.y = 0.92;

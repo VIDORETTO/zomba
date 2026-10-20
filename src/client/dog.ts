@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { DOGS } from '../shared/constants';
 import { clamp, lerp, mulberry32 } from '../shared/rng';
-import { flatMat, part } from './humanoid';
+import { flatMat, part, blobShadow } from './humanoid';
 import type { TexSet } from './textures';
 
 // Cão Infernal: corpo carbonizado com rachaduras em brasa, feito de caixas. Frente para +Z.
@@ -37,6 +37,7 @@ export function buildDog(look: number, tex: TexSet): DogRig {
   const hits: THREE.Mesh[] = [];
 
   const root = new THREE.Group();
+  root.add(blobShadow(0.55));
   const body = new THREE.Group();
   root.add(body);
   root.scale.setScalar(1.15 + r() * 0.13);

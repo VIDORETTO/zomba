@@ -177,6 +177,13 @@ function makeView(id: number, kind: ZombieKind, look: number, tex: TexSet): View
   return kind === 3 ? new DogView(id, look, tex) : new ZombieView(id, kind, look, tex);
 }
 
+// Tom da voz de cada zumbi (sai do sorteio da aparência); o Vulto, pequeno, tem a voz mais aguda.
+function voicePitch(v: View): number {
+  if (!(v instanceof ZombieView)) return 1;
+  if (v.kind === 5) return 1.35;
+  return 0.88 + (((v.look * 7919) >>> 0) % 100) / 100 * 0.24;
+}
+
 export class ZombieManager {
   readonly group = new THREE.Group();
   private readonly views = new Map<number, View>();
@@ -242,7 +249,7 @@ export class ZombieManager {
         if (v instanceof DogView) this.audio.dogBark(v.h.root.position);
         else if (v instanceof BossView) this.audio.bossRoar(v.h.root.position, 0.6);
         else if (v instanceof BispoView) this.audio.bispoVoice(v.h.root.position, 0.7);
-        else if (v) this.audio.zombieAttack(v.h.root.position);
+        else if (v) this.audio.zombieAttack(v.h.root.position, voicePitch(v));
         break;
       }
       case 'zrise':
@@ -311,7 +318,7 @@ export class ZombieManager {
         }
         if (e.sucked) {
           v.shrink = true;
-          this.audio.zombieDeath(v.h.root.position);
+          this.audio.zombieDeath(v.h.root.position, voicePitch(v));
           this.corpses.push(v);
           break;
         }
@@ -330,7 +337,7 @@ export class ZombieManager {
         else if (v instanceof BispoView) {
           v.rig.shield.visible = false;
           this.audio.bispoVoice(v.h.root.position, 1.4);
-        } else this.audio.zombieDeath(v.h.root.position);
+        } else this.audio.zombieDeath(v.h.root.position, voicePitch(v));
         this.corpses.push(v);
         if (this.corpses.length > 14) {
           const old = this.corpses.shift()!;
@@ -414,7 +421,7 @@ export class ZombieManager {
         if (v.h.root.position.distanceTo(listener) < 32) {
           if (dog) this.audio.dogGrowl(v.h.root.position);
           else if (v.kind === 5) this.audio.vultoHiss(v.h.root.position);
-          else this.audio.zombieGroan(v.h.root.position, v.kind);
+          else this.audio.zombieGroan(v.h.root.position, v.kind, voicePitch(v));
         }
       }
     }
@@ -659,6 +666,10 @@ export class ZombieManager {
   }
 
   private animateDeath(v: View, dt: number) {
+    if (v.deathT === 0) {
+      const blob = v.h.root.getObjectByName('blob');
+      if (blob) blob.visible = false;
+    }
     if (v instanceof DogView) {
       // queima e some em instantes
       v.deathT += dt;

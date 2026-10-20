@@ -97,17 +97,17 @@ export class PlayerController {
     const down = f.downed;
     if (down) this.crouched = false;
 
-    if (!frozen && !down && input.wasPressed('KeyC')) this.crouched = !this.crouched;
-    const wantCrouch = !frozen && !down && (this.crouched || input.isDown('ControlLeft'));
+    if (!frozen && !down && input.hit('crouch')) this.crouched = !this.crouched;
+    const wantCrouch = !frozen && !down && (this.crouched || input.held('crouchHold'));
     this.crouchT = lerp(this.crouchT, wantCrouch ? 1 : 0, 1 - Math.exp(-dt * 12));
 
     let fwd = 0;
     let str = 0;
     if (!frozen) {
-      if (input.isDown('KeyW')) fwd += 1;
-      if (input.isDown('KeyS')) fwd -= 1;
-      if (input.isDown('KeyD')) str += 1;
-      if (input.isDown('KeyA')) str -= 1;
+      if (input.held('forward')) fwd += 1;
+      if (input.held('back')) fwd -= 1;
+      if (input.held('right')) str += 1;
+      if (input.held('left')) str -= 1;
     }
     const sy = Math.sin(this.yaw);
     const cy = Math.cos(this.yaw);
@@ -120,7 +120,7 @@ export class PlayerController {
     }
 
     this.sprintLock = Math.max(0, this.sprintLock - dt);
-    const sprintKey = input.isDown('ShiftLeft') || input.isDown('ShiftRight');
+    const sprintKey = input.held('sprint');
     if (sprintKey && wantCrouch && fwd > 0) this.crouched = false;
     const canSprint = sprintKey && fwd > 0 && !down && !wantCrouch && !f.ads && !f.blockSprint && this.onGround && this.sprintLock <= 0;
     if (canSprint && this.stamina > 0) {
@@ -169,7 +169,7 @@ export class PlayerController {
       }
     }
 
-    if (!frozen && !down && input.wasPressed('Space') && this.onGround) {
+    if (!frozen && !down && input.hit('jump') && this.onGround) {
       if (this.crouchT > 0.5) {
         this.crouched = false;
       } else {

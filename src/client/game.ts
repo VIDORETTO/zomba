@@ -3,7 +3,7 @@ import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
 import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
-import { ShaderPass } from 'three/addons/postprocessing/ShaderPass.js';
+import type { ShaderPass } from 'three/addons/postprocessing/ShaderPass.js';
 import type { RunInput } from '../shared/board';
 import { BISPO, BLEEDOUT_TIME, PLAYER, PLAYER_COLORS, REVIVE_RANGE, TICK_DT } from '../shared/constants';
 import type { MapDef } from '../shared/map/types';
@@ -25,8 +25,8 @@ import { BoxView } from './boxView';
 import { ForgeView } from './forgeView';
 import { PowerupView, announce } from './powerupView';
 import { POWERUPS } from '../shared/powerups';
-import { BANK, rankOf } from '../shared/progress';
-import { bankBalance, bankChange, canDeposit, recordMatch } from './profile';
+import { BANK, MAX_LEVEL, rankOf, xpForLevel } from '../shared/progress';
+import { bankBalance, bankChange, canDeposit, recordMatch, type MatchResult } from './profile';
 import { emblemCanvas, animateEmblem } from './emblems';
 import { ENTRY_BOARDS, entryPoints } from '../shared/map/types';
 import { LOWER, QUALITY, QUALITY_LABEL, initialLevel, type GpuInfo, type QualityConfig, type QualitySetting } from './quality';
@@ -39,6 +39,10 @@ import { ZombieManager } from './zombies';
 import { BusView } from './busView';
 import { FogBanks, FoliageView } from './foliageView';
 import { Decals } from './decals';
+import { actionKey, loadKeys } from './keys';
+import { controlsEditor, isListening } from './controlsUi';
+import { gradePass } from './grade';
+import { freeScene } from './free';
 import { standingIn } from '../shared/busBody';
 
 export interface Settings {
@@ -46,7 +50,19 @@ export interface Settings {
   volume: number;
   fov: number;
   quality: QualitySetting;
+  // música e vinhetas (0..1), brilho da imagem (0.7..1.4) e eixo vertical do mouse invertido
+  music: number;
+  brightness: number;
+  invertY: boolean;
+  // teclas trocadas pelo jogador (ver keys.ts)
+  keys?: Partial<Record<string, string[]>>;
 }
+
+// Exposição de base do renderizador (o brilho das opções multiplica)
+export const EXPOSURE = 1.25;
+
+type PauseTab = 'jogo' | 'video' | 'audio' | 'controles';
+const PAUSE_TABS: [PauseTab, string][] = [['jogo', 'Jogo'], ['video', 'Vídeo'], ['audio', 'Áudio'], ['controles', 'Controles']];
 
 export interface GameOptions {
   renderer: THREE.WebGLRenderer;
@@ -60,6 +76,8 @@ export interface GameOptions {
   playerName: string;
   onSettings: (s: Settings) => void;
   onExit: () => void;
+  // "Jogar de novo" no fim de jogo (só no solo): volta direto para o mesmo mapa
+  onRestart?: () => void;
   // placar online (só com conta): manda a partida e devolve a mensagem para a tela de fim de jogo
   onlineRun?: (run: RunInput) => Promise<string>;
 }
@@ -196,12 +214,7 @@ export class Game {
     this.bloomPass = new UnrealBloomPass(new THREE.Vector2(512, 512), 0.55, 0.45, 0.82);
     this.composer.addPass(this.bloomPass);
     this.composer.addPass(new OutputPass());
-    this.gradePass = new ShaderPass(GRADE_SHADER);
-    // a Rota é mais fria e lavada (névoa); a Cidade mais quente e contrastada
-    const rota = !!o.map.fogRoadColor;
-    this.gradePass.uniforms.sat.value = rota ? 0.86 : 0.92;
-    this.gradePass.uniforms.contrast.value = rota ? 1.06 : 1.1;
-    this.gradePass.uniforms.shadowTint.value.set(rota ? 0.97 : 1.02, 1.0, rota ? 1.04 : 0.96);
+    this.gradePass = gradePass(o.map);
     this.composer.addPass(this.gradePass);
 
     this.pc = new PlayerController(this.world);
@@ -233,6 +246,9 @@ export class Game {
     this.input = new Input(this.renderer.domElement, AUTOPLAY);
     this.input.onUnlock = () => this.onUnlock();
     this.hud = new Hud(o.container);
+    this.input.keys = loadKeys(this.settings.keys);
+    this.hud.reloadKey = actionKey(this.input.keys, 'reload');
+    this.renderer.toneMappingExposure = EXPOSURE * (this.settings.brightness ?? 1);
     this.renderer.domElement.addEventListener('click', this.onCanvasClick);
 
     this.transport.onSnapshot = (s) => this.onSnapshot(s);
@@ -259,6 +275,17 @@ export class Game {
     this.input.lock();
     this.last = performance.now();
     this.raf = requestAnimationFrame(this.frame);
+  }
+
+  // Compila os shaders antes do primeiro quadro (sem isso o começo da partida dá um tranco).
+  async warmup() {
+    this.camera.position.set(this.pc.pos.x, this.pc.pos.y + PLAYER.eye, this.pc.pos.z);
+    try {
+      await this.renderer.compileAsync(this.scene, this.camera);
+      await this.renderer.compileAsync(this.weapon.scene, this.weapon.camera);
+    } catch {
+      // sem compilação antecipada: compila no primeiro quadro
+    }
   }
 
   // Configurações do renderizador que dependem da qualidade.
@@ -309,6 +336,11 @@ export class Game {
   private onCanvasClick = () => {
     if (!this.input.locked && !this.hud.overlayOpen && !this.over) this.input.lock();
   };
+
+  // tecla de "usar" escolhida pelo jogador, para os avisos na tela
+  private get useKey() {
+    return actionKey(this.input.keys, 'use');
+  }
 
   private get active() {
     return (this.input.locked || AUTOPLAY) && !this.over && !this.hud.overlayOpen;
@@ -452,7 +484,7 @@ export class Game {
             else this.weapon.raise();
             this.reviveTarget = null;
           } else {
-            this.hud.notify(`${this.nameOf(e.pid)} caiu! Reanime com <b>F</b>.`);
+            this.hud.notify(`${this.nameOf(e.pid)} caiu! Reanime com <b>${this.useKey}</b>.`);
           }
           break;
         case 'previve':
@@ -1136,7 +1168,7 @@ export class Game {
     }
 
     // no solo, o jogo só corre com o mouse capturado (pausa ao apertar Esc)
-    if (this.transport.solo) this.transport.paused = !this.input.locked && !this.over && !AUTOPLAY;
+    if (this.transport.solo) this.transport.paused = !this.over && (this.hud.overlayOpen || (!this.input.locked && !AUTOPLAY));
     this.transport.update(dt);
     const sample = this.buffer.sample(performance.now() - (this.transport.solo ? 70 : 110));
     this.zombies.update(sample, dt, this.camera.position);
@@ -1155,7 +1187,7 @@ export class Game {
     const life = this.me?.life ?? 'alive';
     const active = this.active;
     const look = this.input.mouse();
-    if (active) this.pc.look(look[0], look[1], this.settings.sensitivity * 0.0022 * (1 - this.weapon.ads * 0.35));
+    if (active) this.pc.look(look[0], look[1] * (this.settings.invertY ? -1 : 1), this.settings.sensitivity * 0.0022 * (1 - this.weapon.ads * 0.35));
 
     this.blockSprintT -= dt;
     this.pc.update(dt, this.input, {
@@ -1290,13 +1322,13 @@ export class Game {
         }
       }
     }
-    const want = target !== null && this.input.isDown('KeyF') && !this.weapon.busy ? target : null;
+    const want = target !== null && this.input.held('use') && !this.weapon.busy ? target : null;
     if (want !== this.repairEntry) {
       this.repairEntry = want;
       this.transport.send({ t: 'repair', entry: want });
     }
     if (target === null) return false;
-    this.hud.prompt(want !== null ? 'Consertando a barricada...' : 'Segure <b>F</b> para consertar a barricada <span class="price">+10</span>', want !== null ? (boards![target] ?? 0) / ENTRY_BOARDS : null);
+    this.hud.prompt(want !== null ? 'Consertando a barricada...' : `Segure <b>${this.useKey}</b> para consertar a barricada <span class="price">+10</span>`, want !== null ? (boards![target] ?? 0) / ENTRY_BOARDS : null);
     return true;
   }
 
@@ -1439,7 +1471,7 @@ export class Game {
     if (best.kind === 'door') {
       const d = this.o.map.doors.find((x) => x.id === best!.door)!;
       price = d.cost;
-      text = `Pressione <b>F</b> para abrir <b>${d.name}</b> <span class="price">${price}</span>`;
+      text = `Pressione <b>${this.useKey}</b> para abrir <b>${d.name}</b> <span class="price">${price}</span>`;
     } else if (best.kind === 'weapon') {
       const def = WEAPONS[best.weapon!];
       const upId = upgradeId(def.id);
@@ -1449,7 +1481,7 @@ export class Game {
           text = `Munição de <b>${WEAPONS[upId].name}</b> cheia`;
           can = false;
         } else {
-          text = `Pressione <b>F</b> para comprar munição de <b>${WEAPONS[upId].name}</b> <span class="price">${price}</span>`;
+          text = `Pressione <b>${this.useKey}</b> para comprar munição de <b>${WEAPONS[upId].name}</b> <span class="price">${price}</span>`;
         }
       } else if (me.weapons.includes(def.id)) {
         price = wallAmmoPrice(def.id);
@@ -1457,21 +1489,21 @@ export class Game {
           text = `Munição de <b>${def.name}</b> cheia`;
           can = false;
         } else {
-          text = `Pressione <b>F</b> para comprar munição de <b>${def.name}</b> <span class="price">${price}</span>`;
+          text = `Pressione <b>${this.useKey}</b> para comprar munição de <b>${def.name}</b> <span class="price">${price}</span>`;
         }
       } else {
         price = def.cost;
         const full = me.weapons.length >= 2 + (me.perks.includes('mula') ? 1 : 0);
-        text = `Pressione <b>F</b> para comprar <b>${def.name}</b> <span class="price">${price}</span>${full ? `<small>No lugar de: ${this.weapon.def.name}</small>` : ''}`;
+        text = `Pressione <b>${this.useKey}</b> para comprar <b>${def.name}</b> <span class="price">${price}</span>${full ? `<small>No lugar de: ${this.weapon.def.name}</small>` : ''}`;
       }
     } else if (best.kind === 'box') {
       const b = this.buffer.latest!.s.box;
       if (b.state === 'idle') {
         price = b.fireSale ? 10 : BOX.cost;
-        text = `Pressione <b>F</b> para girar a <b>Caixa Misteriosa</b> <span class="price">${price}</span>`;
+        text = `Pressione <b>${this.useKey}</b> para girar a <b>Caixa Misteriosa</b> <span class="price">${price}</span>`;
       } else if (b.state === 'offer' && b.pid === this.transport.localId && b.weapon) {
         const full = me.weapons.length >= 2 + (me.perks.includes('mula') ? 1 : 0);
-        text = `Pressione <b>F</b> para pegar <b>${WEAPONS[b.weapon]?.name ?? b.weapon}</b>${full ? `<small>No lugar de: ${this.weapon.def.name}</small>` : ''}`;
+        text = `Pressione <b>${this.useKey}</b> para pegar <b>${WEAPONS[b.weapon]?.name ?? b.weapon}</b>${full ? `<small>No lugar de: ${this.weapon.def.name}</small>` : ''}`;
       } else {
         return false;
       }
@@ -1483,13 +1515,13 @@ export class Game {
           text = `Banco cheio (limite de ${BANK.limit.toLocaleString('pt-BR')})`;
           can = false;
         } else {
-          text = `Pressione <b>F</b> para depositar <span class="price">${BANK.step}</span><small>Saldo guardado: ${bal.toLocaleString('pt-BR')}</small>`;
+          text = `Pressione <b>${this.useKey}</b> para depositar <span class="price">${BANK.step}</span><small>Saldo guardado: ${bal.toLocaleString('pt-BR')}</small>`;
         }
       } else if (bal < BANK.step) {
         text = `Saldo insuficiente para sacar (${bal.toLocaleString('pt-BR')})`;
         can = false;
       } else {
-        text = `Pressione <b>F</b> para sacar ${BANK.step} (taxa ${BANK.fee})<small>Saldo guardado: ${bal.toLocaleString('pt-BR')}</small>`;
+        text = `Pressione <b>${this.useKey}</b> para sacar ${BANK.step} (taxa ${BANK.fee})<small>Saldo guardado: ${bal.toLocaleString('pt-BR')}</small>`;
       }
     } else if (best.kind === 'sight') {
       const s = SIGHTS[best.sight!];
@@ -1503,12 +1535,12 @@ export class Game {
         can = false;
       } else {
         const old = me.sights[baseId(def.id)];
-        text = `Pressione <b>F</b> para instalar <b>${s.name}</b> <span class="price">${price}</span>${old ? `<small>Troca o ${SIGHTS[old].name}</small>` : `<small>Na arma da mão: ${def.name}</small>`}`;
+        text = `Pressione <b>${this.useKey}</b> para instalar <b>${s.name}</b> <span class="price">${price}</span>${old ? `<small>Troca o ${SIGHTS[old].name}</small>` : `<small>Na arma da mão: ${def.name}</small>`}`;
       }
     } else if (best.kind === 'candle') {
       const f = this.buffer.latest!.s.forge;
       if (f.on || f.candles[best.candle!]) return false;
-      text = 'Pressione <b>F</b> para acender a vela';
+      text = `Pressione <b>${this.useKey}</b> para acender a vela`;
     } else if (best.kind === 'ritual') {
       const r = this.buffer.latest?.s.ritual;
       if (!r || r.state !== 'idle' || r.candles[best.candle!]) return false;
@@ -1516,11 +1548,11 @@ export class Game {
         text = 'Uma vela preta, fria<small>Algo precisa queimar antes dela</small>';
         can = false;
       } else {
-        text = 'Pressione <b>F</b> para acender a <b>vela preta</b>';
+        text = `Pressione <b>${this.useKey}</b> para acender a <b>vela preta</b>`;
       }
     } else if (best.kind === 'power') {
       if (this.buffer.latest?.s.power) return false;
-      text = 'Pressione <b>F</b> para ligar a <b>energia</b><small>Acende as bebidas e abre o cofre da Forja</small>';
+      text = `Pressione <b>${this.useKey}</b> para ligar a <b>energia</b><small>Acende as bebidas e abre o cofre da Forja</small>`;
     } else if (best.kind === 'forge') {
       const f = this.buffer.latest!.s.forge;
       const def = this.weapon.def;
@@ -1528,7 +1560,7 @@ export class Game {
         text = this.o.map.forge.candles.length ? 'A Forja está fria. Acenda as três velas do cemitério.' : 'A Forja está fria. Ligue a energia na Usina.';
         can = false;
       } else if (f.state === 'ready' && f.pid === this.transport.localId && f.weapon) {
-        text = `Pressione <b>F</b> para pegar <b>${WEAPONS[f.weapon]?.name}</b>`;
+        text = `Pressione <b>${this.useKey}</b> para pegar <b>${WEAPONS[f.weapon]?.name}</b>`;
       } else if (f.state !== 'idle') {
         return false;
       } else if (def.upgraded || !WEAPONS[upgradeId(def.id)]) {
@@ -1539,7 +1571,7 @@ export class Game {
         can = false;
       } else {
         price = FORGE.cost;
-        text = `Pressione <b>F</b> para forjar a <b>${def.name}</b> <span class="price">${price}</span><small>Vira ${WEAPONS[upgradeId(def.id)].name}</small>`;
+        text = `Pressione <b>${this.useKey}</b> para forjar a <b>${def.name}</b> <span class="price">${price}</span><small>Vira ${WEAPONS[upgradeId(def.id)].name}</small>`;
       }
     } else if (best.kind === 'grenade') {
       price = GRENADE.cost;
@@ -1547,7 +1579,7 @@ export class Game {
         text = 'Granadas cheias';
         can = false;
       } else {
-        text = `Pressione <b>F</b> para comprar granadas <span class="price">${price}</span>`;
+        text = `Pressione <b>${this.useKey}</b> para comprar granadas <span class="price">${price}</span>`;
       }
     } else if (best.kind === 'knife') {
       price = KNIFE.heavyCost;
@@ -1555,7 +1587,7 @@ export class Game {
         text = 'Você já tem a faca pesada';
         can = false;
       } else {
-        text = `Pressione <b>F</b> para comprar a <b>faca pesada</b> <span class="price">${price}</span><small>Mata com um golpe até a rodada 4</small>`;
+        text = `Pressione <b>${this.useKey}</b> para comprar a <b>faca pesada</b> <span class="price">${price}</span><small>Mata com um golpe até a rodada 4</small>`;
       }
     } else if (best.kind === 'ammo') {
       price = ammoPrice(this.weapon.def.id) ?? 0;
@@ -1563,7 +1595,7 @@ export class Game {
         text = 'Munição cheia';
         can = false;
       } else {
-        text = `Pressione <b>F</b> para encher a munição <span class="price">${price}</span>`;
+        text = `Pressione <b>${this.useKey}</b> para encher a munição <span class="price">${price}</span>`;
       }
     } else {
       const d = PERKS[best.perk as PerkId];
@@ -1581,12 +1613,12 @@ export class Game {
         text = 'Segundo Fôlego esgotado nesta partida';
         can = false;
       } else {
-        text = `Pressione <b>F</b> para beber <b>${d.name}</b> <span class="price">${price}</span><small>${d.desc}</small>`;
+        text = `Pressione <b>${this.useKey}</b> para beber <b>${d.name}</b> <span class="price">${price}</span><small>${d.desc}</small>`;
       }
     }
     const poor = can && me.points < price;
     this.hud.prompt(text, null, poor);
-    if (can && this.input.wasPressed('KeyF') && !this.weapon.busy && this.buyPending <= 0) {
+    if (can && this.input.hit('use') && !this.weapon.busy && this.buyPending <= 0) {
       if (poor) {
         this.audio.deny();
       } else {
@@ -1633,14 +1665,14 @@ export class Game {
         }
       }
     }
-    const holding = !!target && this.input.isDown('KeyF');
+    const holding = !!target && this.input.held('use');
     const want = holding ? target!.id : null;
     if (want !== this.reviveTarget) {
       this.reviveTarget = want;
       this.transport.send({ t: 'revive', target: want });
     }
     if (target) {
-      this.hud.prompt(holding ? `Reanimando ${target.name}...` : `Segure <b>F</b> para reanimar ${target.name}`, holding ? target.revive : null);
+      this.hud.prompt(holding ? `Reanimando ${target.name}...` : `Segure <b>${this.useKey}</b> para reanimar ${target.name}`, holding ? target.revive : null);
       return true;
     }
     return false;
@@ -1725,49 +1757,168 @@ export class Game {
     this.showPause();
   }
 
+  // Menu de jogo (Esc): abas Jogo, Vídeo, Áudio e Controles. No solo a partida para; no co-op segue rodando.
   private showPause() {
+    // solta o mouse (com ele capturado, os cliques iriam para a tela do jogo, não para o menu)
+    this.input.unlock();
     this.transport.paused = true;
-    const s = this.settings;
+    const solo = this.transport.solo;
+    const snap = this.buffer.latest?.s;
+    const me = snap?.players.find((p) => p.id === this.transport.localId);
+    const mins = Math.floor(this.t / 60);
+    const secs = String(Math.floor(this.t % 60)).padStart(2, '0');
     const ov = this.hud.showOverlay(`
-      <div class="panel pause">
-        <h2>${this.transport.solo ? 'Pausado' : 'Menu'}</h2>
-        ${this.transport.solo ? '' : '<p class="muted">A partida continua rodando para os outros jogadores.</p>'}
-        <button class="btn primary" data-act="resume">Continuar</button>
-        <label class="slider">Sensibilidade do mouse <input type="range" min="0.2" max="3" step="0.05" value="${s.sensitivity}" data-set="sensitivity"><output>${s.sensitivity.toFixed(2)}</output></label>
-        <label class="slider">Campo de visão <input type="range" min="60" max="100" step="1" value="${s.fov}" data-set="fov"><output>${s.fov}</output></label>
-        <div class="quality">
-          <span>Qualidade gráfica</span>
-          <div class="seg">${(['auto', 'alta', 'media', 'baixa'] as QualitySetting[]).map((k) => `<button data-q="${k}" class="${s.quality === k ? 'on' : ''}">${QUALITY_LABEL[k]}</button>`).join('')}</div>
-          <small>Em uso: ${QUALITY_LABEL[this.q.level]} · resolução ${Math.round(this.scale * 100)}%</small>
-          <small class="gpu ${this.o.gpu.software ? 'bad' : ''}">${this.o.gpu.software ? 'Sem aceleração gráfica: ative a aceleração de hardware no navegador.' : 'Placa: ' + escapeHtml(this.o.gpu.renderer || 'desconhecida')}</small>
+      <div class="panel pause gm">
+        <div class="gm-head">
+          <h2>${solo ? 'Pausado' : 'Menu'}</h2>
+          <div class="gm-info"><b>${escapeHtml(this.o.map.name)}</b> · Rodada ${Math.max(1, snap?.round ?? 1)} · ${mins}:${secs}${me ? ` · ${me.points.toLocaleString('pt-BR')} pontos · ${me.kills} abates` : ''}</div>
         </div>
-        <label class="slider">Volume <input type="range" min="0" max="1" step="0.05" value="${s.volume}" data-set="volume"><output>${Math.round(s.volume * 100)}%</output></label>
-        <button class="btn ghost" data-act="exit">Sair para o menu</button>
+        ${solo ? '' : '<p class="muted gm-coop">A partida continua rodando para os outros jogadores.</p>'}
+        <div class="gm-tabs">${PAUSE_TABS.map(([id, label]) => `<button type="button" data-tab="${id}" class="${id === this.pauseTab ? 'on' : ''}">${label}</button>`).join('')}</div>
+        <div class="gm-body"></div>
+        <p class="gm-foot muted">Esc volta ao jogo</p>
       </div>`);
-    ov.querySelectorAll<HTMLInputElement>('input[data-set]').forEach((inp) => {
-      inp.addEventListener('input', () => {
-        const k = inp.dataset.set as 'sensitivity' | 'volume' | 'fov';
-        const v = Number(inp.value);
-        this.settings[k] = v;
-        inp.nextElementSibling!.textContent = k === 'volume' ? `${Math.round(v * 100)}%` : k === 'fov' ? String(v) : v.toFixed(2);
-        if (k === 'volume') this.audio.setVolume(v);
-        this.o.onSettings({ ...this.settings });
-      });
+    const body = ov.querySelector<HTMLElement>('.gm-body')!;
+    ov.querySelectorAll<HTMLButtonElement>('[data-tab]').forEach((t) => t.addEventListener('click', () => {
+      this.pauseTab = t.dataset.tab as PauseTab;
+      ov.querySelectorAll('[data-tab]').forEach((x) => x.classList.toggle('on', x === t));
+      this.renderPauseTab(body);
+    }));
+    this.renderPauseTab(body);
+    this.closePauseKeys();
+    this.pauseOpenedAt = performance.now();
+    window.addEventListener('keydown', this.onPauseKey);
+  }
+
+  private pauseTab: PauseTab = 'jogo';
+  // o Esc que abriu o menu (soltando o mouse) pode chegar também como tecla: não fecha o menu na hora
+  private pauseOpenedAt = 0;
+  private stopKeysEditor: (() => void) | null = null;
+
+  // Esc com o menu aberto volta ao jogo (menos enquanto o editor de teclas espera uma tecla)
+  private onPauseKey = (e: KeyboardEvent) => {
+    if (e.code !== 'Escape' || e.repeat || !this.hud.overlayOpen || this.over || performance.now() - this.pauseOpenedAt < 350) return;
+    const box = document.querySelector<HTMLElement>('.gm-body');
+    if (box && isListening(box)) return;
+    e.preventDefault();
+    void this.resume();
+  };
+
+  private closePauseKeys() {
+    window.removeEventListener('keydown', this.onPauseKey);
+    this.stopKeysEditor?.();
+    this.stopKeysEditor = null;
+  }
+
+  private async resume() {
+    this.closePauseKeys();
+    this.hud.hideOverlay();
+    this.transport.paused = false;
+    const ok = await this.input.lock();
+    // o navegador às vezes recusa capturar o mouse logo depois do Esc: o menu volta e o clique em Continuar resolve
+    if (!ok && !AUTOPLAY && !this.disposed && !this.over && !this.input.locked && !this.hud.overlayOpen) this.showPause();
+  }
+
+  private saveSettings() {
+    this.o.onSettings({ ...this.settings });
+  }
+
+  // controle deslizante ligado a uma opção numérica
+  private slider(box: HTMLElement, label: string, key: 'sensitivity' | 'fov' | 'volume' | 'music' | 'brightness', min: number, max: number, step: number, show: (v: number) => string, apply?: (v: number) => void) {
+    const el = document.createElement('label');
+    el.className = 'slider';
+    el.innerHTML = `${label} <input type="range" min="${min}" max="${max}" step="${step}" value="${this.settings[key]}"><output>${show(this.settings[key])}</output>`;
+    const inp = el.querySelector('input')!;
+    inp.addEventListener('input', () => {
+      const v = Number(inp.value);
+      this.settings[key] = v;
+      el.querySelector('output')!.textContent = show(v);
+      apply?.(v);
+      this.saveSettings();
     });
-    ov.querySelectorAll<HTMLButtonElement>('button[data-q]').forEach((b) => {
-      b.addEventListener('click', () => {
+    box.append(el);
+  }
+
+  private renderPauseTab(body: HTMLElement) {
+    this.stopKeysEditor?.();
+    this.stopKeysEditor = null;
+    body.innerHTML = '';
+    const pct = (v: number) => `${Math.round(v * 100)}%`;
+    const tab = this.pauseTab;
+    if (tab === 'jogo') {
+      const solo = this.transport.solo;
+      body.innerHTML = `
+        <div class="gm-actions">
+          <button class="btn primary" data-act="resume">Continuar</button>
+          ${solo && this.o.onRestart ? '<button class="btn" data-act="restart">Reiniciar partida</button>' : ''}
+          <button class="btn ghost" data-act="exit">${solo ? 'Sair para o menu' : 'Sair da partida'}</button>
+        </div>
+        <p class="gm-confirm muted"></p>`;
+      const confirm = body.querySelector<HTMLElement>('.gm-confirm')!;
+      // reiniciar e sair perdem a partida: pedem um segundo clique
+      const twice = (btn: HTMLButtonElement, msg: string, go: () => void) => {
+        let armed = false;
+        btn.addEventListener('click', () => {
+          if (armed) return go();
+          armed = true;
+          btn.classList.add('armed');
+          btn.textContent = 'Clique de novo para confirmar';
+          confirm.textContent = msg;
+        });
+      };
+      body.querySelector('[data-act="resume"]')!.addEventListener('click', () => void this.resume());
+      const restart = body.querySelector<HTMLButtonElement>('[data-act="restart"]');
+      if (restart) twice(restart, 'A partida atual termina sem contar no placar.', () => {
+        this.closePauseKeys();
+        this.o.onRestart?.();
+      });
+      twice(body.querySelector<HTMLButtonElement>('[data-act="exit"]')!, solo ? 'A partida atual termina sem contar no placar.' : 'Você sai da sala; os outros continuam jogando.', () => {
+        this.closePauseKeys();
+        this.o.onExit();
+      });
+      return;
+    }
+    if (tab === 'video') {
+      const q = document.createElement('div');
+      q.className = 'quality';
+      const used = () => `Em uso: ${QUALITY_LABEL[this.q.level]} · resolução ${Math.round(this.scale * 100)}%`;
+      q.innerHTML = `<span>Qualidade gráfica</span>
+        <div class="seg">${(['auto', 'alta', 'media', 'baixa'] as QualitySetting[]).map((k) => `<button type="button" data-q="${k}" class="${this.settings.quality === k ? 'on' : ''}">${QUALITY_LABEL[k]}</button>`).join('')}</div>
+        <small class="used">${used()}</small>
+        <small class="gpu ${this.o.gpu.software ? 'bad' : ''}">${this.o.gpu.software ? 'Sem aceleração gráfica: ative a aceleração de hardware no navegador.' : 'Placa: ' + escapeHtml(this.o.gpu.renderer || 'desconhecida')}</small>`;
+      q.querySelectorAll<HTMLButtonElement>('button[data-q]').forEach((b) => b.addEventListener('click', () => {
         this.setQuality(b.dataset.q as QualitySetting);
-        ov.querySelectorAll('button[data-q]').forEach((x) => x.classList.toggle('on', x === b));
-        const small = ov.querySelector('.quality small');
-        if (small) small.textContent = `Em uso: ${QUALITY_LABEL[this.q.level]} · resolução ${Math.round(this.scale * 100)}%`;
-      });
+        q.querySelectorAll('button[data-q]').forEach((x) => x.classList.toggle('on', x === b));
+        q.querySelector('.used')!.textContent = used();
+      }));
+      body.append(q);
+      this.slider(body, 'Campo de visão', 'fov', 60, 100, 1, (v) => String(v));
+      this.slider(body, 'Brilho', 'brightness', 0.7, 1.4, 0.05, pct, (v) => (this.renderer.toneMappingExposure = EXPOSURE * v));
+      return;
+    }
+    if (tab === 'audio') {
+      this.slider(body, 'Volume geral', 'volume', 0, 1, 0.05, pct, (v) => this.audio.setVolume(v));
+      this.slider(body, 'Música e vinhetas', 'music', 0, 1, 0.05, pct, (v) => this.audio.setMusicVolume(v));
+      return;
+    }
+    this.slider(body, 'Sensibilidade do mouse', 'sensitivity', 0.2, 3, 0.05, (v) => v.toFixed(2));
+    const inv = document.createElement('label');
+    inv.className = 'check';
+    inv.innerHTML = `<input type="checkbox" ${this.settings.invertY ? 'checked' : ''}> Inverter o mouse (para cima olha para baixo)`;
+    inv.querySelector('input')!.addEventListener('change', (e) => {
+      this.settings.invertY = (e.target as HTMLInputElement).checked;
+      this.saveSettings();
     });
-    ov.querySelector('[data-act="resume"]')!.addEventListener('click', () => {
-      this.hud.hideOverlay();
-      this.transport.paused = false;
-      this.input.lock();
+    body.append(inv);
+    const keysBox = document.createElement('div');
+    keysBox.className = 'keys-box';
+    body.append(keysBox);
+    this.stopKeysEditor = controlsEditor(keysBox, this.input.keys, (keys) => {
+      this.input.keys = keys;
+      this.hud.reloadKey = actionKey(keys, 'reload');
+      this.settings.keys = keys;
+      this.saveSettings();
     });
-    ov.querySelector('[data-act="exit"]')!.addEventListener('click', () => this.o.onExit());
   }
 
   private gameOver(round: number) {
@@ -1798,24 +1949,30 @@ export class Game {
           })
         : null;
       const players = [...(this.buffer.latest?.s.players ?? [])].sort((a, b) => b.points - a.points);
+      // destaque para quem mais matou (no co-op)
+      const mvp = players.length > 1 ? [...players].sort((a, b) => b.kills - a.kills || b.points - a.points)[0] : null;
+      const fmt = (n: number) => n.toLocaleString('pt-BR');
       const rows = players
-        .map((p) => `<tr style="color:${PLAYER_COLORS[p.slot % PLAYER_COLORS.length]}"><td>${escapeHtml(p.name)}</td><td>${p.points}</td><td>${p.kills}</td><td>${p.headshots}</td><td>${p.downs}</td><td>${p.revives}</td></tr>`)
+        .map((p) => `<tr class="${p === mvp ? 'mvp' : ''}" style="color:${PLAYER_COLORS[p.slot % PLAYER_COLORS.length]}"><td>${escapeHtml(p.name)}${p === mvp ? '<span class="mvp-tag">Melhor da partida</span>' : ''}</td><td>${fmt(p.points)}</td><td>${p.kills}</td><td>${p.headshots}</td><td>${p.downs}</td><td>${p.revives}</td></tr>`)
         .join('');
+      const mins = Math.floor(this.t / 60);
+      const secs = String(Math.floor(this.t % 60)).padStart(2, '0');
+      const restart = this.transport.solo && this.o.onRestart;
       const ov = this.hud.showOverlay(`
         <div class="panel gameover">
           <h1>FIM DE JOGO</h1>
-          <p class="survived">${players.length > 1 ? 'Vocês sobreviveram' : 'Você sobreviveu'} ${round} rodada${round === 1 ? '' : 's'}</p>
-          ${result ? `<div class="levelup"><span class="emb"></span><div><div class="xp-gain">+${result.xp.toLocaleString('pt-BR')} XP</div>${result.after.level > result.before.level ? `<div class="new-level">Novo nível ${result.after.level}: ${rankOf(result.after.level).name}</div>` : `<div class="muted">Nível ${result.after.level} · faltam ${(result.after.need - result.after.into).toLocaleString('pt-BR')} XP</div>`}${result.record ? '<div class="new-level">Novo recorde pessoal!</div>' : ''}</div></div>` : ''}
+          <p class="survived">${players.length > 1 ? 'Vocês sobreviveram' : 'Você sobreviveu'} ${round} rodada${round === 1 ? '' : 's'} <span class="muted">· ${mins}:${secs} de partida · ${escapeHtml(this.o.map.name)}</span></p>
+          ${result ? `<div class="levelup"><span class="emb"></span><div class="lvl-info"><div class="xp-gain">+<span class="xp-count">0</span> XP</div><div class="xp-bar"><i></i></div><div class="lvl-line muted"></div>${result.record ? '<div class="new-level">Novo recorde pessoal!</div>' : ''}</div></div>` : ''}
           <table><thead><tr><th>Nome</th><th>Pontos</th><th>Abates</th><th>Na cabeça</th><th>Quedas</th><th>Reanimações</th></tr></thead><tbody>${rows}</tbody></table>
           <p class="muted online-note"></p>
-          <button class="btn primary" data-act="exit">Voltar ao menu</button>
+          <div class="gameover-actions">
+            ${restart ? '<button class="btn primary" data-act="again">Jogar de novo</button>' : ''}
+            <button class="btn ${restart ? '' : 'primary'}" data-act="exit">Voltar ao menu</button>
+          </div>
         </div>`);
-      if (result) {
-        const c = emblemCanvas(result.after.level, 144);
-        ov.querySelector('.emb')!.append(c);
-        animateEmblem(c, result.after.level);
-      }
+      if (result) this.animateXp(ov, result);
       ov.querySelector('[data-act="exit"]')!.addEventListener('click', () => this.o.onExit());
+      ov.querySelector('[data-act="again"]')?.addEventListener('click', () => this.o.onRestart?.());
       // placar online
       const note = ov.querySelector<HTMLElement>('.online-note')!;
       if (me && this.o.onlineRun) {
@@ -1827,6 +1984,47 @@ export class Game {
         }).then((m) => (note.textContent = m), (err: Error) => (note.textContent = `Placar online: ${err.message}`));
       }
     }, 2200);
+  }
+
+  // XP do fim de jogo: o número sobe, a barra enche (passando de nível quantas vezes for) e o emblema troca.
+  private animateXp(ov: HTMLElement, result: MatchResult) {
+    const count = ov.querySelector<HTMLElement>('.xp-count')!;
+    const bar = ov.querySelector<HTMLElement>('.xp-bar i')!;
+    const line = ov.querySelector<HTMLElement>('.lvl-line')!;
+    const emb = ov.querySelector<HTMLElement>('.emb')!;
+    let shown = -1;
+    const badge = (level: number) => {
+      if (level === shown) return;
+      shown = level;
+      const c = emblemCanvas(level, 144);
+      emb.replaceChildren(c);
+      animateEmblem(c, level);
+    };
+    const paint = (gained: number) => {
+      let level = result.before.level;
+      let into = result.before.into + gained;
+      while (level < MAX_LEVEL && into >= xpForLevel(level)) into -= xpForLevel(level++);
+      const need = level >= MAX_LEVEL ? 0 : xpForLevel(level);
+      count.textContent = Math.round(gained).toLocaleString('pt-BR');
+      bar.style.width = need ? `${(into / need) * 100}%` : '100%';
+      if (level > shown && shown > 0) {
+        line.className = 'lvl-line new-level';
+        this.audio.forgeDone(this.camera.position);
+      }
+      if (level > result.before.level) line.textContent = `Novo nível ${level}: ${rankOf(level).name}`;
+      else line.textContent = need ? `Nível ${level} · faltam ${Math.ceil(need - into).toLocaleString('pt-BR')} XP` : 'Nível máximo';
+      badge(level);
+    };
+    paint(0);
+    const dur = Math.min(2600, 900 + result.xp / 4);
+    const t0 = performance.now() + 500;
+    const step = (now: number) => {
+      if (this.disposed) return;
+      const k = clamp((now - t0) / dur, 0, 1);
+      paint(result.xp * (1 - (1 - k) ** 3));
+      if (k < 1) requestAnimationFrame(step);
+    };
+    requestAnimationFrame(step);
   }
 
   connectionLost() {
@@ -1846,31 +2044,13 @@ export class Game {
     this.disposed = true;
     cancelAnimationFrame(this.raf);
     // libera da placa de vídeo tudo o que esta partida criou (as texturas do cenário ficam para a próxima)
-    const keep = new Set<THREE.Texture>(Object.values(this.o.tex).filter((t): t is THREE.Texture => t instanceof THREE.Texture));
-    const seen = new Set<object>();
-    const free = (root: THREE.Object3D) => root.traverse((obj) => {
-      // luzes com sombra guardam um mapa de sombra na placa
-      if (obj instanceof THREE.Light) obj.dispose();
-      const m = obj as THREE.Mesh;
-      if (m.geometry && !seen.has(m.geometry)) {
-        seen.add(m.geometry);
-        m.geometry.dispose();
-      }
-      const mats = m.material ? (Array.isArray(m.material) ? m.material : [m.material]) : [];
-      for (const mat of mats) {
-        if (seen.has(mat)) continue;
-        seen.add(mat);
-        for (const v of Object.values(mat)) if (v instanceof THREE.Texture && !keep.has(v)) v.dispose();
-        mat.dispose();
-      }
-    });
-    free(this.scene);
-    free(this.weapon.scene);
+    freeScene([this.scene, this.weapon.scene], this.o.tex);
     this.nadeGeo.dispose();
     this.renderer.renderLists.dispose();
 
     window.removeEventListener('resize', this.resize);
     window.removeEventListener('beforeunload', this.onBeforeUnload);
+    this.closePauseKeys();
     this.renderer.domElement.removeEventListener('click', this.onCanvasClick);
     this.input.unlock();
     this.input.dispose();
@@ -1895,42 +2075,8 @@ export class Game {
   }
 }
 
-// Acabamento da imagem, aplicado depois da conversão de cor: saturação, contraste, tom das sombras,
-// vinheta nas bordas e uma granulação de filme bem leve.
-const GRADE_SHADER = {
-  uniforms: {
-    tDiffuse: { value: null as THREE.Texture | null },
-    time: { value: 0 },
-    sat: { value: 0.92 },
-    contrast: { value: 1.1 },
-    shadowTint: { value: new THREE.Vector3(1.02, 1, 0.96) },
-    vignette: { value: 0.38 },
-    grain: { value: 0.035 },
-  },
-  vertexShader: /* glsl */ `
-    varying vec2 vUv;
-    void main() { vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }`,
-  fragmentShader: /* glsl */ `
-    uniform sampler2D tDiffuse; uniform float time; uniform float sat; uniform float contrast;
-    uniform vec3 shadowTint; uniform float vignette; uniform float grain;
-    varying vec2 vUv;
-    float hash(vec2 p) { return fract(sin(dot(p, vec2(12.9898, 78.233))) * 43758.5453); }
-    void main() {
-      vec3 c = texture2D(tDiffuse, vUv).rgb;
-      float l = dot(c, vec3(0.299, 0.587, 0.114));
-      c = mix(vec3(l), c, sat);
-      c = (c - 0.5) * contrast + 0.5;
-      // sombras puxadas para o tom do mapa, luzes intactas
-      c *= mix(shadowTint, vec3(1.0), smoothstep(0.0, 0.6, l));
-      vec2 d = vUv - 0.5;
-      c *= 1.0 - vignette * smoothstep(0.25, 0.85, dot(d, d) * 2.2);
-      c += (hash(vUv * 731.0 + fract(time * 13.0)) - 0.5) * grain;
-      gl_FragColor = vec4(clamp(c, 0.0, 1.0), 1.0);
-    }`,
-};
-
 function canThrowKey(input: Input) {
-  return input.wasPressed('KeyG');
+  return input.hit('grenade');
 }
 
 function escapeHtml(s: string) {

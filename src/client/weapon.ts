@@ -96,6 +96,8 @@ const PUMP = { start: 0.4, shell: 0.38, end: 0.3, rack: 0.45 };
 // mão longe da arma, buscando munição no colete
 const AWAY = new THREE.Vector3(-0.05, -0.32, 0.14);
 
+const WEAPON_KEYS = ['weapon1', 'weapon2', 'weapon3'] as const;
+
 export class WeaponView {
   readonly scene = new THREE.Scene();
   readonly camera = new THREE.PerspectiveCamera(52, 1, 0.01, 10);
@@ -835,21 +837,21 @@ export class WeaponView {
     const def = this.def;
 
     if (active) {
-      if (input.wasPressed('Mouse0') || (def.auto && input.isDown('Mouse0'))) this.shotBuffer = def.auto ? 0.05 : 0.2;
+      if (input.hit('fire') || (def.auto && input.held('fire'))) this.shotBuffer = def.auto ? 0.05 : 0.2;
       for (let k = 0; k < this.slots.length; k++) {
-        if (input.wasPressed(`Digit${k + 1}`) && this.state !== 'action') this.switchTo(this.slots[k].def.id);
+        if (input.hit(WEAPON_KEYS[k]) && this.state !== 'action') this.switchTo(this.slots[k].def.id);
       }
-      if ((input.wasPressed('WheelDown') || input.wasPressed('WheelUp')) && this.state !== 'action') this.cycle(input.wasPressed('WheelDown') ? 1 : -1);
+      if ((input.hit('nextWeapon') || input.hit('prevWeapon')) && this.state !== 'action') this.cycle(input.hit('nextWeapon') ? 1 : -1);
     }
-    const wantAds = active && input.isDown('Mouse2') && !this.busy && !pc.sprinting;
+    const wantAds = active && input.held('aim') && !this.busy && !pc.sprinting;
     this.ads = clamp(this.ads + (wantAds ? 1 : -1) * (dt / def.adsTime), 0, 1);
     this.sprintT = lerp(this.sprintT, pc.sprinting ? 1 : 0, 1 - Math.exp(-dt * 12));
 
-    if (active && (input.wasPressed('KeyV') || input.wasPressed('KeyE')) && this.state !== 'knife' && this.state !== 'raise' && this.state !== 'action' && this.state !== 'switch') {
+    if (active && input.hit('knife') && this.state !== 'knife' && this.state !== 'raise' && this.state !== 'action' && this.state !== 'switch') {
       this.setState('knife');
       this.cb.sound('knifeSwing');
     }
-    if (active && input.wasPressed('KeyR') && this.state === 'idle') this.startReload();
+    if (active && input.hit('reload') && this.state === 'idle') this.startReload();
     // escopeta de repetição: atirar interrompe a recarga (com pelo menos um cartucho dentro)
     if (active && this.state === 'reload' && this.slot.model.style === 'pump' && this.shotBuffer > 0 && this.ammo > 0) this.interruptReload();
 

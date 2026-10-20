@@ -36,7 +36,7 @@ export interface WeaponDef {
   // mira que já vem montada na arma
   optic?: SightKind;
   // timbre do tiro, quando difere da família
-  sound?: 'magnum';
+  sound?: 'magnum' | 'sniper';
   // quantos zumbis um tiro atravessa (fuzil de precisão)
   pierce?: number;
   // luneta: ao mirar, mostra a tela da luneta e aproxima mais
@@ -103,7 +103,7 @@ export const WEAPONS: Record<string, WeaponDef> = {
     reloadTime: 4.2, reloadEmptyTime: 4.6, range: 100, falloffStart: 40, minDamageMult: 0.6, adsTime: 0.3, recoil: 0.55,
   },
   sniper: {
-    ...base, id: 'sniper', name: 'Fuzil de precisão', source: 'wall', cls: 'rifle', cost: 2400,
+    ...base, id: 'sniper', name: 'Fuzil de precisão', source: 'wall', cls: 'rifle', cost: 2400, sound: 'sniper',
     damage: 500, headMult: 3, fireDelay: 1.1, auto: false, mag: 5, reserve: 40, pierce: 3, scope: true,
     reloadTime: 3.0, reloadEmptyTime: 3.4, range: 200, falloffStart: 200, minDamageMult: 1, adsTime: 0.28, recoil: 3,
   },

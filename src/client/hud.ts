@@ -215,7 +215,7 @@ export class Hud {
       const txt = String(p.points);
       const span = row.querySelector('.pts')!;
       if (span.textContent !== txt) span.textContent = txt;
-      row.classList.toggle('downed', p.life !== 'alive');
+      row.classList.toggle('fallen', p.life !== 'alive');
     }
   }
 
@@ -239,7 +239,7 @@ export class Hud {
     if (L.resLow !== resLow) this.ammoRes.classList.toggle('low', (L.resLow = resLow));
     let hint = '';
     if (mag === 0 && reserve === 0) hint = 'Sem munição';
-    else if (mag < magSize && mag <= Math.ceil(magSize * 0.25) && reserve > 0) hint = 'Pressione <b>R</b> para recarregar';
+    else if (mag < magSize && mag <= Math.ceil(magSize * 0.25) && reserve > 0) hint = `Pressione <b>${this.reloadKey}</b> para recarregar`;
     if (this.hint.innerHTML !== hint) this.hint.innerHTML = hint;
   }
 
@@ -419,15 +419,20 @@ export class Hud {
     setTimeout(() => this.intro.classList.add('fade'), 6500);
   }
 
+  // tecla de recarregar escolhida pelo jogador (para a dica de munição)
+  reloadKey = 'R';
+
   showOverlay(html: string): HTMLElement {
     this.overlay.innerHTML = html;
     this.overlay.classList.remove('hidden');
+    this.root.classList.add('menu-open');
     return this.overlay;
   }
 
   hideOverlay() {
     this.overlay.classList.add('hidden');
     this.overlay.innerHTML = '';
+    this.root.classList.remove('menu-open');
   }
 
   get overlayOpen() {

@@ -1,0 +1,22 @@
+Vozes dos zumbis (public/sfx/z-*.ogg) — três pacotes do OpenGameArt, todos CC0
+Conferido em: 2026-10-19
+Licença: CC0 (http://creativecommons.org/publicdomain/zero/1.0/) — uso livre, inclusive comercial, sem crédito obrigatório.
+
+1. "Zombies Sound Pack" — artisticdude
+   https://opengameart.org/content/zombies-sound-pack
+   Arquivo: https://opengameart.org/sites/default/files/zombies.zip
+   Página: "24 zombie sounds in the .wav format, created for the FOSS RPG Summoning Wars". Licença: CC0.
+
+2. "Zombie noises and moans" — ianzazz
+   https://opengameart.org/content/zombie-noises-and-moans
+   Arquivo: https://opengameart.org/sites/default/files/zombienoises.zip
+   Página: "Some zombie SFX I'm using for a game, you are free to use it for whatever :)". Licença: CC0.
+
+3. "Zombie moans" — Darsycho
+   https://opengameart.org/content/zombie-moans
+   Arquivo: https://opengameart.org/sites/default/files/darsycho__zombie-moans_0.ogg
+   Página: "Feel free to use for whatever, credit is appreciated!". Licença: CC0 (o crédito é pedido como gentileza
+   e está registrado em assets/LICENSES.md).
+
+Uso no Zomba: tools/build-sfx.mjs recorta, deixa os gemidos mais graves e converte para OGG
+(z-moan, z-growl, z-attack, z-death). Nenhum som do Black Ops 2 é usado: só o estilo serve de referência.

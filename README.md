@@ -40,6 +40,8 @@ O placar mora no mesmo servidor do co-op, no arquivo `data/placar.json` (ou na p
 
 ## Controles
 
+Teclas padrão. Todas podem ser trocadas em **Controles**, no menu principal ou no menu de jogo (Esc); setas também andam.
+
 | Tecla | Ação |
 | --- | --- |
 | W A S D | Andar |
@@ -54,7 +56,7 @@ O placar mora no mesmo servidor do co-op, no arquivo `data/placar.json` (ou na p
 | V ou E | Faca |
 | F | Comprar / abrir / usar (caixa, máquinas, paredes, velas, Forja) |
 | F (segurar) | Reanimar aliado caído ou consertar barricada |
-| Esc | Pausa e opções (sensibilidade, campo de visão, volume) |
+| Esc | Menu de jogo: continuar, reiniciar, sair; vídeo (qualidade, campo de visão, brilho), áudio (volume geral e da música) e controles (sensibilidade, mouse invertido, troca de teclas) |
 
 ## O que já tem
 
@@ -65,7 +67,7 @@ O placar mora no mesmo servidor do co-op, no arquivo `data/placar.json` (ou na p
 - Pontos: 10 por acerto, 60 por abate, 100 na cabeça e 130 na faca.
 - Vida que regenera, queda (caído, o jogador rasteja devagar e saca a pistola), reanimação por aliado (co-op), sangramento de 30 s e volta na rodada seguinte.
 - Mapa **Cidade**: cruzamento com fenda de lava (queima quem pisa), doze prédios em que se entra (banco, bar, hotel, cinema, igreja, correio, mercearia, farmácia, lanchonete, oficina, barbearia e armazém), cemitério e becos que formam voltas.
-- Áudio todo sintetizado (tiros, gemidos posicionais, passos por tipo de chão, música das rodadas, vento).
+- Áudio sintetizado (gemidos posicionais, música das rodadas, vento) com gravações CC0 para tiros, vozes dos zumbis, passos por tipo de chão, tábuas e impactos (`public/sfx`).
 - HUD: pontos com cor por jogador, munição, mira dinâmica, marcador de acerto, direção do dano, aliados caídos na tela e tela de fim de jogo com estatísticas.
 
 ### Fase 1 (pronta)
@@ -124,7 +126,8 @@ src/client/   o que o jogador vê e ouve
   game.ts       laço principal da partida
   weapon.ts     arma em primeira pessoa
   zombies.ts    zumbis na tela e suas animações
-  audio.ts      sons sintetizados
+  audio.ts      sons sintetizados e gravações (public/sfx)
+  menuScene.ts  fundo do menu: o mapa em 3D com a câmera passando devagar
 src/server/   servidor das salas do co-op
 tools/        testes automáticos com capturas de tela (usam o Chrome instalado)
 ```
@@ -132,6 +135,6 @@ tools/        testes automáticos com capturas de tela (usam o Chrome instalado)
 ## Testes
 
 - Regras (sem navegador): `npx tsx tools/test-sim.ts` e `npx tsx tools/test-board.ts` (placar online); co-op registrado no placar: `node tools/test-coop-board.mjs` (sobe um servidor de teste separado, leva uns 2 minutos)
-- No navegador, sem janela (com `npm run dev` rodando): `node tools/<teste>.mjs <pasta-de-capturas>`, com `test-buy`, `test-barricade`, `test-doors`, `test-weapons`, `test-box`, `test-powerups`, `test-forge`, `test-progress`, `test-reload`, `test-sights`, `test-hell`, `test-boss`, `test-rota`, `test-wonder`, `test-bispo`, `test-online`, `coop` e `firefox-sim` (os dois aceitam `rota` como segundo argumento para testar o mapa Rota). Para revisar animações: `tools/reload.mjs` (capturas da recarga em câmera lenta) `tools/dog-shot.mjs` e `tools/boss-shot.mjs` (Cão Infernal e Carrasco de perto) e `tools/sheet.mjs` (junta capturas numa folha), `tools/probe-hits.mjs` (dano e marcador de acerto de cada arma), `tools/guns-shot.mjs` (armas na mão) e `tools/forge-fx.mjs` (efeitos da Forja) e `tools/rota-tour.mjs` (fotos de cada parada do Rota), `tools/rota-look.mjs` (estrada, mata, milharal e um item visto de longe), `tools/polish-look.mjs <pasta> [mapa]` (menu, HUD em combate, zumbi de perto, caixa, máquina, pausa e fim de jogo), `tools/town-tour.mjs` (fotos de dentro de cada prédio da Cidade), `tools/bispo-shot.mjs` (o Bispo de perto) e `tools/view.mjs` (vistas avulsas). Para achar problemas: `tools/soak.mjs` (joga sozinho por minutos e mede memória, objetos e FPS), `tools/menu-cycle.mjs` (entra e sai de partidas e confere se nada fica preso na placa de vídeo), `tools/leak-probe.mjs` (confere se a partida anterior sai da memória) `npx tsx tools/map-info.ts` (resumo dos mapas), `npx tsx tools/rota-stats.ts` (vegetação do Rota e o que ficou em cima da estrada) e `npx tsx tools/passthru.ts [mapa]` (objetos na altura do corpo que não colidem).
+- No navegador, sem janela (com `npm run dev` rodando): `node tools/<teste>.mjs <pasta-de-capturas>`, com `test-buy`, `test-barricade`, `test-doors`, `test-weapons`, `test-box`, `test-powerups`, `test-forge`, `test-progress`, `test-reload`, `test-sights`, `test-hell`, `test-boss`, `test-rota`, `test-wonder`, `test-bispo`, `test-online`, `test-menu` (menu 3D, carregamento e jogar de novo), `test-pause` (menu de jogo com Esc, opções e troca de teclas), `test-sfx` (sons gravados; aceita `firefox`), `coop` e `firefox-sim` (os dois aceitam `rota` como segundo argumento para testar o mapa Rota). Para revisar animações: `tools/reload.mjs` (capturas da recarga em câmera lenta) `tools/dog-shot.mjs` e `tools/boss-shot.mjs` (Cão Infernal e Carrasco de perto) e `tools/sheet.mjs` (junta capturas numa folha), `tools/probe-hits.mjs` (dano e marcador de acerto de cada arma), `tools/guns-shot.mjs` (armas na mão) e `tools/forge-fx.mjs` (efeitos da Forja) e `tools/rota-tour.mjs` (fotos de cada parada do Rota), `tools/rota-look.mjs` (estrada, mata, milharal e um item visto de longe), `tools/polish-look.mjs <pasta> [mapa]` (menu, HUD em combate, zumbi de perto, caixa, máquina, pausa e fim de jogo), `tools/town-tour.mjs` (fotos de dentro de cada prédio da Cidade), `tools/bispo-shot.mjs` (o Bispo de perto) `tools/view.mjs` (vistas avulsas), `tools/menu-shots.mjs` (cada plano de câmera do fundo do menu e a tela de carregamento), `tools/crop.mjs` (amplia um pedaço de uma captura), `tools/menu-frame.mjs` (um instante de um plano do menu, sem os botões), `tools/feet-shot.mjs` (pés do zumbi mais perto), `tools/blob-count.mjs` (sombras dos personagens no fundo do menu), `tools/menu-controls-shot.mjs` (editor de teclas do menu principal), `tools/probe-pause-hit.mjs` (quem recebe o clique no menu de jogo) e `tools/sfx-levels.mjs` (volume de cada som gravado comparado com o sintetizado). Sons gravados: `tools/build-sfx.mjs` gera `public/sfx` a partir dos pacotes CC0 (ver `assets/LICENSES.md`). Para achar problemas: `tools/soak.mjs` (joga sozinho por minutos e mede memória, objetos e FPS), `tools/menu-cycle.mjs` (entra e sai de partidas e confere se nada fica preso na placa de vídeo), `tools/leak-probe.mjs` (confere se a partida anterior sai da memória), `tools/menu-leak.mjs` (troca o mapa do menu várias vezes e mede a placa de vídeo), `tools/probe-dead-hud.mjs` (posição dos pontos e da munição com o jogador caído) `npx tsx tools/map-info.ts` (resumo dos mapas), `npx tsx tools/rota-stats.ts` (vegetação do Rota e o que ficou em cima da estrada) e `npx tsx tools/passthru.ts [mapa]` (objetos na altura do corpo que não colidem).
 
 Em desenvolvimento a página **não recarrega sozinha** quando o código muda: atualize com F5 para ver as novidades.

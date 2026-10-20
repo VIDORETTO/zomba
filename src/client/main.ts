@@ -3,9 +3,12 @@ import { MAPS, getMap, isMapId } from '../shared/map';
 import type { LobbyPlayer } from '../shared/protocol';
 import { PLAYER_COLORS } from '../shared/constants';
 import { AudioEngine } from './audio';
-import { Game, type Settings } from './game';
+import { EXPOSURE, Game, type Settings } from './game';
+import { controlsEditor } from './controlsUi';
+import { loadKeys } from './keys';
 import { LocalTransport, NetClient, defaultServerUrl, type Transport } from './net';
-import { detectGpu } from './quality';
+import { QUALITY, detectGpu, initialLevel } from './quality';
+import { MenuScene } from './menuScene';
 import { buildTextures, type TexSet } from './textures';
 import { animateEmblem, emblemCanvas } from './emblems';
 import { allProfiles, bankBalance, favoriteWeapon, getProfile, levelOf, runs } from './profile';
@@ -33,7 +36,7 @@ function save(key: string, v: unknown) {
   }
 }
 
-let settings: Settings = load<Settings>('zomba.settings', { sensitivity: 1, volume: 0.8, fov: 75, quality: 'auto' });
+let settings: Settings = load<Settings>('zomba.settings', { sensitivity: 1, volume: 0.8, fov: 75, quality: 'auto', music: 1, brightness: 1, invertY: false });
 const prefs = load('zomba.prefs', { name: '', server: '', startRound: 1, mapId: 'cidade' as string });
 
 // Descobre a placa antes de criar o renderizador: sem aceleração, o antisserrilhado sai caro demais.
@@ -52,7 +55,7 @@ renderer.setSize(window.innerWidth, window.innerHeight);
 renderer.shadowMap.enabled = true;
 renderer.shadowMap.type = THREE.PCFShadowMap;
 renderer.toneMapping = THREE.ACESFilmicToneMapping;
-renderer.toneMappingExposure = 1.25;
+renderer.toneMappingExposure = EXPOSURE * (settings.brightness ?? 1);
 renderer.outputColorSpace = THREE.SRGBColorSpace;
 $('app').appendChild(renderer.domElement);
 
@@ -60,11 +63,44 @@ let tex: TexSet | null = null;
 let audio: AudioEngine | null = null;
 let game: Game | null = null;
 let net: NetClient | null = null;
+let menuBg: MenuScene | null = null;
+let menuBgTimer = 0;
+
+// Fundo do menu: o mapa escolhido em 3D. Sem aceleração gráfica fica só o fundo pintado.
+function startMenuBg(delay = 60) {
+  clearTimeout(menuBgTimer);
+  if (gpu.software || game) return;
+  menuBgTimer = window.setTimeout(() => {
+    if (game || $('menu').classList.contains('hidden')) return;
+    if (menuBg?.map.id === prefs.mapId) return;
+    menuBg?.dispose();
+    if (!tex) tex = buildTextures();
+    menuBg = new MenuScene(renderer, getMap(prefs.mapId), tex, QUALITY[initialLevel(settings.quality, gpu)]);
+    menuBg.start();
+    $('menu').classList.add('live');
+    if (import.meta.env.DEV) (window as unknown as { __menu: MenuScene }).__menu = menuBg;
+  }, delay);
+}
+function stopMenuBg() {
+  clearTimeout(menuBgTimer);
+  menuBg?.dispose();
+  menuBg = null;
+}
 
 const panels = ['panel-main', 'panel-coop', 'panel-lobby', 'panel-controls', 'panel-board'];
+let stopKeys: (() => void) | null = null;
 function show(id: string) {
   for (const p of panels) $(p).classList.toggle('hidden', p !== id);
-  document.querySelector('.menu-inner')!.classList.toggle('wide', id === 'panel-board');
+  stopKeys?.();
+  stopKeys = null;
+  if (id === 'panel-controls') {
+    stopKeys = controlsEditor($('controls-editor'), loadKeys(settings.keys), (keys) => {
+      settings.keys = keys;
+      save('zomba.settings', settings);
+    });
+  }
+  document.querySelector('.menu-inner')!.classList.toggle('wide', id === 'panel-board' || id === 'panel-controls');
+  $('map-card').classList.toggle('hidden', id !== 'panel-main' && id !== 'panel-coop');
   if (id === 'panel-main') refreshProfile();
 }
 
@@ -115,7 +151,10 @@ function setMap(id: string) {
   prefs.mapId = isMapId(id) ? id : 'cidade';
   save('zomba.prefs', prefs);
   renderMapChoice('map-choice', prefs.mapId, false, setMap);
-  $('map-desc').textContent = MAPS.find((m) => m.id === prefs.mapId)!.desc;
+  const m = MAPS.find((x) => x.id === prefs.mapId)!;
+  $('map-name').textContent = m.name;
+  $('map-desc').textContent = m.desc;
+  if (menuBg) startMenuBg(150);
 }
 setMap(prefs.mapId ?? 'cidade');
 
@@ -161,38 +200,91 @@ function ensureAudio(): AudioEngine {
   if (!audio) audio = safeAudio(new AudioEngine());
   audio.resume();
   audio.setVolume(settings.volume);
+  audio.setMusicVolume(settings.music ?? 1);
   return audio;
 }
 
-function startGame(transport: Transport, mapId: string) {
+const TIPS: { text: string; map?: string }[] = [
+  { text: 'Consertar barricadas dá pontos: segure F perto de uma janela quebrada.' },
+  { text: 'Tiro na cabeça mata mais rápido e vale 100 pontos no abate, contra 60 no corpo.' },
+  { text: 'Matar com a faca (V ou E) vale 130 pontos: ótimo nas primeiras rodadas.' },
+  { text: 'A Caixa sorteia uma arma por 950 pontos. Se aparecer o Corvo, ela muda de lugar.' },
+  { text: 'A Couraça aumenta sua vida de 100 para 250. Costuma ser a primeira bebida.' },
+  { text: 'No solo, o Segundo Fôlego custa só 500 pontos e deixa você levantar sozinho.' },
+  { text: 'A Forja deixa qualquer arma mais forte por 5.000 pontos.' },
+  { text: 'Com a Mula você carrega uma terceira arma.' },
+  { text: 'Os itens que caem dos zumbis piscam antes de sumir. Pegue logo.' },
+  { text: 'Na Liquidação, a Caixa custa só 10 pontos por 30 segundos.' },
+  { text: 'Você ganha 2 granadas (G) a cada rodada, até o máximo de 4.' },
+  { text: 'Na rodada dos cães, fique num canto: eles só chegam pela frente.' },
+  { text: 'Correr gasta fôlego. Ele volta enquanto você anda.' },
+  { text: 'Esc abre o menu: dá para trocar as teclas, o brilho e o volume da música no meio da partida.' },
+  { text: 'Pontos guardados no banco ficam para as próximas partidas.' },
+  { text: 'Ninguém sabe para que servem as velas pretas da Igreja.', map: 'cidade' },
+  { text: 'As bebidas só funcionam depois de ligar a energia na Usina.', map: 'rota' },
+  { text: 'Na névoa entre as paradas moram os Vultos. Vá de ônibus ou corra.', map: 'rota' },
+  { text: 'O painel no alto da tela mostra onde está o ônibus e quando ele sai.', map: 'rota' },
+];
+
+const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+// Tela de carregamento: monta o jogo em etapas para a barra andar, compila os shaders antes
+// do primeiro quadro e some num esmaecer.
+async function startGame(transport: Transport, mapId: string) {
   const map = getMap(mapId);
+  stopMenuBg();
   $('menu').classList.add('hidden');
-  $('loading').classList.remove('hidden');
-  // deixa o navegador desenhar a tela de carregamento antes do trabalho pesado
-  setTimeout(() => {
-    if (!tex) tex = buildTextures();
-    game = new Game({
-      renderer,
-      container: document.body,
-      transport,
-      map,
-      tex,
-      audio: ensureAudio(),
-      settings,
-      gpu,
-      playerName: playerName(),
-      onSettings: (s) => {
-        settings = s;
-        save('zomba.settings', s);
-      },
-      onExit: exitGame,
-      onlineRun: onlineRunFor(transport),
-    });
-    $('loading').classList.add('hidden');
-    game.start();
-    if (import.meta.env.DEV) (window as unknown as { __game: Game }).__game = game;
-  }, 30);
+  const ld = $('loading');
+  const bar = $('load-bar');
+  const tips = TIPS.filter((t) => !t.map || t.map === map.id);
+  $('load-map').textContent = map.name;
+  $('load-tip').textContent = tips[Math.floor(Math.random() * tips.length)].text;
+  bar.style.width = '8%';
+  ld.classList.remove('hidden', 'out');
+  const t0 = performance.now();
+  lostWhileLoading = false;
+  loading = true;
+  await wait(40);
+  if (!tex) tex = buildTextures();
+  bar.style.width = '35%';
+  await wait(40);
+  const g = new Game({
+    renderer,
+    container: document.body,
+    transport,
+    map,
+    tex,
+    audio: ensureAudio(),
+    settings,
+    gpu,
+    playerName: playerName(),
+    onSettings: (s) => {
+      settings = s;
+      save('zomba.settings', s);
+    },
+    onExit: exitGame,
+    onRestart: transport.solo ? () => {
+      exitGame(false);
+      startSolo();
+    } : undefined,
+    onlineRun: onlineRunFor(transport),
+  });
+  bar.style.width = '75%';
+  await wait(40);
+  await g.warmup();
+  bar.style.width = '100%';
+  // tempo mínimo para dar para ler a dica (o co-op já está rodando: espera menos)
+  await wait(Math.max(0, (transport.solo ? 1500 : 700) - (performance.now() - t0)));
+  loading = false;
+  game = g;
+  ld.classList.add('out');
+  setTimeout(() => ld.classList.add('hidden'), 650);
+  g.start();
+  if (lostWhileLoading) g.connectionLost();
+  if (import.meta.env.DEV) (window as unknown as { __game: Game }).__game = g;
 }
+let loading = false;
+let lostWhileLoading = false;
 
 // placar online: no solo o jogo envia a partida; no co-op o servidor já registrou
 function onlineRunFor(transport: Transport): ((run: RunInput) => Promise<string>) | undefined {
@@ -204,22 +296,25 @@ function onlineRunFor(transport: Transport): ((run: RunInput) => Promise<string>
 
 const apiUrl = () => apiBase(serverInput.value.trim() || defaultServerUrl());
 
-function exitGame() {
+function exitGame(toMenu = true) {
   game?.dispose();
   game = null;
   net?.close();
   net = null;
+  renderer.clear();
+  if (!toMenu) return;
   $('menu').classList.remove('hidden');
   show('panel-main');
-  renderer.clear();
+  startMenuBg();
 }
 
 // ---------- solo ----------
 
-$('btn-solo').addEventListener('click', () => {
+function startSolo() {
   ensureAudio();
   startGame(new LocalTransport(getMap(prefs.mapId), playerName(), { startRound: prefs.startRound, level: playerLevel(), bank: bankBalance(playerName()) }), prefs.mapId);
-});
+}
+$('btn-solo').addEventListener('click', startSolo);
 
 // ---------- co-op ----------
 
@@ -391,6 +486,7 @@ async function connect(): Promise<NetClient | null> {
     c.onClose = () => {
       net = null;
       if (game) game.connectionLost();
+      else if (loading) lostWhileLoading = true;
       else {
         show('panel-coop');
         $('coop-msg').textContent = 'Desconectado do servidor.';
@@ -452,6 +548,7 @@ $('lobby-round').addEventListener('input', () => {
 
 setRound(prefs.startRound ?? 1);
 refreshProfile();
+startMenuBg();
 $('btn-leave').addEventListener('click', () => {
   net?.close();
   net = null;

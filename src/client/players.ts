@@ -111,6 +111,8 @@ export class RemotePlayers {
     const amp = Math.min(1, v.speed / 5) * 0.7;
 
     h.root.rotation.order = 'YXZ';
+    const blob = h.root.getObjectByName('blob');
+    if (blob) blob.visible = p.life !== 'downed';
     if (p.life === 'downed') {
       h.root.rotation.x = 0;
       h.root.rotation.z = Math.PI / 2.3;

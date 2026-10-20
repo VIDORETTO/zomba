@@ -1,0 +1,11 @@
+The Free Firearm Sound Library
+Página: https://opengameart.org/content/the-free-firearm-sound-library
+Arquivo baixado: "Prepared SFX Library.7z" (https://opengameart.org/sites/default/files/Prepared%20SFX%20Library.7z)
+Conferido em: 2026-10-19
+
+Licença informada na página: CC0 (http://creativecommons.org/publicdomain/zero/1.0/)
+Declaração dos autores na página: "Our team holds CC0 NO RIGHTS RESERVED for this library."
+(Biblioteca gravada por um grupo de estudantes e financiada no Kickstarter em dezembro de 2013.)
+
+Uso no Zomba: trechos curtos de disparos (microfone perto e longe), recortados e convertidos para OGG
+por tools/build-sfx.mjs, em public/sfx/gun-*.ogg e public/sfx/tail-*.ogg.

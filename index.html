@@ -20,37 +20,34 @@
 
     <div id="menu" class="screen">
       <div class="menu-fog"></div>
+      <div class="menu-shade"></div>
       <div class="menu-inner">
-        <h1 class="logo">ZOMBA</h1>
-        <p class="tagline">Quantas rodadas você aguenta?</p>
+        <header class="brand">
+          <h1 class="logo">ZOMBA</h1>
+          <p class="tagline">Quantas rodadas você aguenta?</p>
+        </header>
 
         <div id="gpu-warning" class="warning hidden">
           <b>Seu navegador está sem aceleração gráfica.</b> O jogo vai rodar com qualidade reduzida.
           Para rodar liso, no Chrome abra <i>Configurações › Sistema</i>, ative
           <i>"Usar aceleração gráfica quando disponível"</i> e reinicie o navegador.
         </div>
-        <div id="panel-main" class="panel">
+        <div id="panel-main" class="panel main">
           <div class="profile-card">
             <canvas id="profile-emblem" width="112" height="112"></canvas>
             <div class="profile-info">
+              <input id="in-name" maxlength="16" autocomplete="off" placeholder="Seu nome" aria-label="Seu nome" spellcheck="false" />
               <div class="profile-rank" id="profile-rank">Nível 1 · Osso</div>
               <div class="xp-bar"><i id="profile-xp"></i></div>
               <div class="profile-sub" id="profile-sub"></div>
             </div>
           </div>
-          <label class="field">Seu nome<input id="in-name" maxlength="16" autocomplete="off" /></label>
-          <div class="field">Mapa
-            <div class="mapsel" id="map-choice"></div>
-            <small id="map-desc"></small>
-          </div>
-          <label class="field">Rodada inicial
-            <span class="field-row"><input id="in-round" type="range" min="1" max="100" value="1" /><output id="out-round">1</output></span>
-            <small id="round-points">Começa com 500 pontos</small>
-          </label>
-          <button id="btn-solo" class="btn primary">Solo</button>
-          <button id="btn-coop" class="btn">Co-op online (até 4)</button>
-          <button id="btn-board" class="btn">Placar</button>
-          <button id="btn-controls" class="btn ghost">Controles</button>
+          <nav class="menu-list">
+            <button id="btn-solo" class="mbtn primary">Jogar solo<small>Você contra a horda</small></button>
+            <button id="btn-coop" class="mbtn">Co-op online<small>Até 4 jogadores</small></button>
+            <button id="btn-board" class="mbtn">Placar<small>Recordes, jogadores e placar online</small></button>
+            <button id="btn-controls" class="mbtn">Controles</button>
+          </nav>
         </div>
 
         <div id="panel-coop" class="panel hidden">
@@ -104,28 +101,34 @@
         </div>
 
         <div id="panel-controls" class="panel hidden">
-          <table class="controls">
-            <tr><td>W A S D</td><td>Andar</td></tr>
-            <tr><td>Shift</td><td>Correr (fôlego limitado)</td></tr>
-            <tr><td>Espaço</td><td>Pular</td></tr>
-            <tr><td>C / Ctrl</td><td>Agachar (alternar / segurar)</td></tr>
-            <tr><td>Botão esquerdo</td><td>Atirar</td></tr>
-            <tr><td>Botão direito</td><td>Mirar</td></tr>
-            <tr><td>R</td><td>Recarregar</td></tr>
-            <tr><td>1 / 2 / 3 ou roda</td><td>Trocar de arma</td></tr>
-            <tr><td>G</td><td>Granada</td></tr>
-            <tr><td>V ou E</td><td>Faca</td></tr>
-            <tr><td>F</td><td>Comprar, abrir, usar</td></tr>
-            <tr><td>F (segurar)</td><td>Reanimar aliado, consertar barricada</td></tr>
-            <tr><td>Esc</td><td>Pausa e opções</td></tr>
-          </table>
+          <h3 class="panel-title">Controles</h3>
+          <div id="controls-editor" class="keys-box"></div>
+          <p class="muted">Sensibilidade, mouse invertido, brilho e volumes ficam no menu do jogo (Esc durante a partida).</p>
           <button class="btn ghost" data-back>Voltar</button>
         </div>
       </div>
-      <p class="build">protótipo 0.4</p>
+      <aside id="map-card" class="map-card">
+        <div class="map-label">Mapa</div>
+        <div class="map-name" id="map-name">Cidade</div>
+        <p class="map-desc" id="map-desc"></p>
+        <div class="mapsel" id="map-choice"></div>
+        <label class="field">Rodada inicial
+          <span class="field-row"><input id="in-round" type="range" min="1" max="100" value="1" /><output id="out-round">1</output></span>
+          <small id="round-points">Começa com 500 pontos</small>
+        </label>
+      </aside>
+      <p class="build">versão 0.5</p>
     </div>
 
-    <div id="loading" class="screen hidden"><div class="loading-text">Carregando a cidade…</div></div>
+    <div id="loading" class="screen hidden">
+      <div class="load-box">
+        <div class="load-label">Carregando</div>
+        <div class="load-map" id="load-map">Cidade</div>
+        <div class="load-sub" id="load-sub">Algum lugar no interior</div>
+        <div class="load-bar"><i id="load-bar"></i></div>
+        <p class="load-tip"><b>Dica</b><span id="load-tip"></span></p>
+      </div>
+    </div>
 
     <script type="module" src="/src/client/main.ts"></script>
   </body>

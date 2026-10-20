@@ -1,5 +1,9 @@
+import { DEFAULT_KEYS, type Action, type KeyMap } from './keys';
+
 // Estado de teclado e mouse por quadro. Códigos de tecla = KeyboardEvent.code; mouse = 'Mouse0'...
+// O jogo pergunta por ação (held/hit), e as teclas de cada ação vêm das opções do jogador.
 export class Input {
+  keys: KeyMap = DEFAULT_KEYS;
   private readonly down = new Set<string>();
   private readonly pressed = new Set<string>();
   private readonly released = new Set<string>();
@@ -73,13 +77,30 @@ export class Input {
     }
   };
 
-  lock() {
-    const p = this.el.requestPointerLock() as unknown as Promise<void> | undefined;
-    p?.catch?.(() => {});
+  // Captura o mouse. false = o navegador recusou (por exemplo, logo depois de soltar com Esc).
+  lock(): Promise<boolean> {
+    try {
+      const p = this.el.requestPointerLock() as unknown as Promise<void> | undefined;
+      if (p?.then) return p.then(() => true, () => false);
+    } catch {
+      return Promise.resolve(false);
+    }
+    // navegador antigo sem promessa: espera o aviso de captura
+    return new Promise((res) => setTimeout(() => res(document.pointerLockElement === this.el), 300));
   }
 
   unlock() {
     if (document.pointerLockElement) document.exitPointerLock();
+  }
+
+  // ação segurada / apertada neste quadro (vale a tecla principal ou a alternativa)
+  held(a: Action) {
+    const [p, s] = this.keys[a];
+    return (!!p && this.down.has(p)) || (!!s && this.down.has(s));
+  }
+  hit(a: Action) {
+    const [p, s] = this.keys[a];
+    return (!!p && this.pressed.has(p)) || (!!s && this.pressed.has(s));
   }
 
   isDown(code: string) {
