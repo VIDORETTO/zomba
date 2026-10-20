@@ -601,6 +601,16 @@ input:focus { border-color: var(--blood-bright); }
 .board-body .num { text-align: right; font-variant-numeric: tabular-nums; }
 #lobby-players li { display: flex; align-items: center; gap: 8px; }
 #lobby-players canvas { width: 30px; height: 30px; }
+#lobby-players .kick { margin-left: auto; padding: 4px 8px; font-size: 12px; font-weight: 600; }
+
+/* convite: link da sala no lobby */
+.invite-link { display: flex; gap: 8px; }
+.invite-link input { flex: 1; min-width: 0; font-size: 13px; color: var(--muted); }
+.invite-link .btn { flex: 0 0 auto; }
+.invite-link .btn.done { border-color: #5f9a5a; color: #8fd88a; }
+details.adv { text-align: left; font-size: 13px; color: var(--muted); }
+details.adv summary { cursor: pointer; padding: 2px 0; }
+details.adv[open] { display: flex; flex-direction: column; gap: 6px; }
 .levelup { display: flex; gap: 14px; align-items: center; justify-content: center; margin: 4px 0 10px; }
 .levelup canvas { width: 72px; height: 72px; }
 .levelup .xp-gain { font: 700 22px var(--serif); color: #f0c27a; }

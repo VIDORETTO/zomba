@@ -51,19 +51,30 @@
         </div>
 
         <div id="panel-coop" class="panel hidden">
-          <label class="field">Servidor<input id="in-server" autocomplete="off" /></label>
+          <div id="invite-box" class="lobby-code hidden">Convite para a sala <b id="invite-code"></b></div>
+          <label class="field">Seu nome<input id="in-coop-name" maxlength="16" autocomplete="off" placeholder="Sobrevivente" spellcheck="false" /></label>
+          <button id="btn-invite-join" class="btn primary hidden">Entrar na sala</button>
           <button id="btn-create" class="btn primary">Criar sala</button>
           <div class="row">
             <input id="in-code" placeholder="CÓDIGO" maxlength="4" autocomplete="off" />
             <button id="btn-join" class="btn">Entrar</button>
           </div>
           <p id="coop-msg" class="msg"></p>
+          <details class="adv" id="server-adv">
+            <summary>Servidor</summary>
+            <label class="field">Endereço do servidor<input id="in-server" autocomplete="off" spellcheck="false" /></label>
+            <small class="muted">Normalmente não precisa mexer: o jogo usa o servidor de onde foi aberto.</small>
+          </details>
           <button class="btn ghost" data-back>Voltar</button>
         </div>
 
         <div id="panel-lobby" class="panel hidden">
           <div class="lobby-code">Sala <b id="lobby-code"></b></div>
-          <p class="muted">Passe esse código para seus amigos.</p>
+          <div class="invite-link">
+            <input id="lobby-link" readonly aria-label="Link do convite" />
+            <button id="btn-copy-invite" class="btn">Copiar convite</button>
+          </div>
+          <p class="muted" id="lobby-invite-note">Mande o link para seus amigos: quem abrir já cai nesta sala.</p>
           <ul id="lobby-players"></ul>
           <div class="field">Mapa
             <div class="mapsel" id="lobby-map"></div>

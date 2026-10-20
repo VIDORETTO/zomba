@@ -18,14 +18,17 @@ Abra **http://localhost:5173** no Chrome, Edge ou Firefox e clique em **Solo**.
 
 ## Co-op
 
-1. Rode `npm run dev` no computador que vai hospedar.
-2. Quem hospeda clica em **Co-op online → Criar sala** e recebe um código de 4 letras.
-3. Os amigos abrem o jogo pelo endereço do computador que hospeda (o terminal mostra os endereços em `Network`, por exemplo `http://192.168.1.110:5173`), clicam em **Co-op online**, digitam o código e clicam em **Entrar**.
-4. O anfitrião clica em **Iniciar partida**.
+**Para jogar com amigos pela internet**, o jeito fácil: dê dois cliques em **`servidor/Iniciar servidor.bat`** (ou `npm run servidor`). Ele prepara o jogo, liga o servidor e abre um túnel seguro da Cloudflare (sem conta, sem abrir portas no roteador, sem mostrar seu IP). Aparece um link e o jogo abre no seu navegador: clique em **Criar sala → Copiar convite** e mande para os amigos. Quem abrir o convite cai direto na sala, sem instalar nada.
 
-Na mesma rede (Wi-Fi/cabo) funciona direto. Pela internet, a forma mais simples é todos entrarem na mesma rede do Tailscale e usarem o endereço do Tailscale; a outra opção é hospedar o servidor numa VPS.
+Ao ligar, ele pergunta o modo: **Cloudflare** (padrão, funciona em qualquer internet), **Direto** (sem Cloudflare: você é o servidor, com o menor atraso; o roteador precisa deixar a porta aberta e o iniciador tenta abrir sozinho pelo UPnP) ou **só rede local**. Para um link fixo e ligado o tempo todo, há um instalador de um comando para VPS.
 
-Versão "de produção" (um único servidor entrega o jogo e o co-op na porta 3001):
+Passo a passo de ligar, criar a sala, jogar e desligar: [`servidor/TUTORIAL.md`](servidor/TUTORIAL.md). Detalhes técnicos e segurança: [`servidor/LEIA-ME.md`](servidor/LEIA-ME.md).
+
+No lobby, o anfitrião vê o link do convite e pode **tirar** alguém da sala.
+
+Em desenvolvimento (`npm run dev`), na mesma rede: quem hospeda clica em **Co-op online → Criar sala**, e os amigos abrem o jogo pelo endereço `Network` do terminal (por exemplo `http://192.168.1.110:5173`) e entram pelo convite ou pelo código de 4 letras.
+
+Versão "de produção" sem túnel (um único servidor entrega o jogo e o co-op na porta 3001):
 
 ```bash
 npm run build
@@ -36,7 +39,7 @@ npm run server   # depois abra http://localhost:3001
 
 No menu, **Placar → Online**: digite nome e senha para entrar (se o nome for novo, a conta é criada). Com a conta conectada, cada partida solo é enviada no fim do jogo, e as de co-op o próprio servidor registra (aparecem com ✓, conferidas). O placar mostra a melhor partida de cada jogador por modo (solo/co-op), mapa e rodada inicial.
 
-O placar mora no mesmo servidor do co-op, no arquivo `data/placar.json` (ou na pasta indicada pela variável `ZOMBA_DATA`). As senhas não são guardadas, só um resumo delas (scrypt). Partidas impossíveis (rápidas demais, abates demais) são recusadas. Para o placar valer para todo mundo, o servidor precisa estar hospedado na internet (`npm run build` e `npm run server` numa VPS, guardando a pasta `data`).
+O placar mora no mesmo servidor do co-op, no arquivo `data/placar.json` (ou na pasta indicada pela variável `ZOMBA_DATA`). As senhas não são guardadas, só um resumo delas (scrypt). Partidas impossíveis (rápidas demais, abates demais) são recusadas. Para o placar valer para todo mundo o tempo todo, use o servidor fixo numa VPS (ver `servidor/LEIA-ME.md`).
 
 ## Controles
 
@@ -111,7 +114,7 @@ Escolha **Rota** no menu (ou no lobby do co-op). Cinco paradas ligadas por uma e
 
 ## Próximos passos
 
-O planejamento completo está no documento de planejamento do projeto. As Fases 1, 2 e 3 estão prontas. O próximo passo grande é hospedar o servidor na internet, para o co-op e o placar online funcionarem entre amigos sem estar na mesma rede.
+O planejamento completo está no documento de planejamento do projeto. As Fases 1, 2 e 3 estão prontas. O servidor para jogar com amigos pela internet está pronto (pasta `servidor/`).
 
 ## Estrutura
 
@@ -128,7 +131,8 @@ src/client/   o que o jogador vê e ouve
   zombies.ts    zumbis na tela e suas animações
   audio.ts      sons sintetizados e gravações (public/sfx)
   menuScene.ts  fundo do menu: o mapa em 3D com a câmera passando devagar
-src/server/   servidor das salas do co-op
+src/server/   servidor das salas do co-op (guard.ts: proteções)
+servidor/     ligar o servidor em um clique (túnel) ou numa VPS (Docker + HTTPS)
 tools/        testes automáticos com capturas de tela (usam o Chrome instalado)
 ```
 

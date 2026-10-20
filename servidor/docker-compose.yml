@@ -1,0 +1,42 @@
+# Servidor fixo do Zomba numa VPS, com HTTPS automático (Caddy pega e renova o certificado sozinho).
+# O instalador (servidor/vps/instalar.sh) cria o arquivo servidor/.env com o DOMINIO e sobe tudo.
+name: zomba
+
+services:
+  jogo:
+    build:
+      context: ..
+      dockerfile: servidor/Dockerfile
+    restart: unless-stopped
+    environment:
+      # atrás do Caddy: o endereço real de quem conecta vem no cabeçalho dele
+      ZOMBA_PROXY: "1"
+      ZOMBA_PUBLIC_URL: https://${DOMINIO:?defina DOMINIO no arquivo servidor/.env}
+    volumes:
+      - placar:/data
+    # o contêiner não pode mudar nada fora do placar, nem ganhar privilégios
+    read_only: true
+    tmpfs: [/tmp]
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    expose: ["3001"]
+
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    depends_on: [jogo]
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    environment:
+      DOMINIO: ${DOMINIO}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+
+volumes:
+  placar:
+  caddy_data:
+  caddy_config:

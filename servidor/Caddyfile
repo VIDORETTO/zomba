@@ -1,0 +1,6 @@
+# HTTPS automático para o domínio do servidor (Let's Encrypt, com ZeroSSL de reserva)
+{$DOMINIO} {
+	encode zstd gzip
+	reverse_proxy jogo:3001
+	header -Server
+}

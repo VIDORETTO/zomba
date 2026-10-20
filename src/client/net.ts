@@ -69,6 +69,10 @@ export class NetClient implements Transport {
   onStarted: (() => void) | null = null;
   onError: ((msg: string) => void) | null = null;
   onClose: (() => void) | null = null;
+  // tirado da sala pelo anfitrião, ou sala fechada (a conexão continua aberta)
+  onLeft: ((msg: string) => void) | null = null;
+  // endereço público do servidor, para o convite (null: o servidor não sabe)
+  publicUrl: string | null = null;
   paused = false;
   ping = 0;
   private pingTimer: ReturnType<typeof setInterval> | null = null;
@@ -92,14 +96,19 @@ export class NetClient implements Transport {
         reject(new Error('Endereço do servidor inválido.'));
         return;
       }
-      const fail = () => reject(new Error('Não foi possível conectar ao servidor.'));
+      // o servidor pode recusar a conexão com um motivo (cheio, endereço errado) antes do welcome
+      let refused = '';
+      const fail = () => reject(new Error(refused || 'Não foi possível conectar ao servidor.'));
       ws.onerror = fail;
+      ws.onclose = fail;
       ws.onmessage = (ev) => {
         const m = JSON.parse(String(ev.data)) as ServerMsg;
+        if (m.t === 'error') refused = m.msg;
         if (m.t !== 'welcome') return;
         ws.onerror = null;
         const c = new NetClient(ws);
         c.localId = m.id;
+        c.publicUrl = m.url ?? null;
         resolve(c);
       };
     });
@@ -128,6 +137,9 @@ export class NetClient implements Transport {
       case 'error':
         this.onError?.(m.msg);
         break;
+      case 'left':
+        this.onLeft?.(m.msg);
+        break;
       case 'pong':
         this.ping = performance.now() - m.n;
         break;
@@ -149,6 +161,10 @@ export class NetClient implements Transport {
 
   start() {
     this.raw({ t: 'start' });
+  }
+
+  kick(id: string) {
+    this.raw({ t: 'kick', id });
   }
 
   send(m: PlayerInput) {

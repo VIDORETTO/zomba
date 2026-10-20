@@ -91,6 +91,7 @@ const panels = ['panel-main', 'panel-coop', 'panel-lobby', 'panel-controls', 'pa
 let stopKeys: (() => void) | null = null;
 function show(id: string) {
   for (const p of panels) $(p).classList.toggle('hidden', p !== id);
+  if (id === 'panel-coop') coopName.value = nameInput.value;
   stopKeys?.();
   stopKeys = null;
   if (id === 'panel-controls') {
@@ -165,6 +166,12 @@ function playerLevel() {
 const nameInput = $<HTMLInputElement>('in-name');
 nameInput.value = prefs.name;
 nameInput.addEventListener('input', () => refreshProfile());
+// o nome também fica na tela do co-op (quem chega por convite ou pelo iniciador do servidor não passa pelo menu)
+const coopName = $<HTMLInputElement>('in-coop-name');
+coopName.addEventListener('input', () => {
+  nameInput.value = coopName.value;
+  playerName();
+});
 const serverInput = $<HTMLInputElement>('in-server');
 serverInput.value = prefs.server || defaultServerUrl();
 
@@ -482,6 +489,10 @@ async function connect(): Promise<NetClient | null> {
       $('coop-msg').textContent = m;
       $('lobby-msg').textContent = m;
     };
+    c.onLeft = (m) => {
+      show('panel-coop');
+      $('coop-msg').textContent = m;
+    };
     c.onStarted = () => startGame(c, c.mapId);
     c.onClose = () => {
       net = null;
@@ -495,16 +506,85 @@ async function connect(): Promise<NetClient | null> {
     $('coop-msg').textContent = '';
     return c;
   } catch (e) {
-    $('coop-msg').textContent = `${(e as Error).message} Verifique se o servidor está rodando (npm run dev).`;
+    $('coop-msg').textContent = `${(e as Error).message} Verifique se o servidor está ligado.`;
     return null;
   }
 }
 
+// ---------- convite por link ----------
+// O link é o endereço do servidor com #sala=CÓDIGO: quem abre já cai na tela de entrar nessa sala.
+
+function inviteLink(code: string) {
+  const base = net?.publicUrl || location.origin;
+  return `${base.replace(/\/+$/, '')}/#sala=${code}`;
+}
+
+let invitedCode: string | null = null;
+function showInvite(code: string | null) {
+  invitedCode = code;
+  $('invite-box').classList.toggle('hidden', !code);
+  $('btn-invite-join').classList.toggle('hidden', !code);
+  $('btn-create').classList.toggle('hidden', !!code);
+  document.querySelector('#panel-coop > .row')!.classList.toggle('hidden', !!code);
+  if (!code) return;
+  $('invite-code').textContent = code;
+  show('panel-coop');
+  // o mapa quem escolhe é o anfitrião
+  $('map-card').classList.add('hidden');
+  $('coop-msg').textContent = '';
+}
+
+// lê o convite do endereço e limpa (atualizar a página depois não tenta entrar de novo)
+{
+  const m = /(?:^|[#&?])sala=([A-Za-z]{4})(?![A-Za-z])/.exec(location.hash + '&' + location.search.slice(1));
+  // o iniciador do servidor abre o jogo de quem hospeda direto no co-op
+  const host = location.hash === '#criar';
+  if (m || host) history.replaceState(null, '', location.pathname);
+  if (m) showInvite(m[1].toUpperCase());
+  else if (host) show('panel-coop');
+}
+
+$('btn-invite-join').addEventListener('click', async () => {
+  if (!invitedCode) return;
+  ensureAudio();
+  const code = invitedCode;
+  const c = await connect();
+  c?.join(code, playerName(), playerLevel(), getAccount()?.token, bankBalance(playerName()));
+});
+
+$('btn-copy-invite').addEventListener('click', () => {
+  const input = $<HTMLInputElement>('lobby-link');
+  const btn = $('btn-copy-invite');
+  // copia na hora, ainda dentro do clique (funciona também sem https); se não der, tenta a área de
+  // transferência nova. O link fica selecionado para um Ctrl+C, se nada funcionar.
+  input.select();
+  let copied = false;
+  try {
+    copied = document.execCommand('copy');
+  } catch {
+    copied = false;
+  }
+  if (!copied) navigator.clipboard?.writeText(input.value).catch(() => {});
+  btn.textContent = 'Copiado!';
+  btn.classList.add('done');
+  setTimeout(() => {
+    btn.textContent = 'Copiar convite';
+    btn.classList.remove('done');
+  }, 2000);
+});
+
 let lobbyMap = 'cidade';
 function renderLobby(code: string, hostId: string, players: LobbyPlayer[], startRound: number, mapId: string) {
   lobbyMap = mapId;
+  if (invitedCode) showInvite(null);
   show('panel-lobby');
   $('lobby-code').textContent = code;
+  const link = inviteLink(code);
+  $<HTMLInputElement>('lobby-link').value = link;
+  $('lobby-invite-note').textContent = /^https?:\/\/(localhost|127\.)/.test(link)
+    ? 'Esse link só abre neste computador. Para jogar pela internet, ligue o servidor com "Iniciar servidor" (pasta servidor).'
+    : 'Mande o link para seus amigos: quem abrir já cai nesta sala.';
+  const isHost = net?.localId === hostId;
   const ul = $('lobby-players');
   ul.innerHTML = '';
   for (const p of [...players].sort((a, b) => a.slot - b.slot)) {
@@ -513,9 +593,16 @@ function renderLobby(code: string, hostId: string, players: LobbyPlayer[], start
     const c = emblemCanvas(p.level, 60);
     li.append(c, `${p.name} · Nv ${p.level}${p.id === hostId ? '  (anfitrião)' : ''}${p.id === net?.localId ? '  — você' : ''}`);
     animateEmblem(c, p.level);
+    if (isHost && p.id !== net?.localId) {
+      const kick = document.createElement('button');
+      kick.className = 'btn ghost kick';
+      kick.textContent = 'Tirar';
+      kick.title = `Tirar ${p.name} da sala`;
+      kick.addEventListener('click', () => net?.kick(p.id));
+      li.appendChild(kick);
+    }
     ul.appendChild(li);
   }
-  const isHost = net?.localId === hostId;
   const lr = $<HTMLInputElement>('lobby-round');
   lr.value = String(startRound);
   lr.disabled = !isHost;

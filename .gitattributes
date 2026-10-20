@@ -1,0 +1,5 @@
+# arquivos que precisam de quebra de linha fixa para rodar
+*.bat text eol=crlf
+*.sh text eol=lf
+servidor/Dockerfile text eol=lf
+servidor/Caddyfile text eol=lf

@@ -1,0 +1,8 @@
+.git
+node_modules
+dist
+data
+tools
+servidor/bin
+servidor/.env
+*.log

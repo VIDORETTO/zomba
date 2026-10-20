@@ -187,10 +187,15 @@ export type ClientMsg =
   | { t: 'join'; code: string; name: string; level: number; token?: string; bank?: number }
   | { t: 'config'; startRound: number; mapId: string }
   | { t: 'start' }
+  // anfitrião tira um jogador do lobby
+  | { t: 'kick'; id: string }
   | { t: 'ping'; n: number };
 
 export type ServerMsg =
-  | { t: 'welcome'; id: string }
+  // url = endereço público do servidor (vai no convite), se ele souber
+  | { t: 'welcome'; id: string; url?: string }
+  // saiu da sala sem querer: tirado pelo anfitrião ou sala fechada
+  | { t: 'left'; msg: string }
   | { t: 'lobby'; code: string; hostId: string; players: LobbyPlayer[]; startRound: number; mapId: string }
   | { t: 'started'; mapId: string; you: string }
   | { t: 'snap'; s: Snapshot }

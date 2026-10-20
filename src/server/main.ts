@@ -7,6 +7,7 @@ import { MAPS, getMap, isMapId } from '../shared/map';
 import { BOARD, checkRun } from '../shared/board';
 import { BANK } from '../shared/progress';
 import { Board } from './board';
+import { Gauge, PAGE_HEADERS, Window, originOk, peerOf } from './guard';
 import type { ClientMsg, ServerMsg } from '../shared/protocol';
 import { GameSim } from '../shared/sim';
 
@@ -20,6 +21,9 @@ interface Client {
   room: Room | null;
   // conta do placar online (nome), se o jogador entrou nela
   account: string | null;
+  // endereço de quem conectou; local = o próprio computador do servidor
+  ip: string;
+  local: boolean;
 }
 
 interface Room {
@@ -33,42 +37,50 @@ interface Room {
   mapId: string;
   startedAt: number;
   recorded: boolean;
+  createdAt: number;
+  // endereços tirados da sala pelo anfitrião (não voltam para ela)
+  banned: Set<string>;
 }
 
 const PORT = Number(process.env.PORT ?? NET_PORT);
+// HOST=127.0.0.1 deixa o servidor só para este computador (e para o túnel), fora da rede local
+const HOST = process.env.HOST || undefined;
+// endereço público (link do túnel ou domínio), que vai nos convites; o iniciador (servidor/iniciar.mjs)
+// avisa pelo canal interno quando o túnel muda de link
+let publicUrl = (process.env.ZOMBA_PUBLIC_URL ?? '').trim().replace(/\/+$/, '') || null;
 const DIST = resolve(process.cwd(), 'dist');
 const rooms = new Map<string, Room>();
 let nextId = 1;
 // placar online: arquivo na pasta data/ (ou na indicada em ZOMBA_DATA)
 const board = new Board(process.env.ZOMBA_DATA ?? resolve(process.cwd(), 'data'));
-for (const sig of ['SIGINT', 'SIGTERM'] as const) {
-  process.on(sig, () => {
-    board.flush();
-    process.exit(0);
-  });
+function shutdown() {
+  board.flush();
+  process.exit(0);
 }
+for (const sig of ['SIGINT', 'SIGTERM'] as const) process.on(sig, shutdown);
+// canal com o iniciador: link novo do túnel, ou desligar guardando o placar
+process.on('message', (m: { publicUrl?: unknown; stop?: unknown }) => {
+  if (m?.stop) shutdown();
+  if (typeof m?.publicUrl === 'string' && /^https?:\/\//.test(m.publicUrl)) {
+    publicUrl = m.publicUrl.replace(/\/+$/, '');
+    console.log(`Link público: ${publicUrl}`);
+  }
+});
+// o iniciador fechou (janela fechada): desliga junto
+process.on('disconnect', shutdown);
 const mapIds = MAPS.map((m) => m.id);
 
 // ---------- placar online (HTTP) ----------
 // POST /api/conta {name, pass}: entra (ou cria a conta) e devolve o token
 // POST /api/partida {token, run}: guarda uma partida solo
 // GET /api/placar?modo=solo|coop&inicio=zero|custom&mapa=cidade|rota e GET /api/jogadores
-const posts = new Map<string, number[]>();
-function limited(ip: string) {
-  const now = Date.now();
-  const list = (posts.get(ip) ?? []).filter((t) => now - t < 60000);
-  list.push(now);
-  posts.set(ip, list);
-  return list.length > BOARD.ratePerMinute;
-}
-// esquece os endereços que não mandam nada há mais de um minuto
-setInterval(() => {
-  const now = Date.now();
-  for (const [ip, list] of posts) if (!list.some((t) => now - t < 60000)) posts.delete(ip);
-}, 60000).unref();
+// GET /api/info: o servidor está no ar e qual é o endereço público (o iniciador espera por ele)
+const posts = new Window(60000, BOARD.ratePerMinute);
 
 function reply(res: ServerResponse, status: number, body: unknown) {
   res.writeHead(status, {
+    ...PAGE_HEADERS,
+    'cache-control': 'no-store',
     'content-type': 'application/json; charset=utf-8',
     'access-control-allow-origin': '*',
     'access-control-allow-headers': 'content-type',
@@ -107,8 +119,9 @@ async function api(req: IncomingMessage, res: ServerResponse, path: string, quer
     return reply(res, 200, { runs: board.top(mode, start, map) });
   }
   if (req.method === 'GET' && path === '/api/jogadores') return reply(res, 200, { players: board.players() });
+  if (req.method === 'GET' && path === '/api/info') return reply(res, 200, { ok: true, game: 'zomba', publicUrl });
   if (req.method !== 'POST') return reply(res, 404, { error: 'Não encontrado.' });
-  if (limited(req.socket.remoteAddress ?? '?')) return reply(res, 429, { error: 'Muitos envios. Espere um minuto.' });
+  if (posts.hit(peerOf(req).ip)) return reply(res, 429, { error: 'Muitos envios. Espere um minuto.' });
   let body: Record<string, unknown>;
   try {
     body = (await readBody(req)) as Record<string, unknown>;
@@ -200,8 +213,11 @@ const http = createServer((req, res) => {
     if (!res.headersSent) res.writeHead(404);
     res.end();
   });
+  // arquivos com o resumo no nome (assets/) nunca mudam; a página vem sempre nova, para pegar a versão atual
+  const cache = file.startsWith(join(DIST, 'assets') + sep) ? 'public, max-age=31536000, immutable'
+    : extname(file) === '.html' ? 'no-cache' : 'public, max-age=3600';
   stream.once('open', () => {
-    res.writeHead(200, { 'content-type': MIME[extname(file)] ?? 'application/octet-stream' });
+    res.writeHead(200, { ...PAGE_HEADERS, 'cache-control': cache, 'content-type': MIME[extname(file)] ?? 'application/octet-stream' });
     stream.pipe(res);
   });
 });
@@ -227,6 +243,15 @@ setInterval(() => {
 
 // mensagens por segundo que um jogador pode mandar (o jogo manda umas 40; o resto é ignorado)
 const MSG_PER_SECOND = 200;
+// limites para ninguém lotar o servidor: conexões por endereço e no total, salas abertas
+const MAX_CONN_PER_IP = 8;
+const MAX_CONN = 400;
+const MAX_ROOMS = 100;
+// sala esperando no lobby por mais que isto fecha sozinha
+const LOBBY_MAX_MS = 3 * 3600 * 1000;
+const conns = new Gauge();
+// códigos errados por endereço: depois de 12 em um minuto, espera (ninguém fica chutando códigos)
+const wrongCodes = new Window(60000, 12);
 
 function send(c: Client, msg: ServerMsg) {
   if (c.ws.readyState === WebSocket.OPEN) c.ws.send(JSON.stringify(msg));
@@ -264,6 +289,16 @@ function freeSlot(room: Room): number {
   for (let i = 0; i < MAX_PLAYERS; i++) if (!used.has(i)) return i;
   return -1;
 }
+
+// fecha as salas esquecidas no lobby
+setInterval(() => {
+  const now = Date.now();
+  for (const room of rooms.values()) {
+    if (room.sim || now - room.createdAt < LOBBY_MAX_MS) continue;
+    broadcast(room, { t: 'left', msg: 'A sala ficou parada tempo demais e foi fechada.' });
+    closeRoom(room);
+  }
+}, 60000).unref();
 
 function closeRoom(room: Room) {
   if (room.timer) clearInterval(room.timer);
@@ -320,13 +355,21 @@ const cleanBank = (n: unknown) => Math.max(0, Math.min(BANK.limit, Math.floor(Nu
 const cleanRound = (n: unknown) => Math.max(1, Math.min(100, Math.floor(Number(n) || 1)));
 const cleanName = (n: unknown) => String(n ?? '').replace(/[^\p{L}\p{N} _-]/gu, '').trim().slice(0, 16) || 'Jogador';
 
-wss.on('connection', (ws) => {
-  const c: Client = { id: `p${nextId++}`, ws, name: 'Jogador', slot: 0, level: 1, bank: 0, room: null, account: null };
-  send(c, { t: 'welcome', id: c.id });
+wss.on('connection', (ws, req) => {
+  const peer = peerOf(req);
+  ws.on('error', (err) => console.error('[ws] erro na conexão:', err.message));
+  const refuse = (msg: string) => {
+    ws.send(JSON.stringify({ t: 'error', msg } satisfies ServerMsg));
+    ws.close(1008);
+  };
+  if (!originOk(req)) return refuse('Conexão recusada: abra o jogo pelo endereço do próprio servidor.');
+  if (conns.total >= MAX_CONN) return refuse('Servidor cheio. Tente de novo daqui a pouco.');
+  if (!peer.local && conns.count(peer.ip) >= MAX_CONN_PER_IP) return refuse('Conexões demais deste endereço.');
+  conns.add(peer.ip);
+  const c: Client = { id: `p${nextId++}`, ws, name: 'Jogador', slot: 0, level: 1, bank: 0, room: null, account: null, ip: peer.ip, local: peer.local };
+  send(c, { t: 'welcome', id: c.id, url: publicUrl ?? undefined });
   awake.set(ws, true);
   ws.on('pong', () => awake.set(ws, true));
-  // sem isto, um erro na conexão (mensagem grande demais, quadro inválido) derruba o servidor inteiro
-  ws.on('error', (err) => console.error(`[${c.id}] erro na conexão:`, err.message));
   let windowStart = Date.now();
   let inWindow = 0;
 
@@ -349,6 +392,7 @@ wss.on('connection', (ws) => {
         send(c, { t: 'pong', n: msg.n });
         return;
       case 'create': {
+        if (rooms.size >= MAX_ROOMS) return send(c, { t: 'error', msg: 'O servidor está com salas demais. Tente de novo daqui a pouco.' });
         leave(c);
         c.name = cleanName(msg.name);
         c.level = cleanLevel(msg.level);
@@ -357,6 +401,7 @@ wss.on('connection', (ws) => {
         c.slot = 0;
         const room: Room = {
           code: newCode(), hostId: c.id, clients: new Map([[c.id, c]]), sim: null, timer: null, endAt: 0, startedAt: 0, recorded: false,
+          createdAt: Date.now(), banned: new Set(),
           startRound: cleanRound(msg.startRound),
           mapId: isMapId(msg.mapId) ? msg.mapId : 'cidade',
         };
@@ -367,8 +412,13 @@ wss.on('connection', (ws) => {
         return;
       }
       case 'join': {
+        if (!c.local && wrongCodes.over(c.ip)) return send(c, { t: 'error', msg: 'Muitos códigos errados. Espere um minuto.' });
         const room = rooms.get(String(msg.code ?? '').toUpperCase().trim());
-        if (!room) return send(c, { t: 'error', msg: 'Sala não encontrada.' });
+        if (!room) {
+          if (!c.local) wrongCodes.hit(c.ip);
+          return send(c, { t: 'error', msg: 'Sala não encontrada. Confira o código ou peça um convite novo.' });
+        }
+        if (room.banned.has(c.ip)) return send(c, { t: 'error', msg: 'O anfitrião tirou você desta sala.' });
         if (room.sim) return send(c, { t: 'error', msg: 'A partida dessa sala já começou.' });
         const slot = freeSlot(room);
         if (slot < 0) return send(c, { t: 'error', msg: 'Sala cheia (máximo 4).' });
@@ -392,6 +442,18 @@ wss.on('connection', (ws) => {
         }
         return;
       }
+      case 'kick': {
+        // o anfitrião tira alguém do lobby (por exemplo, um desconhecido que achou o código)
+        const room = c.room;
+        const target = room?.clients.get(String(msg.id));
+        if (!room || room.hostId !== c.id || room.sim || !target || target === c) return;
+        // não bane o endereço do anfitrião (outra aba dele, ou todos atrás da mesma rede)
+        if (target.ip !== c.ip) room.banned.add(target.ip);
+        send(target, { t: 'left', msg: 'O anfitrião tirou você da sala.' });
+        leave(target);
+        console.log(`[sala ${room.code}] ${target.name} foi tirado da sala`);
+        return;
+      }
       case 'start': {
         const room = c.room;
         if (room && room.hostId === c.id && !room.sim) startRoom(room);
@@ -407,9 +469,12 @@ wss.on('connection', (ws) => {
     }
   });
 
-  ws.on('close', () => leave(c));
+  ws.on('close', () => {
+    conns.remove(c.ip);
+    leave(c);
+  });
 });
 
-http.listen(PORT, () => {
-  console.log(`Servidor Zomba ouvindo na porta ${PORT}`);
+http.listen(PORT, HOST, () => {
+  console.log(`Servidor Zomba ouvindo na porta ${PORT}${HOST ? ` (${HOST})` : ''}`);
 });
