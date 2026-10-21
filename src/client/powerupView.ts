@@ -10,6 +10,24 @@ function iconTexture(kind: PowerupKind): THREE.Texture {
   ctx.fillStyle = d.color;
   ctx.strokeStyle = 'rgba(0,0,0,0.6)';
   ctx.lineWidth = 6;
+  if (kind === 'sangue') {
+    // gota de sangue
+    ctx.beginPath();
+    ctx.moveTo(64, 14);
+    ctx.bezierCurveTo(98, 56, 108, 74, 100, 92);
+    ctx.bezierCurveTo(92, 114, 36, 114, 28, 92);
+    ctx.bezierCurveTo(20, 74, 30, 56, 64, 14);
+    ctx.closePath();
+    ctx.stroke();
+    ctx.fill();
+    ctx.fillStyle = 'rgba(255,255,255,0.35)';
+    ctx.beginPath();
+    ctx.ellipse(48, 82, 7, 14, 0.4, 0, Math.PI * 2);
+    ctx.fill();
+    const t = new THREE.CanvasTexture(c);
+    t.colorSpace = THREE.SRGBColorSpace;
+    return t;
+  }
   ctx.font = "900 72px 'Segoe UI Symbol', 'Segoe UI', Georgia, sans-serif";
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
@@ -79,6 +97,8 @@ export class PowerupView {
   private readonly glowMat: THREE.SpriteMaterial;
   private readonly beamMat: THREE.MeshBasicMaterial;
   private readonly ringMat: THREE.MeshBasicMaterial;
+  // Sangue Morto brilha em vermelho
+  private readonly red: { glow: THREE.SpriteMaterial; beam: THREE.MeshBasicMaterial; ring: THREE.MeshBasicMaterial };
   private readonly geo = new THREE.PlaneGeometry(1.05, 1.05);
   private readonly beamGeo = new THREE.CylinderGeometry(0.32, 0.32, 16, 12, 1, true).translate(0, 8, 0);
   private readonly ringGeo = new THREE.PlaneGeometry(2.6, 2.6).rotateX(-Math.PI / 2);
@@ -91,6 +111,15 @@ export class PowerupView {
     this.glowMat = new THREE.SpriteMaterial({ map: glowTexture(), color: green, blending: THREE.AdditiveBlending, depthWrite: false, transparent: true });
     this.beamMat = new THREE.MeshBasicMaterial({ map: beamTexture(), color: green, blending: THREE.AdditiveBlending, transparent: true, depthWrite: false, side: THREE.DoubleSide, fog: false, opacity: 0.55 });
     this.ringMat = new THREE.MeshBasicMaterial({ map: ringTexture(), color: green, blending: THREE.AdditiveBlending, transparent: true, depthWrite: false, opacity: 0.8 });
+    const redC = new THREE.Color(1.6, 0.12, 0.1);
+    this.red = {
+      glow: this.glowMat.clone(),
+      beam: this.beamMat.clone(),
+      ring: this.ringMat.clone(),
+    };
+    this.red.glow.color.copy(redC);
+    this.red.beam.color.copy(redC);
+    this.red.ring.color.copy(redC);
     scene.add(this.group);
   }
 
@@ -112,9 +141,10 @@ export class PowerupView {
       if (!it) {
         const g = new THREE.Group();
         const icon = new THREE.Mesh(this.geo, this.mat(p.kind));
-        const glow = new THREE.Sprite(this.glowMat);
-        const beam = new THREE.Mesh(this.beamGeo, this.beamMat);
-        const ring = new THREE.Mesh(this.ringGeo, this.ringMat);
+        const tint = p.kind === 'sangue' ? this.red : null;
+        const glow = new THREE.Sprite(tint ? tint.glow : this.glowMat);
+        const beam = new THREE.Mesh(this.beamGeo, tint ? tint.beam : this.beamMat);
+        const ring = new THREE.Mesh(this.ringGeo, tint ? tint.ring : this.ringMat);
         ring.position.y = 0.04;
         beam.renderOrder = 2;
         g.add(beam, ring, icon, glow);
@@ -146,7 +176,7 @@ export class PowerupView {
 
   dispose() {
     this.group.removeFromParent();
-    for (const m of [...this.mats.values(), this.glowMat, this.beamMat, this.ringMat]) {
+    for (const m of [...this.mats.values(), this.glowMat, this.beamMat, this.ringMat, this.red.glow, this.red.beam, this.red.ring]) {
       m.map?.dispose();
       m.dispose();
     }

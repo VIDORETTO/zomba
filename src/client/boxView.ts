@@ -140,7 +140,7 @@ export class BoxView {
       this.holder.add(g);
       return;
     }
-    g = buildGun(id, this.mats, false).group;
+    g = id === 'artilharia' ? artilleryModel() : buildGun(id, this.mats, false).group;
     this.models.set(id, g);
     g.scale.setScalar(1.7);
     g.rotation.y = Math.PI / 2;
@@ -221,4 +221,18 @@ export class BoxView {
     for (const g of this.models.values()) g.traverse((o) => (o as THREE.Mesh).geometry?.dispose());
     this.models.clear();
   }
+}
+
+// Granada de Artilharia (resultado raro da Caixa na Trincheira): corpo escuro, cinta vermelha e argola
+function artilleryModel(): THREE.Group {
+  const g = new THREE.Group();
+  const body = new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.06, 0.16, 12), new THREE.MeshStandardMaterial({ color: 0x3a3a34, roughness: 0.6, metalness: 0.4 }));
+  const band = new THREE.Mesh(new THREE.CylinderGeometry(0.062, 0.062, 0.03, 12), new THREE.MeshStandardMaterial({ color: 0xa01a10, emissive: 0x401008 }));
+  const cap = new THREE.Mesh(new THREE.CylinderGeometry(0.02, 0.03, 0.04, 8), new THREE.MeshStandardMaterial({ color: 0x8a7a50 }));
+  cap.position.y = 0.1;
+  const ring = new THREE.Mesh(new THREE.TorusGeometry(0.03, 0.006, 6, 12), new THREE.MeshStandardMaterial({ color: 0x9a9a90 }));
+  ring.position.set(0, 0.13, 0);
+  g.add(body, band, cap, ring);
+  g.rotation.z = Math.PI / 2;
+  return g;
 }

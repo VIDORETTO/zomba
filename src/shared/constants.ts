@@ -177,6 +177,92 @@ export const VULTO = {
   spawnMax: 16,
 };
 
+// Trincheira: valores de ajuste dos sistemas do mapa (geradores, tanque, colossos, inimigos, cajados...).
+export const TRINCHEIRA = {
+  mudMult: 0.7,
+  mudJump: 0.85,
+  // geradores: raio do círculo, custo por jogador dentro, tempo base (s), ganho por jogador extra, intervalo dos zumbis extras
+  genRadius: 3.5,
+  genCostPerPlayer: 200,
+  genTime: 20,
+  genExtraPlayer: 0.5,
+  genSpawnEvery: 4,
+  // Fonte da Sorte
+  fizzCost: 1500,
+  fizzSpin: 4,
+  fizzUsesMin: 4,
+  fizzUsesMax: 6,
+  // clima: chances (limpo, chuva, neve), rodada em que neva de qualquer jeito e intervalo máximo sem neve
+  weatherChances: [0.5, 0.3, 0.2] as [number, number, number],
+  snowBy: 7,
+  snowGap: 8,
+  // pá e montes
+  moundChance: 0.45,
+  digTime: 1.2,
+  digTimeGold: 0.6,
+  goldAfter: 30,
+  // tanque
+  tankCost: 500,
+  tankSpeed: 5,
+  tankStopWait: 10,
+  tankCooldown: 30,
+  tankFlameDps: 300,
+  tankFlameRange: 4,
+  // corpo do tanque (metade do comprimento e da largura, altura do convés)
+  tankHalfLen: 3.5,
+  tankHalfWidth: 2,
+  tankDeck: 1.15,
+  // colossos
+  robotFirstRound: 2,
+  robotWarn: 8,
+  robotPause: 20,
+  stepLift: 1.5,
+  stepMove: 2,
+  stepDown: 1.5,
+  stepHold: 1,
+  // Cruzados e recaptura
+  templarAfterGens: 3,
+  templarChance: 0.3,
+  templarForceAfter: 4,
+  templarBase: 4,
+  templarPerPlayer: 2,
+  templarHpMult: 2,
+  templarSpeed: 1.6,
+  templarTakeTime: 8,
+  templarReward: 500,
+  // Blindado
+  panzerFirst: 8,
+  panzerGapMin: 3,
+  panzerGapMax: 5,
+  panzerFlameDps: 30,
+  panzerFlameRange: 6,
+  panzerClawRange: 15,
+  panzerClawCd: 12,
+  panzerVisorBreak: 0.2,
+  zbloodTime: 20,
+  shieldHp: 1500,
+  shieldArc: 120,
+  droneTime: 60,
+  droneCd: 90,
+  droneRange: 18,
+  droneDmg: 150,
+  droneRate: 0.5,
+  portalTime: 1,
+  portalMusic: 6,
+  staffChargeKills: 20,
+  fireChestKills: 6,
+  fireChestRange: 8,
+  punhoKills: 20,
+  punhoMult: 3,
+  challenge: [115, 3, 50, 15] as [number, number, number, number],
+  artilleryShells: 6,
+  artilleryRadius: 6,
+  artilleryDelay: 2,
+  missaoKills: 100,
+  missaoRounds: 3,
+  missaoDefense: 90,
+};
+
 export const LAVA_DAMAGE = 12;
 export const LAVA_INTERVAL = 0.5;
 export const REVIVE_TIME = 3;

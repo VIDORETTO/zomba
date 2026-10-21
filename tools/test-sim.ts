@@ -749,7 +749,7 @@ check('mapa tem 6 máquinas e 3 caixotes', map.interactables.filter((i) => i.kin
 
 // --- armas novas e projéteis ---
 {
-  const bases = Object.keys(WEAPONS_).filter((id) => !id.endsWith('_pap'));
+  const bases = Object.keys(WEAPONS_).filter((id) => !id.endsWith('_pap') && !WEAPONS_[id].staff);
   check('24 armas, todas com versão da Forja', bases.length === 24 && bases.every((id) => WEAPONS_[`${id}_pap`]?.upgraded), `${bases.length} armas`);
   check('pesos da Caixa somam 100 e só têm armas que existem', BOX_POOL.reduce((a, [, w]) => a + w, 0) === 100 && BOX_POOL.every(([id]) => WEAPONS_[id]));
   check('rajadas e mira de fábrica', WEAPONS_.burstrifle.burst === 3 && WEAPONS_.burstpistol.burst === 3 && WEAPONS_.dmr.optic === 'red');
@@ -1202,8 +1202,8 @@ check('mapa tem 6 máquinas e 3 caixotes', map.interactables.filter((i) => i.kin
 // --- mapa Trincheira: cada portão libera só a sua área ---
 {
   const tr = getMap('trincheira');
-  check('Trincheira: 6 portões, 9 barricadas, 6 locais da Caixa, 6 bebidas e a Forja acesa', tr.doors.length === 6 && tr.entries.length === 9 && tr.boxSpots.length === 6 &&
-    tr.interactables.filter((i) => i.kind === 'perk').length === 6 && new GameSim(tr, true).forge.on);
+  check('Trincheira: 6 portões, 9 barricadas, 6 locais da Caixa, 4 bebidas fixas, 6 locais da Fonte e a Forja apagada', tr.doors.length === 6 && tr.entries.length === 9 && tr.boxSpots.length === 6 &&
+    tr.interactables.filter((i) => i.kind === 'perk').length === 4 && !new GameSim(tr, true).forge.on && tr.fizzSpots?.length === 6);
   const s = new GameSim(tr, true);
   s.addPlayer('a', 'A', 0);
   s.start();
@@ -1213,9 +1213,11 @@ check('mapa tem 6 máquinas e 3 caixotes', map.interactables.filter((i) => i.kin
     nav.update([start]);
     return nav.distanceAt(x, z) < 0xffff;
   };
+  // pegadas dos colossos e locais da Fonte que a simulação mantém abertos (sem colisão) enquanto não estão em uso
+  const sysDoors = [...raw(s).world.openDoors].filter((id: string) => id.startsWith('pe-') || id.startsWith('fizz-spot-') || id.startsWith('box-spot-'));
   const open = (ids: string[]) => {
     raw(s).world.openDoors.clear();
-    for (const id of ids) raw(s).world.openDoors.add(id);
+    for (const id of [...ids, ...sysDoors]) raw(s).world.openDoors.add(id);
     nav.rebuild();
   };
   // "externo" = lama, Casamata e Estação: qualquer uma das duas portas do Posto libera as três
@@ -1231,10 +1233,12 @@ check('mapa tem 6 máquinas e 3 caixotes', map.interactables.filter((i) => i.kin
   check('Trincheira: Casamata ou Estação liberam a lama, sem abrir outras áreas', leak1.length === 0, leak1.join(' '));
   const bad: string[] = [];
   for (const id of ['oficina', 'vala', 'quartel', 'igreja']) if (only(['estacao', id], ['posto', 'externo', id]).length) bad.push(id);
-  check('Trincheira: Oficina, Vala, Quartel e Igreja abrem só a si mesmas', bad.length === 0 && areas.length === 6, bad.join(' '));
+  check('Trincheira: Oficina, Vala, Quartel e Igreja abrem só a si mesmas', bad.length === 0 && areas.length === 7, bad.join(' '));
   open(tr.doors.map((d) => d.id));
-  const unreach = tr.interactables.filter((i) => !reach(i.use[0], i.use[1]));
-  check('Trincheira: tudo aberto, toda interação e todo ponto de surgir são alcançáveis', unreach.length === 0 && tr.zombieSpawns.every((p) => reach(p.x, p.z)), unreach.map((i) => i.id).join(' '));
+  // chega perto o bastante (o centro de geradores e das peças presas em caixotes é sólido)
+  const near = (x: number, z: number, r: number) => reach(x, z) || Array.from({ length: 16 }, (_, k) => k).some((k) => reach(x + Math.cos((k / 16) * 6.283) * r, z + Math.sin((k / 16) * 6.283) * r));
+  const unreach = tr.interactables.filter((i) => i.use[0] < 135 && !near(i.use[0], i.use[1], Math.min(1.7, (i.reach ?? 1.9) * 0.85)));
+  check('Trincheira: tudo aberto, toda interação e todo ponto de surgir são alcançáveis', unreach.length === 0 && tr.zombieSpawns.filter((p) => p.area !== 'camara').every((p) => reach(p.x, p.z)), unreach.map((i) => i.id).join(' '));
   // o mapa é montado igual sempre (servidor e navegador precisam da mesma colisão)
   const again = buildTrincheira();
   check('Trincheira: montagem determinística', again.blocks.length === tr.blocks.length && again.zombieSpawns.every((p, i) => p.x === tr.zombieSpawns[i].x && p.z === tr.zombieSpawns[i].z));

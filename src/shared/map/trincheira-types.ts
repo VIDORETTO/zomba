@@ -1,7 +1,7 @@
 // Formato dos dados da planta da Trincheira (docs/trincheira/layout.json). Tudo em metros.
 
-export type P2 = [number, number];
-export type R4 = [number, number, number, number];
+import type { P2, R4 } from './types';
+export type { P2, R4 };
 
 export interface TrincheiraLayout {
   _leia: string;

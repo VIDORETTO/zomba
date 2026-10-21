@@ -157,6 +157,7 @@ function recordRoom(room: Room, sim: GameSim) {
     const run = checkRun({
       mode: 'coop', map: room.mapId, round: sim.round, startRound: room.startRound, players: sim.players.size,
       kills: p.kills, headshots: p.headshots, downs: p.downs, revives: p.revives, seconds,
+      missao: sim.tr?.missionDone === true,
     }, mapIds);
     if (typeof run === 'string') {
       console.log(`[sala ${room.code}] partida de ${c.account} fora do placar: ${run}`);

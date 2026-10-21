@@ -1,9 +1,9 @@
 import * as THREE from 'three';
-import { PLAYER, ZOMBIE } from '../shared/constants';
+import { PLAYER, TRINCHEIRA, ZOMBIE } from '../shared/constants';
 import { clamp, lerp } from '../shared/rng';
 import type { World } from '../shared/world';
 import type { Input } from './input';
-import { busCollide, busGround, standingIn, toLocal, toWorld, type BusPose } from '../shared/busBody';
+import { TANK_BODY, busCollide, busGround, standingIn, toLocal, toWorld, type BusPose } from '../shared/busBody';
 
 export interface ControllerFlags {
   ads: boolean;
@@ -32,9 +32,24 @@ export class PlayerController {
   // ônibus do mapa Rota (pose atual e a do quadro anterior, para levar quem está dentro)
   private bus: BusPose | null = null;
   private prevBus: BusPose | null = null;
+  // tanque da Trincheira (mesma ideia do ônibus, com as medidas do tanque)
+  private tank: BusPose | null = null;
+  private prevTank: BusPose | null = null;
+  // lama (Trincheira): devolve se o ponto é de lama; anda 30% mais devagar e pula menos
+  mudAt: ((x: number, z: number) => boolean) | null = null;
+  inMud = false;
 
   setBus(b: BusPose | null) {
     this.bus = b ? { ...b } : null;
+  }
+
+  setTank(b: BusPose | null) {
+    this.tank = b ? { ...b } : null;
+  }
+
+  // o jogador está em pé em cima do tanque
+  get onTank() {
+    return !!this.tank && standingIn(this.tank, this.pos.x, this.pos.y, this.pos.z, TANK_BODY);
   }
   bobPhase = 0;
   bobAmount = 0;
@@ -92,6 +107,17 @@ export class PlayerController {
       this.yaw += dy;
     }
     this.prevBus = this.bus ? { ...this.bus } : null;
+    // em cima do tanque: vai junto com ele
+    if (this.tank && this.prevTank && standingIn(this.prevTank, this.pos.x, this.pos.y, this.pos.z, TANK_BODY)) {
+      const [lx, lz] = toLocal(this.prevTank, this.pos.x, this.pos.z);
+      [this.pos.x, this.pos.z] = toWorld(this.tank, lx, lz);
+      let dy = this.tank.yaw - this.prevTank.yaw;
+      if (dy > Math.PI) dy -= Math.PI * 2;
+      if (dy < -Math.PI) dy += Math.PI * 2;
+      this.yaw += dy;
+    }
+    this.prevTank = this.tank ? { ...this.tank } : null;
+    this.inMud = !!this.mudAt && this.onGround && this.pos.y < 0.3 && this.mudAt(this.pos.x, this.pos.z);
     // caído ainda se arrasta, mas sem agachar, correr nem pular
     const frozen = f.frozen;
     const down = f.downed;
@@ -146,6 +172,8 @@ export class PlayerController {
     if (f.ads && !this.sprinting) speed = Math.min(speed, PLAYER.adsSpeed);
     if (fwd < 0) speed *= 0.85;
     if (down) speed = PLAYER.crawlSpeed;
+    // lama da Terra de Ninguém: 30% mais devagar
+    if (this.inMud) speed *= TRINCHEIRA.mudMult;
 
     const tx = wx * speed;
     const tz = wz * speed;
@@ -173,7 +201,7 @@ export class PlayerController {
       if (this.crouchT > 0.5) {
         this.crouched = false;
       } else {
-        this.vel.y = PLAYER.jumpVelocity;
+        this.vel.y = PLAYER.jumpVelocity * (this.inMud ? TRINCHEIRA.mudJump : 1);
         this.onGround = false;
       }
     }
@@ -210,10 +238,12 @@ export class PlayerController {
       this.pos.y += this.vel.y * sdt;
       this.world.collideCylinder(this.pos, PLAYER.radius, this.height);
       if (this.bus) busCollide(this.bus, this.pos, PLAYER.radius);
+      if (this.tank) busCollide(this.tank, this.pos, PLAYER.radius, TANK_BODY);
       this.pushOutOfZombies(zombies);
 
       let g = this.world.groundHeight(this.pos.x, this.pos.z, PLAYER.radius, this.pos.y);
       if (this.bus) g = Math.max(g, busGround(this.bus, this.pos.x, this.pos.z, PLAYER.radius, this.pos.y, PLAYER.stepHeight));
+      if (this.tank) g = Math.max(g, busGround(this.tank, this.pos.x, this.pos.z, PLAYER.radius, this.pos.y, PLAYER.stepHeight, TANK_BODY));
       if (this.pos.y <= g) {
         if (this.onGround && g - this.pos.y > 0.02) this.stepSmooth -= g - this.pos.y;
         if (!this.onGround) fallSpeed = -this.vel.y;

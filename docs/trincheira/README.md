@@ -951,6 +951,23 @@ Esses números são o ponto de partida. Ajuste jogando, mas registre a mudança 
 - `tools/test-trincheira.mjs`.
 - `tools/trincheira-tour.mjs <pasta> [aberto]`.
 
+### Fases 2 a 9 (prontas em 2026-10-21)
+
+Tudo da seção 6 está implementado: `src/shared/trincheira.ts` (regras, classe `TrincheiraSystems`), `src/shared/colossus.ts` (geometria dos colossos, igual no cliente), o mapa em `src/shared/map/trincheira.ts` e a camada visual em `src/client/trincheira/`. O contrato entre as partes está em `CONTRATO.md`.
+
+**Decisões e diferenças em relação ao texto acima:**
+
+- Cada jogador dentro do círculo do gerador paga 200 (e a captura anda mais rápido com mais gente).
+- O tanque, ao parar na Igreja com alguém em cima, **abre o portão da Igreja** (de graça). A plataforma da Igreja não tem passagem própria: o portão aberto é a passagem.
+- O tanque é um veículo à parte do ônibus; `busBody.ts` aceita as medidas de cada veículo (`BodyDims`). Convés a 1,15 m, sobe-se pulando.
+- A cabine dos colossos (extra da seção 6.8) é simplificada: acertar a sola 3 vezes abre a escotilha; quem estiver na pegada quando o pé desce **não morre**, ganha o prêmio do colosso e 4 s de invulnerabilidade, mas não é levado a uma sala separada.
+- A 3ª peça do Cajado de Fogo cai do primeiro Blindado morto (peça solta, `tr.drops`).
+- Cruzados nascem a 25–40 m do gerador atacado (ou mais perto se a área for pequena) onde há caminho até ele.
+- A missão trava os cajados nos pedestais da colheita até o fim; ao terminar, voltam para quem os tinha (um cajado por jogador).
+- Granada de Artilharia: também sai da Caixa Misteriosa (3%, entrega 3 cargas).
+- Partida com a missão concluída é registrada no placar (`missao: true`, uma estrela na lista online).
+- Atalhos de teste: `debugTr` (gens, itens, clima, colosso, rodada... ver `trincheira.ts → debug`), só com `?autoplay` em desenvolvimento.
+
 ## 11. Decisões já tomadas (não reabra sem motivo)
 
 - **A planta segue a de referência** (proporções, posições e ligações). As simplificações foram feitas para caber no motor: um andar só, blocos sólidos alinhados aos eixos e a Câmara por teletransporte.

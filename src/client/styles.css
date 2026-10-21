@@ -665,3 +665,72 @@ details.adv[open] { display: flex; flex-direction: column; gap: 6px; }
 .keys-note { min-height: 1.2em; flex: 1; }
 .btn.small { padding: 6px 12px; font-size: 12px; }
 .hud.menu-open .intro { visibility: hidden; }
+
+/* ---------- Trincheira ---------- */
+.tr-gens { position: absolute; right: 14px; top: 30px; display: flex; gap: 6px; }
+.tr-gens .gen {
+  position: relative; width: 30px; height: 30px; display: grid; place-items: center; border-radius: 50%;
+  color: #6b6760; background: rgba(10, 8, 7, 0.65); box-shadow: inset 0 0 0 2px rgba(120, 114, 104, 0.45);
+}
+.tr-gens .gen svg { width: 24px; height: 24px; filter: drop-shadow(0 1px 1px #000); }
+.tr-gens .gen b { position: absolute; right: -2px; bottom: -3px; font: 700 11px var(--sans); color: #d8d0c0; text-shadow: 0 1px 2px #000; }
+.tr-gens .gen.on { color: #5fe6ff; box-shadow: inset 0 0 0 2px #3ac8ee, 0 0 10px rgba(80, 220, 255, 0.55); }
+.tr-gens .gen.cap { color: #ffd890; background: conic-gradient(#5fe6ff var(--p, 0deg), rgba(10, 8, 7, 0.65) 0); box-shadow: none; }
+.tr-gens .gen.cap svg { color: #fff; }
+.tr-gens .gen.atk { color: #ff5a4a; box-shadow: inset 0 0 0 2px #ff3a2a, 0 0 12px rgba(255, 60, 40, 0.8); }
+
+.tr-team { position: absolute; right: 14px; top: 70px; min-width: 150px; padding: 6px 8px; background: rgba(10, 8, 7, 0.55); border-left: 3px solid #8a7a58; font-size: 12px; }
+.tr-team h4, .tr-chal h4, .tr-mission h4 { margin: 0 0 4px; font: 700 11px var(--sans); letter-spacing: 0.25em; text-transform: uppercase; color: var(--muted); }
+.tr-row { display: flex; align-items: center; gap: 4px; margin: 2px 0; }
+.tr-row span { width: 54px; color: #c8bfae; }
+.tr-row u { text-decoration: none; width: 16px; text-align: center; color: #4a463f; font-size: 13px; display: inline-flex; justify-content: center; }
+.tr-row u svg { width: 13px; height: 13px; }
+.tr-row u.got { color: var(--c); text-shadow: 0 0 6px var(--c); }
+.tr-row small { margin-left: 4px; color: #8fe08a; font-size: 10px; }
+
+.tr-chal { position: absolute; left: 50%; top: 22%; transform: translateX(-50%); width: min(430px, 80vw); padding: 10px 12px; background: rgba(14, 10, 8, 0.8); border: 1px solid var(--line); }
+.tr-c { display: flex; gap: 10px; align-items: center; padding: 5px 0; border-top: 1px solid rgba(233, 225, 210, 0.08); }
+.tr-c b { font: 700 18px var(--serif); color: #8a7a58; width: 18px; text-align: center; }
+.tr-c span { flex: 1; font-size: 13px; }
+.tr-c small { display: block; color: var(--muted); font-size: 11px; }
+.tr-c em { font-style: normal; font-size: 12px; color: #c8bfae; }
+.tr-c.done em { color: #ffd23a; }
+.tr-c.claimed { opacity: 0.55; }
+.tr-c.claimed em { color: #8fe08a; }
+
+.tr-robot, .tr-recap {
+  position: absolute; left: 50%; top: 64px; transform: translateX(-50%); display: flex; gap: 10px; align-items: center;
+  padding: 6px 16px; background: rgba(10, 8, 7, 0.7); border-bottom: 3px solid var(--c, #ffd23a); font: 700 17px var(--serif); letter-spacing: 0.08em; white-space: nowrap;
+}
+.tr-robot span { color: var(--c, #ffd23a); text-shadow: 0 0 10px var(--c, #ffd23a); }
+.tr-robot em, .tr-recap em { font: 600 14px var(--sans); font-style: normal; color: var(--muted); }
+.tr-robot .tr-arrow, .tr-recap .tr-arrow { display: inline-block; color: var(--c, #ffd23a); transition: transform 0.1s linear; }
+.tr-robot.danger { animation: blink 0.7s ease-in-out infinite; }
+.tr-recap { top: 106px; --c: #ff4a3a; }
+.tr-recap span { color: #ff8a7a; animation: blink 0.9s ease-in-out infinite; }
+
+.tr-mission { position: absolute; left: 24px; top: 38%; max-width: 300px; padding: 8px 12px; background: rgba(10, 8, 7, 0.6); border-left: 3px solid #9fd8ff; }
+.tr-mission ol { margin: 0; padding-left: 18px; font-size: 12px; line-height: 1.55; color: #7a7468; }
+.tr-mission li.ok { color: #8fe08a; text-decoration: line-through; opacity: 0.7; }
+.tr-mission li.now { color: #f0ead8; font-weight: 600; }
+
+.tr-blood { position: absolute; inset: 0; pointer-events: none; box-shadow: inset 0 0 140px 30px rgba(170, 10, 10, 0.75); background: radial-gradient(ellipse at center, rgba(120, 0, 0, 0) 40%, rgba(120, 0, 0, 0.22) 100%); mix-blend-mode: normal; }
+.tr-blood span { position: absolute; left: 50%; bottom: 96px; transform: translateX(-50%); font: 900 30px var(--serif); color: #ff5a4a; text-shadow: 0 0 12px #a00, 0 2px 3px #000; }
+.tr-blood.ending { animation: blink 0.5s ease-in-out infinite; }
+
+.tr-status { position: absolute; right: 24px; bottom: 176px; display: flex; gap: 10px; align-items: center; justify-content: flex-end; }
+.tr-status .st { display: flex; align-items: center; gap: 4px; padding: 3px 7px; background: rgba(10, 8, 7, 0.55); border-radius: 3px; font: 700 14px var(--serif); color: #e8e0d0; }
+.tr-status .st b { font: 400 18px 'Segoe UI Symbol', 'Segoe UI', sans-serif; display: inline-flex; }
+.tr-status .st b svg { width: 18px; height: 18px; }
+.tr-status .shield b { color: #b8c0c8; }
+.tr-status .bar { width: 70px; height: 6px; background: rgba(0, 0, 0, 0.6); }
+.tr-status .bar i { display: block; height: 100%; background: linear-gradient(#c8d0d8, #7a8088); }
+.tr-status .art b { color: #ff7a3a; }
+.tr-status .gold b { color: #ffd23a; }
+.tr-status .wx b { color: #cfe0f0; }
+
+/* anel de carga do cajado desperto */
+.charge-ring { position: absolute; left: 50%; top: 50%; width: 46px; height: 46px; margin: -23px 0 0 -23px; border-radius: 50%; pointer-events: none;
+  background: conic-gradient(rgba(255, 230, 140, 0.95) var(--f, 0deg), rgba(255, 255, 255, 0.12) 0);
+  -webkit-mask: radial-gradient(circle, transparent 17px, #000 18px, #000 21px, transparent 22px); mask: radial-gradient(circle, transparent 17px, #000 18px, #000 21px, transparent 22px); }
+.charge-ring.full { filter: drop-shadow(0 0 6px rgba(255, 220, 120, 0.9)); }

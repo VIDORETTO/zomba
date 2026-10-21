@@ -34,6 +34,7 @@ const dot = (x: number, z: number, c: [number, number, number]) => {
 };
 for (const p of map.zombieSpawns) dot(p.x, p.z, [255, 255, 255]);
 for (const it of map.interactables) dot(it.use[0], it.use[1], [80, 160, 255]);
+for (const q of map.trincheira?.tank.path ?? []) dot(q[0], q[1], [250, 220, 40]);
 
 // PNG mínimo (RGB 8 bits)
 const crcTable = Array.from({ length: 256 }, (_, n) => {

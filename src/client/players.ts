@@ -30,9 +30,15 @@ function nameSprite(name: string, color: string, level: number): THREE.Sprite {
   return s;
 }
 
+// Sangue Morto: o aliado fica translúcido e avermelhado
+const GHOST = new THREE.MeshBasicMaterial({ color: 0xb04030, transparent: true, opacity: 0.32, depthWrite: false });
+
 class PlayerView {
   readonly h: Humanoid;
   readonly label: THREE.Sprite;
+  // Escudo de Trincheira nas costas (Trincheira)
+  readonly shield: THREE.Group;
+  private ghost: Map<THREE.Mesh, THREE.Material | THREE.Material[]> | null = null;
   phase = 0;
   speed = 0;
   lastX = 0;
@@ -57,6 +63,34 @@ class PlayerView {
     this.label = nameSprite(p.name, color, p.level ?? 1);
     this.label.position.y = 2.15;
     this.h.root.add(this.label);
+    // placa de aço rebitada com visor estreito, nas costas (o boneco olha para +z)
+    this.shield = new THREE.Group();
+    const steel = flatMat(0x6e6e68, tex.rivet ?? null);
+    const plate = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.7, 0.05), steel);
+    plate.position.set(0, 0.3, -0.18);
+    const slit = new THREE.Mesh(new THREE.BoxGeometry(0.3, 0.05, 0.02), flatMat(0x0a0a0a));
+    slit.position.set(0, 0.5, -0.215);
+    this.shield.add(plate, slit);
+    this.shield.visible = false;
+    this.h.torso.add(this.shield);
+  }
+
+  // translúcido enquanto está com Sangue Morto
+  setGhost(on: boolean) {
+    if (on === !!this.ghost) return;
+    if (on) {
+      this.ghost = new Map();
+      this.h.root.traverse((o) => {
+        const m = o as THREE.Mesh;
+        if (m.isMesh && m.userData.keep !== true && o.name !== 'blob' && !this.shield.getObjectById(o.id)) {
+          this.ghost!.set(m, m.material);
+          m.material = GHOST;
+        }
+      });
+    } else {
+      for (const [m, mat] of this.ghost!) m.material = mat;
+      this.ghost = null;
+    }
   }
 }
 
@@ -85,6 +119,8 @@ export class RemotePlayers {
         this.group.add(v.h.root);
       }
       Object.assign(v.p, pb);
+      v.shield.visible = (pb.shield ?? 0) > 0;
+      v.setGhost((pb.zblood ?? 0) > 0);
       const r = v.h.root;
       r.visible = pb.life !== 'dead';
       r.position.set(lerp(pa.x, pb.x, k), lerp(pa.y, pb.y, k), lerp(pa.z, pb.z, k));

@@ -1,0 +1,28 @@
+// Fumaça da Trincheira no navegador: abre o jogo, liga atalhos e tira capturas. Uso: node tools/tr-smoke.mjs <pasta>
+import { launch } from './launch.mjs';
+const out = process.argv[2] ?? '.';
+const browser = await launch();
+const page = await browser.newPage({ viewport: { width: 1280, height: 720 } });
+const errs = [];
+page.on('pageerror', (e) => errs.push(e.message));
+page.on('console', (m) => { if (m.type() === 'error') errs.push(m.text()); });
+await page.goto('http://127.0.0.1:5173/?autoplay');
+await page.waitForLoadState('networkidle');
+await page.click('#map-choice [data-map="trincheira"]');
+await page.click('#btn-solo');
+await page.waitForFunction(() => window.__game, null, { timeout: 120000 });
+await page.waitForTimeout(2500);
+const g = (fn, arg) => page.evaluate(fn, arg);
+await g(() => { const s = window.__game.transport.sim; s.toSpawn = 0; s.zombies.clear(); s.spawnZombie = () => undefined; const p = s.players.get('local'); p.health = p.maxHealth = 99999; window.__game.debugPoints(50000); });
+const shot = async (name) => { await page.waitForTimeout(700); await page.screenshot({ path: `${out}/${name}.png` }); };
+await shot('s0-posto');
+await g(() => window.__game.debugTr('gens'));
+await g(() => window.__game.debugView(103, 52, Math.PI, 0.1));
+await shot('s1-gerador');
+await g(() => window.__game.debugTr('tp:-15,2'));
+await g(() => window.__game.debugView(-15, 3, 0, 0.1));
+await shot('s2-escavacao-forja');
+await page.waitForTimeout(6500);
+await shot('s3-forja-subiu');
+console.log('erros:', errs.length, errs.slice(0, 5).join(' | '));
+await browser.close();

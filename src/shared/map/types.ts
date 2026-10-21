@@ -33,7 +33,10 @@ export type MaterialId =
   | 'stone'
   | 'neon'
   // lama molhada da Terra de Ninguém (Trincheira)
-  | 'mud';
+  | 'mud'
+  // pedra com runas gravadas (Escavação e Câmara Antiga) e aço rebitado (tanque, colossos)
+  | 'rune'
+  | 'rivet';
 
 // Um bloco é ao mesmo tempo visual e colisão (quando solid=true).
 // Blocos sólidos são sempre alinhados aos eixos; só os decorativos podem girar.
@@ -61,6 +64,8 @@ export interface LightDef {
   kind: LightKind;
   // luz de máquina de bebida (apaga sem energia no mapa Rota)
   perk?: boolean;
+  // Trincheira: índice do gerador que alimenta a luz (apaga com ele desligado)
+  gen?: number;
 }
 
 export interface SignDef {
@@ -77,6 +82,8 @@ export interface SignDef {
   chalk?: string;
 }
 
+export type P2 = [number, number];
+
 export interface Rect {
   minX: number;
   minZ: number;
@@ -87,7 +94,10 @@ export interface Rect {
 // Objeto com que o jogador interage pela tecla F.
 export interface Interactable {
   id: string;
-  kind: 'ammo' | 'perk' | 'door' | 'weapon' | 'grenade' | 'knife' | 'box' | 'forge' | 'candle' | 'bank' | 'sight' | 'power' | 'ritual';
+  kind: 'ammo' | 'perk' | 'door' | 'weapon' | 'grenade' | 'knife' | 'box' | 'forge' | 'candle' | 'bank' | 'sight' | 'power' | 'ritual'
+    // Trincheira
+    | 'generator' | 'fizz' | 'tank' | 'shovel' | 'mound' | 'part' | 'bench' | 'gramofone' | 'disco'
+    | 'portal' | 'crystal' | 'staffPedestal' | 'altar' | 'tabua' | 'tabuaAltar' | 'challenge' | 'missao';
   perk?: import('../perks').PerkId;
   door?: string;
   weapon?: string;
@@ -98,6 +108,12 @@ export interface Interactable {
   // ponto onde o jogador fica para usar (frente do objeto)
   use: [number, number];
   y: number;
+  // Trincheira: qual peça, gerador, monte, elemento etc. (índice ou chave)
+  ref?: string;
+  // alcance de uso em metros (padrão 1,9 no navegador e 2,6 na simulação)
+  reach?: number;
+  // altura mínima dos pés para usar (peça que só se pega de cima do tanque)
+  minY?: number;
 }
 
 // Entrada de zumbis com tábuas (barricada). (nx, nz) aponta para dentro da área jogável.
@@ -170,6 +186,8 @@ export interface SpawnPoint {
   x: number;
   z: number;
   area: string | string[] | null;
+  // Trincheira: letra do grupo (TrincheiraData.groups) onde fica; um ponto também vale se há jogador vivo no grupo
+  zone?: string;
 }
 
 // Tipo de chão em grade de 1 m (som dos passos): d = terra, h = duro, w = madeira, m = lama
@@ -226,4 +244,76 @@ export interface MapDef {
   place?: string;
   // céu: cor do alto e do brilho do sol (padrão: fim de tarde alaranjado)
   sky?: { top: number; sun: number };
+  // ---------- Trincheira ----------
+  // chefão do mapa (padrão: Carrasco); sem rodada infernal de cães
+  boss?: 'carrasco' | 'blindado';
+  hellRounds?: boolean;
+  // itens que podem cair dos zumbis neste mapa (padrão: os de sempre, sem o Sangue Morto)
+  powerupPool?: import('../powerups').PowerupKind[];
+  // armas que não saem na Caixa Misteriosa
+  boxExclude?: string[];
+  // a Forja só sobe com os 6 geradores ligados
+  forgeNeedsGenerators?: boolean;
+  // gerador (índice) que alimenta cada bebida fixa
+  perkGen?: Partial<Record<import('../perks').PerkId, number>>;
+  // locais da Fonte da Sorte (mesmo formato dos da Caixa); o gerador do local fica em trincheira.fizzGen
+  fizzSpots?: BoxSpot[];
+  // tudo o mais da Trincheira (pontos, portais, Câmara Antiga...)
+  trincheira?: TrincheiraData;
+}
+
+// Retângulo [minX, minZ, maxX, maxZ]
+export type R4 = [number, number, number, number];
+
+export type Element4 = 'fogo' | 'gelo' | 'vento' | 'raio';
+
+// Dados fixos da Trincheira, montados pelo construtor do mapa (navegador e servidor têm os mesmos).
+export interface TrincheiraData {
+  // 6 geradores: centro, raio do círculo, nome da área
+  gens: { x: number; z: number; r: number; name: string }[];
+  // gerador de cada local da Fonte da Sorte (mesma ordem de MapDef.fizzSpots)
+  fizzGen: number[];
+  // grade de 1 m com a área de cada ponto: p posto, c casamata, e estação, o oficina, v vala, q quartel, i igreja, l lama, m Câmara Antiga, . fora
+  groups: { ox: number; oz: number; w: number; h: number; data: string };
+  // para cada letra de grupo, as portas que liberam (null = sempre aberta)
+  groupDoor: Record<string, string | string[] | null>;
+  // pegadas dos colossos (a ordem da lista de cada colosso vai de norte a sul, ou de oeste a leste)
+  feet: { id: string; robot: 'atlas' | 'golias' | 'tita'; r: R4 }[];
+  // pontos de cavar: 18 montes comuns seguidos de 3 de gelo; pás espetadas
+  mounds: P2[];
+  shovels: P2[];
+  // bancadas
+  benches: P2[];
+  // tanque: laço fechado, paradas (índice no caminho) e alavanca
+  tank: { path: P2[]; stops: { at: number; zone: 'estacao' | 'igreja' | 'norte' }[]; lever: P2; leverNormal: P2 };
+  // Escavação: centro do poço e raio do anel
+  ring: { c: P2; r: number; hole: number };
+  // túneis dos portais: boca (teletransporta), laje (onde se toca o disco), saída (onde se volta)
+  portals: { el: Element4; mouth: P2; slab: P2; exit: P2; r: number }[];
+  // Câmara Antiga: salão e alcovas (por elemento), portal de volta, pedestal do cristal, altar
+  chamber: {
+    center: P2;
+    hall: number;
+    alcoves: { el: Element4; c: P2; back: P2; crystal: P2; altar: P2 }[];
+    // placas numeradas do enigma do Raio (posição no mundo; ficam na alcova do Raio)
+    plates: [number, number, number][];
+  };
+  // Mesa dos Cajados: um pedestal por elemento
+  staffTable: { el: Element4; x: number; z: number }[];
+  // alvos dos enigmas dos cajados
+  chests: P2[];
+  tombstones: P2[];
+  domes: P2[];
+  // altar da Tábua de Pedra (Igreja) e onde ela fica (Cripta)
+  tabuaAltar: P2;
+  // baús de desafios
+  challengeChests: P2[];
+  // peças com mais de um local (sorteia um): chave -> locais
+  pickups: Record<string, P2[]>;
+  // peça do Raio que só se pega de cima do tanque: ponto no caminho
+  tankPart: P2;
+  // pegadas ou áreas onde caixotes de peças do Vento abrem
+  windCrates: P2[];
+  // a Câmara fica fora do mapa principal: retângulo andável da Câmara
+  chamberRect: R4;
 }

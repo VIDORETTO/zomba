@@ -4,7 +4,8 @@ import type { HitPart, SightKind } from './weapons';
 
 export type PlayerLife = 'alive' | 'downed' | 'dead';
 // orb = bola de fogo do Bispo
-export type ProjectileKind = 'grenade' | 'launcher' | 'bolt' | 'ray' | 'rocket' | 'blade' | 'drum' | 'wind' | 'arc' | 'vortex' | 'orb';
+// orb = bola de fogo do Bispo; fogo = bola do Cajado de Fogo; artilharia = Granada de Artilharia; orbRaio = bola elétrica do Cajado de Raio desperto
+export type ProjectileKind = 'grenade' | 'launcher' | 'bolt' | 'ray' | 'rocket' | 'blade' | 'drum' | 'wind' | 'arc' | 'vortex' | 'orb' | 'fogo' | 'artilharia' | 'orbRaio';
 
 export interface ForgeState {
   on: boolean;
@@ -25,7 +26,7 @@ export interface BoxState {
 }
 export type RoundState = 'waiting' | 'active' | 'intermission' | 'gameover';
 export type ZombieAnim = 'rise' | 'move' | 'attack' | 'tear' | 'climb' | 'slam' | 'chain' | 'charge' | 'cast';
-export type ZombieKind = 0 | 1 | 2 | 3 | 4 | 5 | 6; // anda, corre, dispara, Cão Infernal, Carrasco, Vulto, Bispo
+export type ZombieKind = 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8; // anda, corre, dispara, Cão Infernal, Carrasco, Vulto, Bispo, Blindado, Cruzado
 
 export interface NetPlayer {
   id: string;
@@ -58,6 +59,24 @@ export interface NetPlayer {
   level: number;
   // pontos ganhos na partida (sem contar gastos)
   earned: number;
+  // ---------- Trincheira (só existem nesse mapa) ----------
+  // pá, Pá Dourada, Capacete Dourado
+  shovel?: boolean;
+  goldShovel?: boolean;
+  helmet?: boolean;
+  // vida do Escudo de Trincheira (0 = sem escudo)
+  shield?: number;
+  // Punho de Ferro no lugar da faca
+  punho?: boolean;
+  // Granadas de Artilharia
+  artilharia?: number;
+  // segundos que faltam de Sangue Morto
+  zblood?: number;
+  // progresso dos 4 desafios pessoais e os já retirados
+  challenges?: number[];
+  claimed?: boolean[];
+  // vaga extra de bebida (4º desafio)
+  extraPerk?: boolean;
 }
 
 export interface NetZombie {
@@ -100,6 +119,87 @@ export interface Snapshot {
   forge: ForgeState;
   players: NetPlayer[];
   zombies: NetZombie[];
+  // sistemas da Trincheira (só nesse mapa)
+  tr?: TrincheiraSnap;
+}
+
+export type Weather = 'limpo' | 'chuva' | 'neve';
+export type Element = 'fogo' | 'gelo' | 'vento' | 'raio';
+
+export interface TrGen {
+  on: boolean;
+  // 0 a 1 enquanto captura
+  progress: number;
+  capturing: boolean;
+  // Cruzados atacando
+  attacked: boolean;
+}
+
+// Colosso: id, fase (aviso antes de entrar, passos, pausa), passo atual (0 a 3), parte do passo e direção
+export interface TrRobot {
+  id: 'atlas' | 'golias' | 'tita';
+  phase: 'aviso' | 'passos';
+  // aviso: segundos que faltam para entrar
+  warn: number;
+  // índice da pegada onde o pé atual vai pisar (0 = a primeira na direção do caminho)
+  step: number;
+  sub: 'sobe' | 'move' | 'desce' | 'fica';
+  // 0 a 1 dentro da parte do passo
+  t: number;
+  // 1 = do começo da lista de pegadas para o fim; -1 = ao contrário
+  dir: 1 | -1;
+}
+
+export type StaffState = 'faltando' | 'pedestal' | 'mao' | 'altar';
+
+export interface TrStaff {
+  el: Element;
+  st: StaffState;
+  // versão desperta
+  awake: boolean;
+  owner: string;
+  // enchimento do altar (0 a 1) quando st = altar
+  charge: number;
+  // enigma resolvido e progresso (baús: abates de cada; lápides/domos: 0 ou 1; raio: quantas placas acertou)
+  solved: boolean;
+  puzzle: number[];
+  // enigma do raio: sequência de placas que as lâmpadas mostram (1 a 6)
+  seq: number[];
+}
+
+export interface TrincheiraSnap {
+  gens: TrGen[];
+  weather: Weather;
+  // Forja já subiu
+  forjaUp: boolean;
+  // Fonte da Sorte: local atual e estado ('idle' | 'spin')
+  fizz: { loc: number; state: 'idle' | 'spin'; t: number; uses: number };
+  // montes de terra ativos (índices de TrincheiraData.mounds)
+  mounds: number[];
+  // tanque
+  tank: { x: number; z: number; yaw: number; state: 'parado' | 'volta' | 'espera'; stop: string | null; wait: number; cooldown: number };
+  robot: TrRobot | null;
+  // itens da equipe (chaves)
+  team: string[];
+  // peças e coisas no chão que dá para pegar agora (ids de interactables); peças soltas por zumbis/Blindado em drops
+  pick: string[];
+  drops: { id: string; key: string; x: number; z: number }[];
+  // caixotes das peças do Vento já abertos
+  windOpen: boolean;
+  build: {
+    escudo: { built: boolean; bench: number };
+    drone: { built: boolean; bench: number; state: 'banco' | 'voo' | 'espera'; owner: string; t: number; x: number; y: number; z: number };
+  };
+  portals: boolean[];
+  // local sorteado do Disco Negro (-1 = já pego)
+  disco: number;
+  staffs: TrStaff[];
+  tabua: 'cripta' | 'equipe' | 'altar' | 'cheia';
+  tabuaCharge: number;
+  // missão principal
+  missao: { step: number; count: number; t: number };
+  // recaptura em andamento (Cruzados vivos)
+  recapture: boolean;
 }
 
 export type GameEvent =
@@ -148,7 +248,7 @@ export type GameEvent =
   | { e: 'pleave'; pid: string; name: string }
   | { e: 'refill'; pid: string; weapon: string }
   | { e: 'perk'; pid: string; perk: PerkId }
-  | { e: 'deny'; pid: string; reason: 'pontos' | 'limite' | 'possui' | 'longe' | 'esgotado' | 'cheio' | 'desligada' | 'unica' | 'mira' }
+  | { e: 'deny'; pid: string; reason: 'pontos' | 'limite' | 'possui' | 'longe' | 'esgotado' | 'cheio' | 'desligada' | 'unica' | 'mira' | 'trancado' | 'faltam' | 'ocupado' }
   | { e: 'sight'; pid: string; weapon: string; sight: SightKind }
   | { e: 'forge'; phase: 'candle' | 'on' | 'start' | 'ready' | 'take' | 'expire'; pid: string | null; weapon: string | null }
   | { e: 'weapon'; pid: string; weapon: string; replaced: string | null }
@@ -160,17 +260,66 @@ export type GameEvent =
   | { e: 'selfrevive'; pid: string }
   | { e: 'board'; entry: number; boards: number; kind: 'tear' | 'fix' }
   | { e: 'door'; id: string; pid: string }
-  | { e: 'bank'; pid: string; action: 'deposit' | 'withdraw'; amount: number };
+  | { e: 'bank'; pid: string; action: 'deposit' | 'withdraw'; amount: number }
+  // ---------- Trincheira ----------
+  // gerador: ligou/desligou (on), começou a captura ou foi atacado pelos Cruzados
+  | { e: 'gen'; gen: number; on: boolean; pid: string | null; phase: 'start' | 'cancel' | 'done' | 'lost' | 'attack' }
+  | { e: 'forjaSobe' }
+  | { e: 'clima'; weather: Weather; round: number }
+  // Fonte da Sorte: girou, entregou, foi embora
+  | { e: 'fizz'; phase: 'spin' | 'give' | 'leave' | 'arrive'; loc: number; pid: string | null; perk: PerkId | null }
+  // cavar: resultado (powerup, granadas, pontos, zumbi, terra, arma, bebida, peça, capacete)
+  | { e: 'dig'; pid: string; mound: number; result: 'powerup' | 'granadas' | 'pontos' | 'zumbi' | 'terra' | 'arma' | 'bebida' | 'peca' | 'capacete' | 'pa-dourada'; x: number; z: number; text: string }
+  | { e: 'tank'; phase: 'chamado' | 'chegou' | 'sai' | 'volta' | 'pronto'; stop: string | null }
+  // esmagado pelo tanque, queimado pelo lança-chamas dele
+  | { e: 'esmaga'; zid: number }
+  // colosso: buzina (vai entrar), pisada (pegada, quem morreu), entrou na cabine
+  | { e: 'buzina'; robot: 'atlas' | 'golias' | 'tita'; dir: 1 | -1 }
+  | { e: 'pisada'; robot: 'atlas' | 'golias' | 'tita'; foot: string; x: number; z: number; killed: string[]; zombies: number }
+  | { e: 'cabine'; pid: string; robot: 'atlas' | 'golias' | 'tita'; prize: string }
+  // Cruzados: recaptura começou (gerador alvo), terminou
+  | { e: 'recaptura'; phase: 'start' | 'win' | 'lose'; gen: number }
+  // Blindado: chegou, lança-chamas (ligado/desligado), garra, salto, visor quebrou, morreu
+  | { e: 'blindado'; phase: 'spawn' | 'flame' | 'claw' | 'jump' | 'visor' | 'death'; zid: number; x: number; z: number; pid?: string }
+  // peça ou item da equipe pego; montagem concluída (escudo ou drone) e retirada
+  | { e: 'peca'; pid: string; key: string }
+  | { e: 'craft'; pid: string; what: 'escudo' | 'drone' | 'cajado'; phase: 'start' | 'done' | 'take' | 'expire' | 'drone-revive' | 'drone-leave'; el?: Element }
+  // portal: aberto (música), teletransporte (ida e volta)
+  | { e: 'portal'; el: Element; pid: string }
+  | { e: 'teleporte'; pid: string; el: Element; to: 'camara' | 'tunel' }
+  // alvo de enigma acertado
+  | { e: 'alvo'; kind: 'bau' | 'lapide' | 'domo' | 'placa' | 'sola' | 'olho'; idx: number; pid: string; ok: boolean }
+  // cajado: montado, pego, devolvido, no altar, desperto; enigma resolvido
+  | { e: 'cajado'; el: Element; phase: 'monta' | 'pega' | 'devolve' | 'altar' | 'cheio' | 'perde'; pid: string }
+  | { e: 'desperto'; el: Element; pid: string }
+  | { e: 'enigma'; el: Element }
+  // Tábua de Pedra e Punho de Ferro
+  | { e: 'tabua'; phase: 'pega' | 'altar' | 'cheia' | 'punho'; pid: string }
+  | { e: 'desafio'; pid: string; idx: number; prize: string }
+  // Granada de Artilharia: arremessada, bombas caindo (pontos x,z), fim
+  | { e: 'artilharia'; phase: 'throw' | 'marca' | 'bomba'; pid: string; x: number; z: number }
+  // missão principal
+  | { e: 'missao'; step: number; phase: 'passo' | 'falha' | 'defesa' | 'fim'; text: string }
+  // fogo do Cajado de Fogo carregado, nevasca, redemoinho, bola de raio (efeitos de área, só visuais)
+  | { e: 'area'; kind: 'pilar' | 'nevasca' | 'redemoinho' | 'orbRaio' | 'choque'; x: number; y: number; z: number; r: number; dur: number }
+  // queimadura, congelamento e fim do Sangue Morto em jogador/zumbi (só visuais)
+  | { e: 'fx'; kind: 'queima' | 'congela' | 'estilhaca' | 'chama' | 'sangue'; zid?: number; pid?: string; x: number; y: number; z: number };
 
 export type PlayerInput =
   | { t: 'state'; x: number; y: number; z: number; yaw: number; pitch: number; crouch: boolean; speed: number }
-  | { t: 'shoot'; weapon: string; hits: { zid: number; part: HitPart }[] }
+  // ray = origem e direção do tiro (para acertar alvos de enigma e olhos dos colossos)
+  | { t: 'shoot'; weapon: string; hits: { zid: number; part: HitPart }[]; ray?: [number, number, number, number, number, number] }
   | { t: 'knife'; zid: number | null }
   | { t: 'revive'; target: string | null }
   | { t: 'interact'; id: string; weapon: string }
   | { t: 'repair'; entry: number | null }
   | { t: 'grenade'; x: number; y: number; z: number; vx: number; vy: number; vz: number }
-  | { t: 'launch'; weapon: string; x: number; y: number; z: number; dx: number; dy: number; dz: number };
+  // charged = ataque carregado do cajado desperto (segurou o gatilho)
+  | { t: 'launch'; weapon: string; x: number; y: number; z: number; dx: number; dy: number; dz: number; charged?: boolean }
+  // segurar F num monte de terra ou numa bancada (id) ou soltar (null)
+  | { t: 'hold'; id: string | null }
+  // Granada de Artilharia
+  | { t: 'artillery'; x: number; y: number; z: number; vx: number; vy: number; vz: number };
 
 export interface LobbyPlayer {
   id: string;

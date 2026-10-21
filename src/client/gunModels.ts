@@ -792,6 +792,165 @@ function vortex(m: GunMats): GunModel {
   });
 }
 
+// ---------- cajados elementais da Trincheira ----------
+
+type Elem = 'fogo' | 'gelo' | 'vento' | 'raio';
+// cor do cristal de cada elemento (acima de 1 para o brilho pegar no bloom)
+const STAFF_COL: Record<Elem, [number, number, number]> = {
+  fogo: [1.9, 0.62, 0.1],
+  gelo: [0.45, 1.25, 2.0],
+  vento: [1.9, 1.6, 0.22],
+  raio: [1.2, 0.5, 2.2],
+};
+
+// Cajado: haste de madeira escura, cabeça de metal antigo com garras segurando o cristal do elemento.
+// Desperto: cristal maior, halo e anéis de pedra girando. O brilho e os anéis se animam por userData.tick(t, carga).
+function staff(m: GunMats, el: Elem, awake: boolean): GunModel {
+  const g = new THREE.Group();
+  const [cr, cg, cb] = STAFF_COL[el];
+  const glowCol = new THREE.Color(cr, cg, cb);
+  const glow = new THREE.MeshBasicMaterial({ color: glowCol.clone() });
+  const wood = new THREE.MeshStandardMaterial({ color: 0x2b1b12, roughness: 0.85 });
+  const old = new THREE.MeshStandardMaterial({ color: 0x6b5d45, roughness: 0.42, metalness: 0.75 });
+  const stone = new THREE.MeshStandardMaterial({ color: 0x7c766c, roughness: 0.9 });
+  // haste e empunhadura enrolada em couro
+  cyl(g, 0.014, 0.017, 0.58, 0, 0, -0.03, wood, 10);
+  for (let i = 0; i < 4; i++) cyl(g, 0.019, 0.019, 0.01, 0, 0, 0.14 + i * 0.022, m.black, 10);
+  cyl(g, 0.02, 0.02, 0.012, 0, 0, 0.265, old, 10);
+  // cabeça: colar e quatro garras
+  cyl(g, 0.026, 0.019, 0.045, 0, 0, -0.335, old, 10);
+  for (let i = 0; i < 4; i++) {
+    const a = (i / 4) * Math.PI * 2 + Math.PI / 4;
+    limb(g, V(Math.cos(a) * 0.02, Math.sin(a) * 0.02, -0.35), V(Math.cos(a) * 0.03, Math.sin(a) * 0.03, -0.44), 0.007, old);
+  }
+  // cristal
+  const size = awake ? 1.35 : 1;
+  const geo = el === 'fogo' ? new THREE.DodecahedronGeometry(0.03 * size, 0)
+    : el === 'gelo' ? new THREE.OctahedronGeometry(0.026 * size, 0)
+      : el === 'vento' ? new THREE.IcosahedronGeometry(0.03 * size, 0)
+        : new THREE.OctahedronGeometry(0.03 * size, 0);
+  const crystal = new THREE.Mesh(geo, glow);
+  crystal.position.set(0, 0, -0.395);
+  if (el === 'gelo') crystal.scale.set(0.8, 0.8, 1.9);
+  else if (el === 'raio') crystal.scale.set(0.9, 0.9, 1.5);
+  g.add(crystal);
+  const flames: THREE.Mesh[] = [];
+  const spin: THREE.Object3D[] = [];
+  if (el === 'fogo') {
+    // línguas de fogo em volta do cristal
+    for (let i = 0; i < 3; i++) {
+      const f = new THREE.Mesh(new THREE.ConeGeometry(0.014, 0.07, 6), glow);
+      const a = (i / 3) * Math.PI * 2;
+      f.position.set(Math.cos(a) * 0.022, Math.sin(a) * 0.022 + 0.01, -0.43);
+      f.rotation.x = -Math.PI / 2;
+      f.userData.base = a;
+      g.add(f);
+      flames.push(f);
+    }
+  } else if (el === 'gelo') {
+    // pontas de gelo em leque
+    for (let i = 0; i < 5; i++) {
+      const a = (i / 5) * Math.PI * 2;
+      const c = new THREE.Mesh(new THREE.ConeGeometry(0.007, 0.07, 5), glow);
+      c.position.set(Math.cos(a) * 0.026, Math.sin(a) * 0.026, -0.425);
+      c.rotation.x = -Math.PI / 2;
+      c.rotation.z = Math.cos(a) * 0.35;
+      c.rotation.y = Math.sin(a) * 0.35;
+      g.add(c);
+    }
+  } else if (el === 'vento') {
+    // aletas de latão em espiral
+    const brass = new THREE.MeshStandardMaterial({ color: 0xb08a3a, roughness: 0.35, metalness: 0.8 });
+    const fins = new THREE.Group();
+    fins.position.set(0, 0, -0.34);
+    for (let i = 0; i < 3; i++) {
+      const f = box(fins, 0.07, 0.006, 0.03, 0, 0, i * -0.016, brass);
+      f.rotation.z = (i / 3) * Math.PI;
+    }
+    g.add(fins);
+    spin.push(fins);
+  } else {
+    // bobinas de cobre ao longo da haste
+    const copper = new THREE.MeshStandardMaterial({ color: 0xb4683a, roughness: 0.3, metalness: 0.75 });
+    for (let i = 0; i < 4; i++) cyl(g, 0.024, 0.024, 0.01, 0, 0, -0.26 - i * 0.022, copper, 10);
+  }
+  // desperto: halo e dois anéis de pedra em volta do cristal
+  let halo: THREE.Mesh | null = null;
+  const rings: THREE.Group[] = [];
+  if (awake) {
+    halo = new THREE.Mesh(
+      new THREE.SphereGeometry(0.06, 14, 10),
+      new THREE.MeshBasicMaterial({ color: glowCol.clone().multiplyScalar(0.3), transparent: true, opacity: 0.28, depthWrite: false, blending: THREE.AdditiveBlending }),
+    );
+    halo.position.copy(crystal.position);
+    g.add(halo);
+    for (let k = 0; k < 2; k++) {
+      const ring = new THREE.Group();
+      ring.position.copy(crystal.position);
+      const n = 9;
+      for (let i = 0; i < n; i++) {
+        const a = (i / n) * Math.PI * 2;
+        const b = box(ring, 0.016, 0.01, 0.012, Math.cos(a) * (0.062 + k * 0.012), Math.sin(a) * (0.062 + k * 0.012), 0, stone);
+        b.rotation.z = a;
+      }
+      ring.rotation.x = k ? 1.1 : 0.2;
+      g.add(ring);
+      rings.push(ring);
+    }
+  }
+  // cristal sobressalente na lateral (sai e entra na recarga)
+  const shard = box(g, 0.018, 0.018, 0.05, 0.034, -0.005, 0.02, glow);
+  shard.rotation.z = 0.4;
+  const baseCol = glowCol.clone();
+  g.userData.tick = (t: number, charge = 0) => {
+    const pulse = 1 + Math.sin(t * (el === 'raio' ? 17 : 4)) * (el === 'raio' ? 0.18 : 0.08) + charge * 0.35;
+    glow.color.copy(baseCol).multiplyScalar(pulse * (el === 'raio' && Math.sin(t * 31) > 0.7 ? 1.4 : 1));
+    crystal.scale.setScalar(1 + charge * 0.5);
+    if (el === 'gelo') crystal.scale.set(0.8 + charge * 0.3, 0.8 + charge * 0.3, 1.9 + charge * 0.6);
+    if (el === 'raio') crystal.scale.set(0.9 + charge * 0.3, 0.9 + charge * 0.3, 1.5 + charge * 0.5);
+    crystal.rotation.z = t * (el === 'vento' ? 2.4 : 0.6);
+    for (const f of flames) {
+      const a = f.userData.base as number;
+      f.scale.set(1, 1 + Math.sin(t * 9 + a * 3) * 0.3 + charge * 0.8, 1);
+    }
+    for (const sp of spin) sp.rotation.z = t * (3 + charge * 10);
+    if (halo) halo.scale.setScalar(1 + Math.sin(t * 3) * 0.1 + charge * 0.4);
+    rings.forEach((r, i) => {
+      if (i === 0) r.rotation.z = t * (1.2 + charge * 4);
+      else r.rotation.y = t * (-1.6 - charge * 4);
+    });
+  };
+  g.userData.tick(0, 0);
+  return finish({
+    group: g, mag: shard, style: 'cell', stock: [],
+    left: arms(g, V(0, -0.012, 0.12), V(0, -0.01, -0.12), m),
+    muzzle: V(0, 0, -0.45), sightY: 0.125,
+    hip: V(0.15, -0.15, -0.36), adsZ: -0.4,
+  });
+}
+
+// Cajado solto no mundo (pedestal, altar): em pé, com a base na origem e a cabeça para cima, em escala de gente (~1,6 m).
+// Anime com `group.userData.tick(tempoEmSegundos, carga 0..1)`.
+export function buildStaffMesh(el: Elem, awake: boolean): THREE.Group {
+  withArms = false;
+  const model = staff(plainMats(), el, awake);
+  withArms = true;
+  const wrapper = new THREE.Group();
+  const inner = new THREE.Group();
+  inner.rotation.x = Math.PI / 2;
+  model.group.position.z = -0.27;
+  inner.add(model.group);
+  inner.scale.setScalar(2.8);
+  wrapper.add(inner);
+  wrapper.userData.tick = model.group.userData.tick;
+  return wrapper;
+}
+
+function plainMats(): GunMats {
+  const std = (c: number, r: number, mt = 0) => new THREE.MeshStandardMaterial({ color: c, roughness: r, metalness: mt });
+  return { steel: std(0x5a5e64, 0.4, 0.2), dark: std(0x2c2e31, 0.55, 0.1), black: std(0x161616, 0.5, 0.3), wood: std(0x5a3a26, 0.7), glove: std(0x3a3430, 0.9), sleeve: std(0x434a33, 0.95), skin: std(0xb98d70, 0.8) };
+}
+
 function plain(color: number) {
   return new THREE.MeshStandardMaterial({ color, roughness: 0.6 });
 }
@@ -799,6 +958,10 @@ function plain(color: number) {
 const BUILDERS: Record<string, (m: GunMats) => GunModel> = {
   pistol, carbine, doublebarrel, smg, rifle, pump, lmg, sniper, dualpistol, autoshotgun, launcher, crossbow, raygun,
   burstrifle, revolver, burstpistol, machinepistol, dmr, rocket, blade, drum, wind, arc, vortex,
+  'cajado-fogo': (m) => staff(m, 'fogo', false), 'cajado-fogo-d': (m) => staff(m, 'fogo', true),
+  'cajado-gelo': (m) => staff(m, 'gelo', false), 'cajado-gelo-d': (m) => staff(m, 'gelo', true),
+  'cajado-vento': (m) => staff(m, 'vento', false), 'cajado-vento-d': (m) => staff(m, 'vento', true),
+  'cajado-raio': (m) => staff(m, 'raio', false), 'cajado-raio-d': (m) => staff(m, 'raio', true),
 };
 
 // Monta a arma; sem mãos quando ela aparece solta no mundo.

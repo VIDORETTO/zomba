@@ -2,7 +2,8 @@ import { PLAYER_COLORS } from '../shared/constants';
 import { PERKS, type PerkId } from '../shared/perks';
 import { POWERUPS, type PowerupKind } from '../shared/powerups';
 import { emblemCanvas } from './emblems';
-import type { NetPlayer } from '../shared/protocol';
+import type { NetPlayer, TrGen, Weather } from '../shared/protocol';
+import { CHALLENGE_TEXT, ELEMENT_LIST, ELEMENTS, MISSAO_STEPS, SET_PARTS, TEAM_ITEMS } from '../shared/trincheira-info';
 
 // Símbolo de cada bebida (SVG 24×24, branco sobre a cor da bebida)
 const PERK_SVG: Record<PerkId, string> = {
@@ -51,6 +52,158 @@ export interface Marker {
   item?: boolean;
 }
 
+const GEAR = '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 8.5a3.5 3.5 0 1 0 0 7 3.5 3.5 0 0 0 0-7zm9 4.5v-2l-2.2-.6a7 7 0 0 0-.8-1.9l1.2-2-1.4-1.4-2 1.2a7 7 0 0 0-1.9-.8L13 3h-2l-.6 2.2a7 7 0 0 0-1.9.8l-2-1.2-1.4 1.4 1.2 2a7 7 0 0 0-.8 1.9L3 11v2l2.2.6c.2.7.4 1.3.8 1.9l-1.2 2 1.4 1.4 2-1.2c.6.4 1.2.6 1.9.8L11 21h2l.6-2.2c.7-.2 1.3-.4 1.9-.8l2 1.2 1.4-1.4-1.2-2c.4-.6.6-1.2.8-1.9z"/></svg>';
+const IC = {
+  shield: '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 2 4 5v6c0 5 3.4 9.4 8 11 4.6-1.6 8-6 8-11V5z"/></svg>',
+  drone: '<svg viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="12" r="3.6"/><rect x="2" y="4" width="8" height="2"/><rect x="14" y="4" width="8" height="2"/><rect x="2" y="18" width="8" height="2"/><rect x="14" y="18" width="8" height="2"/><path d="M9 9 6 6M15 9l3-3M9 15l-3 3M15 15l3 3" stroke="currentColor" stroke-width="1.6"/></svg>',
+  fist: '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M5 10h14v6a5 5 0 0 1-5 5h-4a5 5 0 0 1-5-5zM5 10V7.5a1.7 1.7 0 0 1 3.4 0V9M8.4 9V6.5a1.7 1.7 0 0 1 3.4 0V9M11.8 9V6a1.7 1.7 0 0 1 3.4 0v3M15.2 9V7.5a1.7 1.7 0 0 1 3.4 0V10z"/></svg>',
+  shovel: '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M11 2h2v11h-2zM7.5 13h9L15 21H9z"/></svg>',
+};
+const WEATHER_ICON: Record<Weather, string> = { limpo: '☀', chuva: '☂', neve: '❄' };
+const WEATHER_NAME: Record<Weather, string> = { limpo: 'Tempo limpo', chuva: 'Chuva', neve: 'Neve' };
+
+// Painéis da Trincheira: geradores, itens da equipe, desafios, aviso do colosso, missão, recaptura, Sangue Morto e status.
+export class TrHud {
+  private readonly gens: HTMLElement;
+  private readonly team: HTMLElement;
+  private readonly chal: HTMLElement;
+  private readonly robot: HTMLElement;
+  private readonly mission: HTMLElement;
+  private readonly recap: HTMLElement;
+  private readonly blood: HTMLElement;
+  private readonly status: HTMLElement;
+  private readonly keys = new WeakMap<HTMLElement, string>();
+  private genEls: HTMLElement[] = [];
+
+  constructor(root: HTMLElement) {
+    this.gens = el('div', 'tr-gens hidden', root);
+    for (let i = 0; i < 6; i++) this.genEls.push(el('i', 'gen', this.gens, `${GEAR}<b>${i + 1}</b>`));
+    this.team = el('div', 'tr-team hidden', root);
+    this.chal = el('div', 'tr-chal hidden', root);
+    this.robot = el('div', 'tr-robot hidden', root, '<i class="tr-arrow">▲</i><span></span><em></em>');
+    this.mission = el('div', 'tr-mission hidden', root);
+    this.recap = el('div', 'tr-recap hidden', root, '<i class="tr-arrow">▲</i><span></span><em></em>');
+    this.blood = el('div', 'tr-blood hidden', root, '<span></span>');
+    this.status = el('div', 'tr-status hidden', root);
+  }
+
+  // só reescreve a página quando o texto muda
+  private put(e: HTMLElement, key: string, html: string) {
+    if (this.keys.get(e) === key) return;
+    this.keys.set(e, key);
+    e.innerHTML = html;
+  }
+
+  setGens(gens: TrGen[] | null, t: number) {
+    this.gens.classList.toggle('hidden', !gens);
+    if (!gens) return;
+    gens.forEach((g, i) => {
+      const e = this.genEls[i];
+      e.classList.toggle('on', g.on);
+      e.classList.toggle('cap', g.capturing);
+      e.classList.toggle('atk', g.attacked && Math.sin(t * 9) > -0.2);
+      e.style.setProperty('--p', `${Math.round((g.capturing ? g.progress : g.on ? 1 : 0) * 360)}deg`);
+      e.title = g.on ? 'Ligado' : g.capturing ? 'Capturando' : 'Desligado';
+    });
+  }
+
+  // itens da equipe: ícones por conjunto (cinza = falta, colorido = já tem)
+  setTeam(team: string[], built: { escudo: boolean; drone: boolean }, show: boolean) {
+    this.team.classList.toggle('hidden', !show);
+    if (!show) return;
+    const has = new Set(team);
+    const key = team.join(',') + `|${built.escudo}${built.drone}`;
+    const slot = (k: string, color: string, glyph = '■') => `<u class="${has.has(k) ? 'got' : ''}" style="--c:${color}" title="${TEAM_ITEMS[k]?.name ?? k}">${glyph}</u>`;
+    const row = (name: string, slots: string, note = '') => `<div class="tr-row"><span>${name}</span>${slots}${note ? `<small>${note}</small>` : ''}</div>`;
+    const rows = [
+      row('Escudo', SET_PARTS.escudo.map((k) => slot(k, '#c8c0b0', IC.shield)).join(''), built.escudo ? 'montado' : ''),
+      row('Drone', SET_PARTS.drone.map((k) => slot(k, '#6aff8a', IC.drone)).join(''), built.drone ? 'montado' : ''),
+      row('Portais', slot('gramofone', '#e8c070', '♫') + slot('disco', '#e8c070', '●')),
+      row('Tábua', slot('tabua', '#9fd8ff', '▤')),
+      ...ELEMENT_LIST.map((e) => row(ELEMENTS[e].name, [1, 2, 3].map((n) => slot(`${e}-${n}`, ELEMENTS[e].color)).join('') + slot(`cristal-${e}`, ELEMENTS[e].color, '◆'))),
+    ];
+    this.put(this.team, key, `<h4>Equipe</h4>${rows.join('')}`);
+  }
+
+  setChallenges(show: boolean, ch: number[], claimed: boolean[], goals: number[]) {
+    this.chal.classList.toggle('hidden', !show);
+    if (!show) return;
+    const key = ch.join(',') + claimed.join(',');
+    const rows = CHALLENGE_TEXT.map((c, i) => {
+      const done = (ch[i] ?? 0) >= goals[i];
+      const state = claimed[i] ? '✔ retirado' : done ? '★ pronto' : goals[i] > 1 ? `${Math.min(ch[i] ?? 0, goals[i])}/${goals[i]}` : '…';
+      return `<div class="tr-c ${claimed[i] ? 'claimed' : done ? 'done' : ''}"><b>${i + 1}</b><span>${c.name}<small>Prêmio: ${c.prize}</small></span><em>${state}</em></div>`;
+    });
+    this.put(this.chal, key, `<h4>Desafios</h4>${rows.join('')}`);
+  }
+
+  setRobot(info: { name: string; color: string; text: string; angle: number | null; dist: number | null; danger: boolean } | null) {
+    this.robot.classList.toggle('hidden', !info);
+    if (!info) return;
+    this.robot.style.setProperty('--c', info.color);
+    this.robot.classList.toggle('danger', info.danger);
+    const key = info.text + '|' + (info.dist ?? '');
+    if (this.keys.get(this.robot) !== key) {
+      this.keys.set(this.robot, key);
+      this.robot.querySelector('span')!.innerHTML = info.text;
+      this.robot.querySelector('em')!.textContent = info.dist === null ? '' : `${info.dist} m`;
+    }
+    const a = this.robot.querySelector<HTMLElement>('.tr-arrow')!;
+    a.style.visibility = info.angle === null ? 'hidden' : 'visible';
+    if (info.angle !== null) a.style.transform = `rotate(${info.angle.toFixed(1)}deg)`;
+  }
+
+  setMission(info: { step: number; count: number; t: number } | null) {
+    this.mission.classList.toggle('hidden', !info);
+    if (!info) return;
+    const { step, count, t } = info;
+    // step: 1 a 5 = objetivo atual, 6 = concluída
+    const cur = step - 1;
+    const extra = step === 3 ? ` · ${count}/100 · ${Math.ceil(t)} rodada${Math.ceil(t) === 1 ? '' : 's'}` : step === 4 ? ` · ${count}/3 olhos` : step === 5 && t > 0 ? ` · ${Math.ceil(t)} s` : '';
+    const key = `${step}|${count}|${Math.ceil(t)}`;
+    const list = MISSAO_STEPS.map((s, i) => `<li class="${i < cur ? 'ok' : i === cur ? 'now' : ''}">${s}${i === cur ? extra : ''}</li>`).join('');
+    this.put(this.mission, key, `<h4>Canção da Escavação</h4><ol>${list}</ol>`);
+  }
+
+  setRecapture(info: { text: string; angle: number | null; dist: number | null } | null) {
+    this.recap.classList.toggle('hidden', !info);
+    if (!info) return;
+    const key = info.text + '|' + (info.dist ?? '');
+    if (this.keys.get(this.recap) !== key) {
+      this.keys.set(this.recap, key);
+      this.recap.querySelector('span')!.innerHTML = info.text;
+      this.recap.querySelector('em')!.textContent = info.dist === null ? '' : `${info.dist} m`;
+    }
+    const a = this.recap.querySelector<HTMLElement>('.tr-arrow')!;
+    a.style.visibility = info.angle === null ? 'hidden' : 'visible';
+    if (info.angle !== null) a.style.transform = `rotate(${info.angle.toFixed(1)}deg)`;
+  }
+
+  // Sangue Morto: borda vermelha e segundos que faltam
+  setZblood(secs: number) {
+    const on = secs > 0;
+    this.blood.classList.toggle('hidden', !on);
+    this.blood.classList.toggle('ending', on && secs < 5);
+    if (!on) return;
+    const t = String(Math.ceil(secs));
+    const sp = this.blood.querySelector('span')!;
+    if (sp.textContent !== t) sp.textContent = t;
+  }
+
+  setStatus(info: { shield: number; shieldMax: number; artilharia: number; weather: Weather; punho: boolean; golden: boolean; zone: string | null } | null) {
+    this.status.classList.toggle('hidden', !info);
+    if (!info) return;
+    const key = `${Math.round(info.shield)}|${info.artilharia}|${info.weather}|${info.punho}|${info.golden}|${info.zone ?? ''}`;
+    const parts: string[] = [];
+    if (info.shield > 0) parts.push(`<div class="st shield"><b>${IC.shield}</b><div class="bar"><i style="width:${Math.round((info.shield / info.shieldMax) * 100)}%"></i></div></div>`);
+    if (info.artilharia > 0) parts.push(`<div class="st art" title="Granada de Artilharia"><b>✹</b><span>${info.artilharia}</span></div>`);
+    if (info.punho) parts.push('<div class="st fist" title="Punho de Ferro"><b>${IC.fist}</b></div>');
+    if (info.golden) parts.push('<div class="st gold" title="Pá Dourada"><b>${IC.shovel}</b></div>');
+    parts.push(`<div class="st wx" title="${WEATHER_NAME[info.weather]}"><b>${WEATHER_ICON[info.weather]}</b></div>`);
+    this.put(this.status, key, parts.join(''));
+  }
+}
+
 export class Hud {
   readonly root: HTMLElement;
   private readonly round: HTMLElement;
@@ -95,6 +248,8 @@ export class Hud {
   private hurt = 0;
   // últimos valores escritos na página: só reescreve quando muda (evita retrabalho do navegador)
   private last = { gap: -1, cross: true, hit: '', vig: '', hurt: '', mag: '', res: '', name: '', low: false, resLow: false };
+  private chargeEl: HTMLElement;
+  private lastCharge = -1;
   private lastRound = -1;
   private scoreRows = new Map<string, HTMLElement>();
 
@@ -102,6 +257,7 @@ export class Hud {
     this.root = el('div', 'hud', container);
     this.scopeEl = el('div', 'scope hidden', this.root);
     this.flashEl = el('div', 'flash', this.root);
+    this.chargeEl = el('div', 'charge-ring hidden', this.root);
     this.emberEl = el('div', 'emberflash', this.root);
     this.effectsEl = el('div', 'effects', this.root);
     this.vignette = el('div', 'vignette', this.root);
@@ -247,6 +403,16 @@ export class Hud {
     if (n === this.nadesN) return;
     this.nadesN = n;
     this.nades.innerHTML = '<i></i>'.repeat(Math.max(0, n));
+  }
+
+  // anel de carga do cajado desperto na mira (0 = escondido)
+  setCharge(f: number) {
+    const k = f > 0.01 ? Math.round(f * 100) : 0;
+    if (k === this.lastCharge) return;
+    this.lastCharge = k;
+    this.chargeEl.classList.toggle('hidden', k === 0);
+    this.chargeEl.style.setProperty('--f', `${k * 3.6}deg`);
+    this.chargeEl.classList.toggle('full', k >= 100);
   }
 
   setCrosshair(gap: number, visible: boolean) {
@@ -437,6 +603,13 @@ export class Hud {
 
   get overlayOpen() {
     return !this.overlay.classList.contains('hidden');
+  }
+
+  // painéis da Trincheira (criados na primeira vez que alguém pede)
+  private trHud: TrHud | null = null;
+  get tr(): TrHud {
+    if (!this.trHud) this.trHud = new TrHud(this.root);
+    return this.trHud;
   }
 
   dispose() {

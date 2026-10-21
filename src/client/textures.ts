@@ -516,6 +516,76 @@ export function buildTextures(): TexSet {
     }
     t.mud = finish(c);
   }
+  {
+    // pedra antiga com runas gravadas: lajes e círculos de linhas finas azuladas
+    const s = 256;
+    const [c, ctx] = canvas(s);
+    const rr = mulberry32(52);
+    noiseFill(ctx, s, [150, 146, 138], 0.3, 4, 31);
+    blotches(ctx, s, 8, 'rgba(40,36,30,0.35)', 10, 36, rr);
+    cracks(ctx, s, 5, 'rgba(25,22,18,0.55)', 1.3, rr);
+    // juntas das lajes
+    ctx.strokeStyle = 'rgba(30,26,22,0.7)';
+    ctx.lineWidth = 2;
+    ctx.strokeRect(1, 1, s - 2, s - 2);
+    ctx.beginPath();
+    ctx.moveTo(s / 2, 0);
+    ctx.lineTo(s / 2, s);
+    ctx.stroke();
+    // runas: círculos e traços
+    ctx.strokeStyle = 'rgba(150,210,255,0.55)';
+    ctx.lineWidth = 2;
+    for (const [cx, cy] of [[s * 0.25, s * 0.5], [s * 0.75, s * 0.5]]) {
+      ctx.beginPath();
+      ctx.arc(cx, cy, s * 0.17, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.beginPath();
+      ctx.arc(cx, cy, s * 0.1, 0, Math.PI * 2);
+      ctx.stroke();
+      for (let k = 0; k < 8; k++) {
+        const a = (k / 8) * Math.PI * 2 + rr() * 0.2;
+        ctx.beginPath();
+        ctx.moveTo(cx + Math.cos(a) * s * 0.1, cy + Math.sin(a) * s * 0.1);
+        ctx.lineTo(cx + Math.cos(a) * s * (0.13 + rr() * 0.05), cy + Math.sin(a) * s * (0.13 + rr() * 0.05));
+        ctx.stroke();
+      }
+    }
+    t.rune = finish(c);
+  }
+  {
+    // aço rebitado e enferrujado: placas com fileiras de rebites
+    const s = 256;
+    const [c, ctx] = canvas(s);
+    const rr = mulberry32(53);
+    noiseFill(ctx, s, [120, 112, 100], 0.32, 5, 32);
+    blotches(ctx, s, 10, 'rgba(110,60,30,0.5)', 8, 34, rr);
+    blotches(ctx, s, 6, 'rgba(20,18,16,0.4)', 8, 26, rr);
+    ctx.strokeStyle = 'rgba(20,16,12,0.8)';
+    ctx.lineWidth = 3;
+    for (const p of [0, s / 2]) {
+      ctx.beginPath();
+      ctx.moveTo(p, 0);
+      ctx.lineTo(p, s);
+      ctx.moveTo(0, p);
+      ctx.lineTo(s, p);
+      ctx.stroke();
+    }
+    for (let gx = 0; gx < 16; gx++) {
+      for (let gy = 0; gy < 16; gy++) {
+        const x = gx * 16 + 8, y = gy * 16 + 8;
+        if (gx % 8 === 0 || gy % 8 === 0 || (gx % 8 !== 1 && gx % 8 !== 7) && (gy % 8 !== 1 && gy % 8 !== 7)) continue;
+        ctx.fillStyle = 'rgba(30,26,22,0.8)';
+        ctx.beginPath();
+        ctx.arc(x + 1, y + 1.5, 3.2, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.fillStyle = 'rgba(190,180,160,0.85)';
+        ctx.beginPath();
+        ctx.arc(x, y, 2.8, 0, Math.PI * 2);
+        ctx.fill();
+      }
+    }
+    t.rivet = finish(c);
+  }
   return t;
 }
 

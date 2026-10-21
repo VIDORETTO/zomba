@@ -427,7 +427,7 @@ async function renderOnline() {
     }
     const custom = boardFilter === 'custom';
     body.innerHTML = `<table><thead><tr><th>#</th><th>Jogador</th><th class="num">Rodada</th>${custom ? '<th class="num">Início</th>' : ''}<th class="num">Abates</th><th class="num">Cabeça</th><th>Data</th><th></th></tr></thead><tbody>${list
-      .map((r, i) => `<tr><td>${i + 1}</td><td>${esc(r.name)}${r.mode === 'coop' ? ` <span class="muted">(${r.players})</span>` : ''}</td><td class="num">${r.round}</td>${custom ? `<td class="num">${r.startRound}</td>` : ''}<td class="num">${fmt(r.kills)}</td><td class="num">${fmt(r.headshots)}</td><td>${r.date.split('-').reverse().join('/')}</td><td>${r.verified ? '<span class="ok" title="Conferida pelo servidor">✓</span>' : ''}</td></tr>`)
+      .map((r, i) => `<tr><td>${i + 1}</td><td>${esc(r.name)}${r.missao ? ' <span title="Missão concluída">★</span>' : ''}${r.mode === 'coop' ? ` <span class="muted">(${r.players})</span>` : ''}</td><td class="num">${r.round}</td>${custom ? `<td class="num">${r.startRound}</td>` : ''}<td class="num">${fmt(r.kills)}</td><td class="num">${fmt(r.headshots)}</td><td>${r.date.split('-').reverse().join('/')}</td><td>${r.verified ? '<span class="ok" title="Conferida pelo servidor">✓</span>' : ''}</td></tr>`)
       .join('')}</tbody></table>`;
   } catch (err) {
     if (req === onlineReq) body.innerHTML = `<p class="muted">${esc((err as Error).message)} Confira o endereço do servidor na tela de co-op.</p>`;

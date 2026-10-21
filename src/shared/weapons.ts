@@ -23,9 +23,18 @@ export interface WeaponDef {
   reloadEmptyTime: number;
   // projétil em vez de tiro instantâneo (explode no impacto, depois de grudar ou no pavio; a lâmina só corta)
   // armas maravilha: vento (cone na hora), arpão (raio que salta na hora) e vórtice (esfera que vira buraco negro)
-  projectile?: 'launcher' | 'bolt' | 'ray' | 'rocket' | 'blade' | 'drum' | 'wind' | 'arc' | 'vortex';
+  projectile?: 'launcher' | 'bolt' | 'ray' | 'rocket' | 'blade' | 'drum' | 'wind' | 'arc' | 'vortex' | 'fogo' | 'frost';
   // arma maravilha única: só um jogador pode ter cada uma
   unique?: boolean;
+  // cajado elemental (Trincheira): elemento, se é a versão desperta e quanto tempo segurar o gatilho para o ataque carregado (s)
+  staff?: 'fogo' | 'gelo' | 'vento' | 'raio';
+  awake?: boolean;
+  charge?: number;
+  // queimadura do cajado de Fogo (dano por segundo, duração) e frio do cajado de Gelo (acertos por zumbi na rodada 10; menos = congela mais rápido)
+  burn?: { dps: number; time: number };
+  frost?: number;
+  // não pode ir à Forja
+  noForge?: boolean;
   // Arpão Elétrico: em quantos zumbis o raio salta
   chain?: number;
   // Vórtice: raio do buraco negro (m) e quanto tempo ele fica aberto (s)
@@ -190,6 +199,32 @@ export const WEAPONS: Record<string, WeaponDef> = {
     damage: 4000, fireDelay: 1.0, auto: false, mag: 1, reserve: 6,
     reloadTime: 2.2, reloadEmptyTime: 2.2, range: 60, falloffStart: 60, minDamageMult: 1, adsTime: 0.3, recoil: 2,
   },
+  // ---------- cajados elementais da Trincheira (únicos; só se montam na Mesa dos Cajados) ----------
+  'cajado-fogo': {
+    ...base, id: 'cajado-fogo', name: 'Cajado de Fogo', source: 'wonder', cls: 'shotgun', cost: 0, projectile: 'fogo', unique: true,
+    staff: 'fogo', noForge: true, burn: { dps: 150, time: 3 },
+    damage: 600, fireDelay: 0.7, auto: false, mag: 8, reserve: 48,
+    reloadTime: 2.4, reloadEmptyTime: 2.4, range: 70, falloffStart: 70, minDamageMult: 1, adsTime: 0.25, recoil: 1.6,
+  },
+  'cajado-gelo': {
+    ...base, id: 'cajado-gelo', name: 'Cajado de Gelo', source: 'wonder', cls: 'rifle', cost: 0, projectile: 'frost', unique: true,
+    staff: 'gelo', noForge: true, frost: 15,
+    damage: 40, fireDelay: 0.1, auto: true, mag: 300, reserve: 1800,
+    reloadTime: 2.2, reloadEmptyTime: 2.2, range: 22, falloffStart: 22, minDamageMult: 1, adsTime: 0.2, recoil: 0.1,
+  },
+  'cajado-vento': {
+    ...base, id: 'cajado-vento', name: 'Cajado de Vento', source: 'wonder', cls: 'shotgun', cost: 0, projectile: 'wind', unique: true,
+    staff: 'vento', noForge: true,
+    damage: 3000, fireDelay: 0.9, auto: false, mag: 6, reserve: 36,
+    reloadTime: 2.4, reloadEmptyTime: 2.4, range: 14, falloffStart: 14, minDamageMult: 1, adsTime: 0.3, recoil: 2.6,
+  },
+  'cajado-raio': {
+    ...base, id: 'cajado-raio', name: 'Cajado de Raio', source: 'wonder', cls: 'rifle', cost: 0, projectile: 'arc', unique: true, chain: 6,
+    staff: 'raio', noForge: true,
+    damage: 2500, fireDelay: 0.7, auto: false, mag: 10, reserve: 60,
+    reloadTime: 2.2, reloadEmptyTime: 2.2, range: 45, falloffStart: 45, minDamageMult: 1, adsTime: 0.25, recoil: 1.3,
+  },
+
 };
 
 // ---------- Forja: versões melhoradas ----------
@@ -247,6 +282,20 @@ for (const [id, up] of Object.entries(UPGRADES)) {
   };
 }
 
+// Cajados despertos: dano maior, mais munição e ataque carregado (segurar o gatilho)
+const AWAKE: Record<string, Partial<WeaponDef> & { name: string }> = {
+  'cajado-fogo': { name: 'Cajado de Fogo Desperto', damage: 1500, burn: { dps: 400, time: 3 }, mag: 12, reserve: 72 },
+  'cajado-gelo': { name: 'Cajado de Gelo Desperto', frost: 7.5, mag: 400, reserve: 2400 },
+  'cajado-vento': { name: 'Cajado de Vento Desperto', range: 18, falloffStart: 18, mag: 8, reserve: 48 },
+  'cajado-raio': { name: 'Cajado de Raio Desperto', chain: 10, mag: 14, reserve: 84 },
+};
+for (const [id, a] of Object.entries(AWAKE)) {
+  WEAPONS[`${id}-d`] = { ...WEAPONS[id], ...a, id: `${id}-d`, awake: true, charge: 1.5 };
+}
+export const isStaff = (id: string) => !!WEAPONS[id]?.staff;
+export const STAFF_ELEMENTS = ['fogo', 'gelo', 'vento', 'raio'] as const;
+export type StaffElement = (typeof STAFF_ELEMENTS)[number];
+
 export const FORGE = {
   cost: 5000,
   workTime: 4,
@@ -264,7 +313,7 @@ export interface ProjectileCfg {
   stickTime?: number;
   fuse?: number;
 }
-export const PROJECTILES: Record<NonNullable<WeaponDef['projectile']>, ProjectileCfg> = {
+export const PROJECTILES: Record<NonNullable<WeaponDef['projectile']> | 'artilharia', ProjectileCfg> = {
   launcher: { speed: 38, gravity: 9, radius: 4.2, minDamage: 0.25, armDist: 3 },
   bolt: { speed: 60, gravity: 3, radius: 3.2, minDamage: 0.3, armDist: 0, stickTime: 1.0 },
   ray: { speed: 70, gravity: 0, radius: 2.2, minDamage: 0.35, armDist: 0 },
@@ -275,7 +324,15 @@ export const PROJECTILES: Record<NonNullable<WeaponDef['projectile']>, Projectil
   wind: { speed: 0, gravity: 0, radius: 0, minDamage: 1, armDist: 0 },
   arc: { speed: 0, gravity: 0, radius: 0, minDamage: 1, armDist: 0 },
   vortex: { speed: 26, gravity: 10, radius: 0, minDamage: 1, armDist: 0 },
+  // bola de fogo do Cajado de Fogo; o raio de gelo age na hora (sem projétil)
+  fogo: { speed: 42, gravity: 2, radius: 2.6, minDamage: 0.5, armDist: 0 },
+  frost: { speed: 0, gravity: 0, radius: 0, minDamage: 1, armDist: 0 },
+  // Granada de Artilharia: quica como a granada e marca o chão (as bombas caem depois)
+  artilharia: { speed: 15, gravity: 15, radius: 0, minDamage: 0, armDist: 0, fuse: 1.2 },
 };
+
+// Granada de Artilharia (não é arma): voa em arco como a granada; a fumaça marca o chão e as bombas caem depois
+export const ARTILLERY_THROW = { speed: 15 };
 
 // Medidas das armas maravilha: abertura do cone do vento (rad), empurrão e subida dos zumbis arremessados,
 // distância do salto do arpão (m), força com que o vórtice puxa (m/s), o raio do centro que mata

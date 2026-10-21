@@ -24,9 +24,12 @@ function smokeTexture(): THREE.Texture {
 export type WeaponSound = 'dry' | 'magOut' | 'magIn' | 'slide' | 'knifeSwing' | 'gulp' | 'shell' | 'switch';
 
 export interface WeaponCallbacks {
-  fire(spread: number): void;
+  // charged = ataque carregado do cajado desperto (segurou o gatilho até a carga encher); false/ausente nos demais disparos
+  fire(spread: number, charged?: boolean): void;
   knife(): void;
   throwGrenade(): void;
+  // Granada de Artilharia (chamado no instante do arremesso; opcional: sem ele nada é lançado)
+  throwArtillery?(): void;
   sound(s: WeaponSound): void;
 }
 
@@ -105,6 +108,8 @@ export class WeaponView {
   spread = 0;
   sprintT = 0;
   heavyKnife = false;
+  // Punho de Ferro no lugar da faca (o game.ts liga com me.punho)
+  punho = false;
   // multiplicadores das bebidas: tempo de recarga e intervalo entre tiros
   mods = { reload: 1, fire: 1 };
 
@@ -175,6 +180,16 @@ export class WeaponView {
   private readonly v1 = new THREE.Vector3();
   private readonly v2 = new THREE.Vector3();
   private action: { kind: ActionKind; dur: number; done: () => void } | null = null;
+  // cajado desperto: tempo de gatilho segurado e se está carregando
+  private chargeT = 0;
+  private charging = false;
+  private chargeFull = false;
+  // a granada que está sendo arremessada é a de artilharia
+  private artilleryThrow = false;
+  private readonly fistRig = new THREE.Group();
+  private readonly nadeMesh: THREE.Mesh;
+  private readonly nadeMat = std(0x3d4a30, 0.7, 0.2);
+  private readonly artMat = std(0x6a1f18, 0.55, 0.3);
   private readonly bottle = new THREE.Group();
   private readonly grenadeHand = new THREE.Group();
   private readonly bottleMat = new THREE.MeshStandardMaterial({ color: 0xb8352b, roughness: 0.25, metalness: 0.1, emissive: new THREE.Color(0xb8352b), emissiveIntensity: 0.35 });
@@ -238,6 +253,7 @@ export class WeaponView {
       this.knifeRig.add(k);
     }
     this.knifeRig.visible = false;
+    this.buildFist();
 
     // garrafa da bebida (aparece só ao beber)
     const body = new THREE.Mesh(new THREE.CylinderGeometry(0.027, 0.03, 0.15, 12), this.bottleMat);
@@ -255,8 +271,9 @@ export class WeaponView {
     this.scene.add(this.bottle);
 
     // mão esquerda com a granada (arremesso)
-    const nade = new THREE.Mesh(new THREE.SphereGeometry(0.034, 12, 10), std(0x3d4a30, 0.7, 0.2));
+    const nade = new THREE.Mesh(new THREE.SphereGeometry(0.034, 12, 10), this.nadeMat);
     nade.scale.y = 1.2;
+    this.nadeMesh = nade;
     box(this.grenadeHand, 0.014, 0.03, 0.014, 0, 0.045, 0, m.steel);
     box(this.grenadeHand, 0.06, 0.05, 0.06, 0, -0.035, 0.01, m.glove);
     limb(this.grenadeHand, new THREE.Vector3(0, -0.05, 0.03), new THREE.Vector3(-0.08, -0.3, 0.3), 0.07, m.sleeve);
@@ -298,6 +315,46 @@ export class WeaponView {
     }
 
     this.setInventory(['pistol']);
+  }
+
+  // Punho de Ferro: luva de aço rebitada com ponteiras nos nós dos dedos (o punho aponta para -Z)
+  private buildFist() {
+    const m = this.mats;
+    const iron = std(0x6a6f76, 0.35, 0.75);
+    const rust = std(0x4a3a2c, 0.6, 0.6);
+    const f = this.fistRig;
+    box(f, 0.075, 0.06, 0.09, 0, 0, 0, iron);
+    box(f, 0.08, 0.035, 0.05, 0, 0.012, -0.055, iron);
+    for (let i = 0; i < 4; i++) {
+      box(f, 0.015, 0.04, 0.03, -0.0285 + i * 0.019, 0, -0.065, iron);
+      const sp = box(f, 0.008, 0.008, 0.02, -0.0285 + i * 0.019, 0.004, -0.092, rust);
+      sp.rotation.x = 0.2;
+    }
+    box(f, 0.02, 0.025, 0.06, 0.045, -0.002, -0.015, iron);
+    for (const x of [-0.03, 0, 0.03]) box(f, 0.008, 0.008, 0.008, x, 0.032, 0.01, rust);
+    box(f, 0.09, 0.075, 0.05, 0, -0.005, 0.07, rust);
+    limb(f, new THREE.Vector3(0, -0.01, 0.09), new THREE.Vector3(0.05, -0.12, 0.42), 0.075, m.sleeve);
+    f.visible = false;
+    this.knifeRig.add(f);
+  }
+
+  // Arremessa a Granada de Artilharia (mesma animação da granada). Devolve false se as mãos estão ocupadas.
+  throwArtillery(): boolean {
+    if (this.busy || this.state === 'raise') return false;
+    this.artilleryThrow = true;
+    this.nadeMesh.material = this.artMat;
+    this.startAction('throw', 0.7, () => {
+      this.artilleryThrow = false;
+      this.nadeMesh.material = this.nadeMat;
+    });
+    return true;
+  }
+
+  // 0 a 1: carga do ataque carregado (para o anel na mira); 0 se a arma não carrega ou ainda é só um aperto rápido
+  get chargeFrac(): number {
+    const c = this.def.charge;
+    if (!c || !this.charging || this.chargeT < 0.2) return 0;
+    return clamp(this.chargeT / c, 0, 1);
   }
 
   // ---------- inventário ----------
@@ -508,7 +565,7 @@ export class WeaponView {
   }
 
   // Um tiro: gasta a bala, coice, clarão, cápsula e avisa a Game.
-  private shootOnce() {
+  private shootOnce(charged = false) {
     const def = this.def;
     const mdl = this.slot.model;
     this.slot.ammo--;
@@ -523,7 +580,7 @@ export class WeaponView {
     else if (!mdl.spinner) this.ejectCasing(def.cls === 'shotgun');
     if (mdl.spinner) this.spinTo += Math.PI / 3;
     if (this.ammo === 0 && def.cls === 'pistol') this.slideLocked = true;
-    this.cb.fire(this.spread);
+    this.cb.fire(this.spread, charged);
   }
 
   // fiapo de fumaça na boca do cano: sobe devagar e some
@@ -826,6 +883,51 @@ export class WeaponView {
     }
   }
 
+  // Cajado desperto: segurar o gatilho enche a carga (def.charge s). Soltar com a carga cheia dá o ataque carregado;
+  // soltar antes é um disparo comum. Arma automática (Gelo): o raio sai normalmente enquanto se segura e,
+  // quando a carga enche, o ataque carregado sai uma vez; para repetir, solta e aperta de novo.
+  private updateCharge(dt: number, input: Input) {
+    const def = this.def;
+    const held = input.held('fire');
+    const hit = input.hit('fire');
+    const idle = this.state === 'idle' && this.sprintT < 0.35 && this.ammo > 0;
+    if (hit && idle) {
+      this.charging = true;
+      this.chargeT = 0;
+      this.chargeFull = false;
+    }
+    if (this.charging && held && idle) {
+      this.chargeT += dt;
+      if (this.chargeT >= def.charge! && !this.chargeFull) {
+        this.chargeFull = true;
+        this.cb.sound('slide');
+      }
+      if (def.auto) {
+        // a carga cheia solta o ataque carregado uma vez; até lá o raio sai normalmente
+        if (this.chargeFull && this.fireCD <= 0) {
+          this.shootOnce(true);
+          this.charging = false;
+          this.chargeT = 0;
+          this.chargeFull = false;
+        } else this.shotBuffer = 0.05;
+      }
+      return;
+    }
+    if (this.charging && !held) {
+      // soltou: carga cheia = carregado; senão um disparo comum
+      if (this.chargeFull && idle && this.fireCD <= 0 && !def.auto) {
+        this.shootOnce(true);
+        this.shotBuffer = 0;
+      } else if (!def.auto) this.shotBuffer = 0.2;
+      this.charging = false;
+      this.chargeT = 0;
+      this.chargeFull = false;
+      return;
+    }
+    this.charging = false;
+    if (def.auto ? held : hit) this.shotBuffer = def.auto ? 0.05 : 0.2;
+  }
+
   // ---------- quadro ----------
 
   update(dt: number, t: number, input: Input, pc: PlayerController, look: [number, number], active: boolean) {
@@ -837,12 +939,14 @@ export class WeaponView {
     const def = this.def;
 
     if (active) {
-      if (input.hit('fire') || (def.auto && input.held('fire'))) this.shotBuffer = def.auto ? 0.05 : 0.2;
+      if (def.charge) this.updateCharge(dt, input);
+      else if (input.hit('fire') || (def.auto && input.held('fire'))) this.shotBuffer = def.auto ? 0.05 : 0.2;
       for (let k = 0; k < this.slots.length; k++) {
         if (input.hit(WEAPON_KEYS[k]) && this.state !== 'action') this.switchTo(this.slots[k].def.id);
       }
       if ((input.hit('nextWeapon') || input.hit('prevWeapon')) && this.state !== 'action') this.cycle(input.hit('nextWeapon') ? 1 : -1);
     }
+    if (!active || !def.charge) this.charging = false;
     const wantAds = active && input.held('aim') && !this.busy && !pc.sprinting;
     this.ads = clamp(this.ads + (wantAds ? 1 : -1) * (dt / def.adsTime), 0, 1);
     this.sprintT = lerp(this.sprintT, pc.sprinting ? 1 : 0, 1 - Math.exp(-dt * 12));
@@ -907,7 +1011,7 @@ export class WeaponView {
         this.mark('e2', u, 0.45, () => this.emberBurst(18));
       } else {
         this.mark('pin', u, 0.15, () => this.cb.sound('shell'));
-        this.mark('throw', u, 0.48, () => this.cb.throwGrenade());
+        this.mark('throw', u, 0.48, () => (this.artilleryThrow ? this.cb.throwArtillery?.() : this.cb.throwGrenade()));
       }
       if (u >= 1) {
         this.action = null;
@@ -1190,12 +1294,22 @@ export class WeaponView {
       pos.x += 0.04 * dip;
       if (u > 0.03 && u < 0.7) {
         this.knifeRig.visible = true;
-        this.knifeBasic.visible = !this.heavyKnife;
-        this.knifeHeavy.visible = this.heavyKnife;
-        const s = smooth(0.05, 0.32, u);
-        const away = smooth(0.45, 0.7, u);
-        this.knifeRig.position.set(lerp(0.3, -0.2, s), lerp(-0.26, -0.07, s) - away * 0.2, lerp(-0.32, -0.48, s));
-        this.knifeRig.rotation.set(lerp(-0.1, 0.1, s), lerp(0.9, -0.7, s), lerp(-0.7, 0.8, s));
+        this.knifeBasic.visible = !this.heavyKnife && !this.punho;
+        this.knifeHeavy.visible = this.heavyKnife && !this.punho;
+        this.fistRig.visible = this.punho;
+        if (this.punho) {
+          // soco reto: recua, estica para a frente e volta
+          const back = smooth(0.03, 0.16, u);
+          const hit = smooth(0.16, 0.3, u);
+          const away = smooth(0.45, 0.7, u);
+          this.knifeRig.position.set(lerp(0.2, 0.0, hit), lerp(-0.24, -0.08, hit) - away * 0.2, lerp(-0.18, -0.62, hit) + (1 - back) * 0.05);
+          this.knifeRig.rotation.set(lerp(0.1, -0.05, hit), lerp(0.3, 0, hit), lerp(-0.2, 0, hit));
+        } else {
+          const s = smooth(0.05, 0.32, u);
+          const away = smooth(0.45, 0.7, u);
+          this.knifeRig.position.set(lerp(0.3, -0.2, s), lerp(-0.26, -0.07, s) - away * 0.2, lerp(-0.32, -0.48, s));
+          this.knifeRig.rotation.set(lerp(-0.1, 0.1, s), lerp(0.9, -0.7, s), lerp(-0.7, 0.8, s));
+        }
       }
     }
 
@@ -1209,6 +1323,18 @@ export class WeaponView {
     if (pc.downT > 0.01) {
       pos.y -= 0.01 * pc.downT;
       rot.z -= 0.2 * pc.downT;
+    }
+
+    // cajado: brilho e anéis animados; a carga treme a arma e puxa o cano para trás
+    const tick = mdl.group.userData.tick as ((t: number, charge: number) => void) | undefined;
+    if (tick) {
+      const c = this.chargeFrac;
+      tick(t, c);
+      if (c > 0) {
+        pos.x += (Math.random() - 0.5) * 0.004 * c;
+        pos.y += (Math.random() - 0.5) * 0.004 * c;
+        pos.z += 0.02 * c;
+      }
     }
 
     this.root.position.copy(pos);

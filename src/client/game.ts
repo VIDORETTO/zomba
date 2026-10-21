@@ -44,6 +44,8 @@ import { controlsEditor, isListening } from './controlsUi';
 import { gradePass } from './grade';
 import { freeScene } from './free';
 import { standingIn } from '../shared/busBody';
+import { TrincheiraClient } from './trincheira';
+
 
 export interface Settings {
   sensitivity: number;
@@ -85,6 +87,12 @@ export interface GameOptions {
 // ?autoplay em desenvolvimento: joga sem capturar o mouse (usado nos testes automáticos)
 const AUTOPLAY = import.meta.env.DEV && new URLSearchParams(location.search).has('autoplay');
 
+// interações novas da Trincheira (o texto do aviso vem do TrincheiraClient)
+const TR_KINDS: Record<string, true> = {
+  generator: true, fizz: true, tank: true, shovel: true, mound: true, part: true, bench: true, gramofone: true, disco: true,
+  portal: true, crystal: true, staffPedestal: true, altar: true, tabua: true, tabuaAltar: true, challenge: true, missao: true,
+};
+
 const WEEKDAYS =['Domingo', 'Segunda-feira', 'Terça-feira', 'Quarta-feira', 'Quinta-feira', 'Sexta-feira', 'Sábado'];
 
 export class Game {
@@ -109,6 +117,9 @@ export class Game {
   private fogBanks: FogBanks | null = null;
   // furos de bala, sangue, queimados e a bagunça fixa do mapa
   private readonly decals: Decals;
+  // Trincheira: camada visual/sonora, interação que está sendo segurada (cavar, montar)
+  private tr: TrincheiraClient | null = null;
+  private holdId: string | null = null;
   private zone: string | null | undefined = undefined;
   private fogK = 0;
   private lastPower = false;
@@ -130,6 +141,7 @@ export class Game {
   private readonly boltMat = new THREE.MeshStandardMaterial({ color: 0xb03020, roughness: 0.5 });
   private readonly vortexMat = new THREE.MeshBasicMaterial({ color: new THREE.Color(1.6, 0.5, 2.8) });
   private readonly orbMat = new THREE.MeshBasicMaterial({ color: new THREE.Color(2.0, 0.55, 0.1) });
+  private readonly artyMat = new THREE.MeshStandardMaterial({ color: 0x5a1a14, roughness: 0.6, emissive: new THREE.Color(0.35, 0.03, 0.02) });
   // pilares de fogo do Bispo marcados no chão (somem quando o fogo sobe)
   private warns: { x: number; z: number; t: number; dur: number }[] = [];
   // buracos negros abertos: núcleo escuro e anel roxo (sem luz própria: luz nova recompila os materiais e trava o quadro)
@@ -226,8 +238,9 @@ export class Game {
     };
 
     this.weapon = new WeaponView({
-      fire: (spread) => this.fire(spread),
+      fire: (spread, charged) => this.fire(spread, charged),
       throwGrenade: () => this.throwGrenade(),
+      throwArtillery: () => this.throwArtillery(),
       knife: () => this.knife(),
       sound: (s) => {
         if (s === 'dry') this.audio.dryFire();
@@ -248,6 +261,18 @@ export class Game {
     this.hud = new Hud(o.container);
     this.input.keys = loadKeys(this.settings.keys);
     this.hud.reloadKey = actionKey(this.input.keys, 'reload');
+    if (o.map.trincheira) {
+      // Trincheira: geradores, tanque, colossos, clima, cajados... e soldados de 1918
+      this.tr = new TrincheiraClient(this.scene, o.map, o.tex, { quality: this.q, audio: this.audio, mapView: this.mapView });
+      this.tr.attachHud(this.hud);
+      this.tr.setLocal(this.transport.localId, (pid) => this.nameOf(pid));
+      this.zombies.era = 'ww1';
+      const sf = o.map.surface;
+      if (sf) this.pc.mudAt = (x, z) => {
+        const cx = Math.floor(x - sf.ox), cz = Math.floor(z - sf.oz);
+        return cx >= 0 && cz >= 0 && cx < sf.w && cz < sf.h && sf.data[cz * sf.w + cx] === 'm';
+      };
+    }
     this.renderer.toneMappingExposure = EXPOSURE * (this.settings.brightness ?? 1);
     this.renderer.domElement.addEventListener('click', this.onCanvasClick);
 
@@ -268,6 +293,7 @@ export class Game {
 
   start() {
     this.audio.startAmbience();
+    if (this.tr) this.audio.startTrincheira();
     const d = new Date();
     const hh = String(d.getHours()).padStart(2, '0');
     const mm = String(d.getMinutes()).padStart(2, '0');
@@ -311,6 +337,7 @@ export class Game {
     this.mapView.dispose();
     this.mapView = buildMapView(this.o.map, this.o.tex, this.scene, this.q);
     this.mapView.setDoors([...this.world.openDoors]);
+    this.tr?.setMapView(this.mapView);
     this.foliage.dispose();
     this.foliage = new FoliageView(this.scene, this.o.map, this.q);
     this.fx.density = this.q.particles;
@@ -331,6 +358,7 @@ export class Game {
     this.camera.updateProjectionMatrix();
     this.weapon.resize(w / h);
     this.fx.resize(h * this.renderer.getPixelRatio(), this.camera.fov);
+    this.tr?.resize(h * this.renderer.getPixelRatio(), this.camera.fov);
   };
 
   private onCanvasClick = () => {
@@ -388,7 +416,8 @@ export class Game {
     for (const id of open) {
       if (this.world.openDoors.has(id)) continue;
       this.world.openDoors.add(id);
-      if (!id.startsWith('box-spot-')) {
+      // colisão que só liga e desliga (Caixa, Fonte da Sorte, pés dos colossos) não tem modelo nem muda a sombra
+      if (!id.startsWith('box-spot-') && !id.startsWith('fizz-spot-') && !id.startsWith('pe-')) {
         this.mapView.setDoors([id]);
         this.renderer.shadowMap.needsUpdate = true;
         this.shadowRefreshT = 1.4;
@@ -401,6 +430,7 @@ export class Game {
       this.weapon.setInventory(me.weapons);
       this.weapon.setSights(me.sights ?? {});
       this.weapon.heavyKnife = me.heavyKnife;
+      this.weapon.punho = !!me.punho;
       if (this.pendingSwitch && me.weapons.includes(this.pendingSwitch)) {
         this.weapon.switchTo(this.pendingSwitch);
         this.pendingSwitch = null;
@@ -417,6 +447,8 @@ export class Game {
   private onEvents(list: GameEvent[]) {
     const local = this.transport.localId;
     for (const e of list) {
+      // Trincheira: sons, avisos, partículas e painéis de cada evento do mapa
+      this.tr?.onEvent(e, { local, me: this.me, playerPos: (pid) => this.playerPos(pid) });
       switch (e.e) {
         case 'points':
           if (e.pid === local) this.hud.popPoints(e.delta, this.me?.slot ?? 0);
@@ -688,6 +720,29 @@ export class Game {
           if (d < 12) this.shake = Math.max(this.shake, 0.5 * (1 - d / 12));
           break;
         }
+        case 'blindado':
+        case 'fx':
+          this.zombies.onEvent(e);
+          if (e.e === 'blindado' && e.phase === 'spawn') {
+            this.hud.showBanner('O BLINDADO');
+            this.shake = Math.max(this.shake, 0.9);
+          }
+          break;
+        case 'teleporte':
+          // o navegador é quem mexe na posição: leva o jogador para a alcova ou de volta à boca do túnel
+          if (e.pid === local && this.o.map.trincheira) {
+            const D = this.o.map.trincheira;
+            const dest = e.to === 'camara' ? D.chamber.alcoves.find((a) => a.el === e.el)?.c : D.portals.find((p) => p.el === e.el)?.exit;
+            if (dest) {
+              const back = e.to === 'camara' ? D.chamber.center : D.portals.find((p) => p.el === e.el)!.mouth;
+              this.pc.spawn(dest[0], dest[1], Math.atan2(-(back[0] - dest[0]), -(back[1] - dest[1])));
+              this.hud.whiteFlash();
+            }
+          }
+          break;
+        case 'artilharia':
+          if (e.phase === 'throw' && e.pid === local) this.hud.notify('<b>Granada de Artilharia</b>: afaste-se da fumaça vermelha.');
+          break;
         case 'gameover':
           this.gameOver(e.round);
           break;
@@ -717,6 +772,14 @@ export class Game {
           if (e.pid === local) {
             this.buyPending = 0;
             this.audio.deny();
+            const why: Partial<Record<typeof e.reason, string>> = {
+              trancado: 'Está trancado.',
+              faltam: 'Ainda falta algo para isso.',
+              ocupado: 'Já está em uso.',
+              desligada: 'Sem energia: ligue o gerador da área.',
+              unica: 'Você já carrega um cajado.',
+            };
+            if (why[e.reason]) this.hud.notify(why[e.reason]!);
           }
           break;
         case 'sight':
@@ -772,7 +835,7 @@ export class Game {
           if (e.phase === 'candle') this.audio.knifeSwing();
           else if (e.phase === 'on') {
             this.audio.forgeIgnite(fp);
-            this.hud.notify(this.o.map.forge.candles.length ? 'A <b>Forja</b> acendeu no cemitério.' : 'A <b>Forja</b> acendeu no cofre do banco, na Cidade.');
+            this.hud.notify(this.o.map.forgeNeedsGenerators ? 'A <b>Forja</b> está pronta na Escavação.' : this.o.map.forge.candles.length ? 'A <b>Forja</b> acendeu no cemitério.' : 'A <b>Forja</b> acendeu no cofre do banco, na Cidade.');
             // pista do ritual: as velas pretas da Igreja só pegam fogo agora
             if (this.o.map.ritual) setTimeout(() => !this.disposed && this.hud.notify('Na Igreja, as <b>velas pretas</b> do altar parecem esperar por fogo...'), 5000);
           } else if (e.phase === 'start') {
@@ -876,14 +939,24 @@ export class Game {
 
   // ---------- combate ----------
 
-  private fire(spread: number) {
+  private fire(spread: number, charged = false) {
     const def = this.weapon.def;
     const origin = this.camera.getWorldPosition(new THREE.Vector3());
     const fwd = this.camera.getWorldDirection(new THREE.Vector3());
     if (def.projectile) {
       const start = origin.clone().addScaledVector(fwd, 0.6);
       start.y -= 0.06;
-      this.transport.send({ t: 'launch', weapon: def.id, x: start.x, y: start.y, z: start.z, dx: fwd.x, dy: fwd.y, dz: fwd.z });
+      this.transport.send({ t: 'launch', weapon: def.id, x: start.x, y: start.y, z: start.z, dx: fwd.x, dy: fwd.y, dz: fwd.z, ...(charged ? { charged: true } : {}) });
+      if (def.staff && this.tr) {
+        // cajados: clarão na boca e o som de cada elemento (o resto do efeito vem da simulação)
+        this.tr.staffMuzzle(def.staff, start, fwd);
+        if (def.projectile === 'frost') this.tr.iceBeam(start, fwd, def.range);
+        else if (def.projectile === 'fogo') this.audio.trSound('fogo-bola');
+        this.pc.pitch += 0.008 * def.recoil;
+        this.flashT = 0.05;
+        this.blockSprintT = 0.3;
+        if (def.projectile === 'frost' || def.projectile === 'fogo') return;
+      }
       if (def.projectile === 'ray') this.audio.rayZap();
       else if (def.projectile === 'wind') {
         this.audio.windBlast();
@@ -949,7 +1022,8 @@ export class Game {
         if (!b?.hidden && !b?.door && b?.mat !== 'lava') this.decals.add('bullet', p, new THREE.Vector3(wh.nx, wh.ny, wh.nz), 0.16 + Math.random() * 0.06);
       }
     }
-    this.transport.send({ t: 'shoot', weapon: def.id, hits });
+    // o raio no meio da mira serve para acertar alvos de enigma e os olhos dos colossos (Trincheira)
+    this.transport.send({ t: 'shoot', weapon: def.id, hits, ...(this.tr ? { ray: [origin.x, origin.y, origin.z, fwd.x, fwd.y, fwd.z] as [number, number, number, number, number, number] } : {}) });
     this.audio.gunshot(undefined, def.sound ?? def.cls);
     if (def.upgraded) this.audio.emberShot();
     const adsK = 1 - this.weapon.ads * 0.45;
@@ -972,6 +1046,20 @@ export class Game {
     this.audio.knifeSwing();
   }
 
+  // Granada de Artilharia: sai da mão no instante do arremesso (a animação é a da granada)
+  private throwArtillery() {
+    const origin = this.camera.getWorldPosition(new THREE.Vector3());
+    const fwd = this.camera.getWorldDirection(new THREE.Vector3());
+    const start = origin.clone().addScaledVector(fwd, 0.5);
+    start.y -= 0.1;
+    const v = fwd.clone().multiplyScalar(15);
+    v.y += 2.5;
+    v.x += this.pc.vel.x * 0.5;
+    v.z += this.pc.vel.z * 0.5;
+    this.transport.send({ t: 'artillery', x: start.x, y: start.y, z: start.z, vx: v.x, vy: v.y, vz: v.z });
+    this.audio.trSound('artilharia-lanca');
+  }
+
   // Granadas em voo: bolinhas que seguem o estado da partida.
   private updateGrenades() {
     const list = this.buffer.latest?.s.projectiles ?? [];
@@ -980,7 +1068,7 @@ export class Game {
       seen.add(g.id);
       let m = this.nadeMeshes.get(g.id);
       if (!m) {
-        const mat = g.kind === 'ray' ? this.rayMat : g.kind === 'vortex' ? this.vortexMat : g.kind === 'orb' ? this.orbMat : g.kind === 'bolt' || g.kind === 'blade' ? this.boltMat : g.kind === 'rocket' ? this.rocketMat : this.nadeMat;
+        const mat = g.kind === 'ray' ? this.rayMat : g.kind === 'vortex' ? this.vortexMat : g.kind === 'orb' || g.kind === 'fogo' ? this.orbMat : g.kind === 'artilharia' ? this.artyMat : g.kind === 'bolt' || g.kind === 'blade' ? this.boltMat : g.kind === 'rocket' ? this.rocketMat : this.nadeMat;
         m = new THREE.Mesh(this.nadeGeo, mat);
         if (g.kind === 'bolt') m.scale.set(0.4, 0.4, 3);
         if (g.kind === 'blade') m.scale.set(0.15, 0.5, 2.6);
@@ -988,6 +1076,8 @@ export class Game {
         if (g.kind === 'ray') m.scale.setScalar(2.2);
         if (g.kind === 'vortex') m.scale.setScalar(1.6);
         if (g.kind === 'orb') m.scale.setScalar(2.4);
+        if (g.kind === 'fogo') m.scale.setScalar(2.8);
+        if (g.kind === 'artilharia') m.scale.setScalar(1.5);
         m.position.set(g.x, g.y, g.z);
         this.scene.add(m);
         this.nadeMeshes.set(g.id, m);
@@ -1006,6 +1096,7 @@ export class Game {
       else if (g.kind === 'ray') this.fx.rayTrail(prev, m.position);
       else if (g.kind === 'vortex') this.fx.vortexSwirl(m.position, 0.4, 1 / 60, 0.5);
       else if (g.kind === 'orb') this.fx.rocketTrail(prev, m.position);
+      else if (g.kind === 'fogo' || g.kind === 'artilharia') this.tr?.projectileTrail(g.kind, prev, m.position);
     }
     for (const [id, m] of this.nadeMeshes) {
       if (seen.has(id)) continue;
@@ -1087,7 +1178,7 @@ export class Game {
     if (sf) {
       const cx = Math.floor(x - sf.ox), cz = Math.floor(z - sf.oz);
       const c = cx >= 0 && cz >= 0 && cx < sf.w && cz < sf.h ? sf.data[cz * sf.w + cx] : 'd';
-      return c === 'h' ? 'hard' : c === 'w' ? 'wood' : 'dirt';
+      return c === 'h' ? 'hard' : c === 'w' ? 'wood' : c === 'm' ? 'mud' : 'dirt';
     }
     // Rota: chão de concreto nas paradas, asfalto na estrada do ônibus, terra no resto
     const route = this.o.map.bus;
@@ -1190,6 +1281,15 @@ export class Game {
       this.zombies.quake = 0;
     }
     this.players.update(sample, dt);
+    // Trincheira: o tanque (e o resto) se interpola antes do controlador, que leva quem está em cima dele
+    const trSnap = this.buffer.latest?.s;
+    if (this.tr && trSnap) {
+      this.tr.update(sample, trSnap, dt, this.t, this.me, this.camera);
+      this.shake = Math.max(this.shake, this.tr.quake);
+      this.tr.quake = 0;
+      this.pc.setTank(this.tr.tankPose());
+      this.audio.trUpdate(dt);
+    }
 
     const life = this.me?.life ?? 'alive';
     const active = this.active;
@@ -1265,6 +1365,8 @@ export class Game {
       this.weapon.startAction('throw', 0.62, () => {});
     }
     const canAct = active && life === 'alive';
+    if (this.tr && this.input.hit('artillery') && canAct && (this.me?.artilharia ?? 0) > 0 && !this.weapon.busy) this.weapon.throwArtillery();
+    this.hud.setCharge(life === 'alive' && !this.over ? this.weapon.chargeFrac : 0);
     if (!this.updateRevive(canAct) && !this.updateRepair(canAct) && !this.updateInteract(dt, canAct)) this.hud.prompt(null);
     this.barricades.update(this.buffer.latest?.s.boards, dt);
     this.updateHud(dt, life);
@@ -1304,6 +1406,28 @@ export class Game {
     this.audio.setListener(this.camera.position, fwd);
     const hp = this.me?.health ?? PLAYER.maxHealth;
     this.audio.heartbeat(dt, life === 'alive' && hp < 45 ? 1 - hp / 45 : 0);
+  }
+
+  // Só em desenvolvimento (?autoplay, solo): atalhos da Trincheira para os testes automáticos.
+  debugTr(cmd: string, arg?: string) {
+    if (!AUTOPLAY) return;
+    const sim = (this.transport as unknown as { sim?: { tr: { debug(c: string, a: string | undefined, p: unknown): void } | null; players: Map<string, unknown> } }).sim;
+    const p = sim?.players.get(this.transport.localId);
+    if (cmd.startsWith('tp:')) {
+      const [x, z] = cmd.slice(3).split(',').map(Number);
+      this.pc.spawn(x, z, this.pc.yaw);
+      return;
+    }
+    if (cmd === 'rodada' && sim) {
+      const q = sim as unknown as { round: number; state: string; stateTimer: number; toSpawn: number; zombies: Map<number, unknown> };
+      q.round = Number(arg ?? 1) - 1;
+      q.state = 'intermission';
+      q.stateTimer = 0.1;
+      q.toSpawn = 0;
+      q.zombies.clear();
+      return;
+    }
+    if (sim?.tr && p) sim.tr.debug(cmd, arg, p);
   }
 
   // Só em desenvolvimento: dá pontos ao jogador local (testes automáticos no solo).
@@ -1398,7 +1522,7 @@ export class Game {
     this.hud.setHell(hell);
     const sn = this.buffer.latest?.s;
     if (sn?.bispo) this.hud.setBoss({ hp: sn.bispo.hp, armor: sn.bispo.shield }, 'O BISPO');
-    else this.hud.setBoss(sn?.boss ?? null);
+    else this.hud.setBoss(sn?.boss ?? null, this.o.map.boss === 'blindado' ? 'O BLINDADO' : 'O CARRASCO');
     this.zombies.bispoShield = !!sn?.bispo?.shield;
     for (let i = this.warns.length - 1; i >= 0; i--) {
       const w = this.warns[i];
@@ -1458,20 +1582,61 @@ export class Game {
   private updateInteract(dt: number, canUse: boolean): boolean {
     this.buyPending = Math.max(0, this.buyPending - dt);
     const me = this.me;
-    if (!canUse || !me) return false;
-    let best: Interactable | null = null;
-    let bestD = 1.9;
-    for (const it of this.o.map.interactables) {
+    const snap = this.buffer.latest?.s;
+    if (!canUse || !me) {
+      this.releaseHold();
+      return false;
+    }
+    // candidatos ao alcance, do mais perto ao mais longe (a Trincheira soma peças soltas por zumbis)
+    const all = this.tr && snap ? [...this.o.map.interactables, ...this.tr.extraInteractables(snap)] : this.o.map.interactables;
+    const cands: [number, Interactable][] = [];
+    for (const it of all) {
       if (it.kind === 'door' && this.world.openDoors.has(it.door!)) continue;
       if (it.kind === 'box' && !this.boxUsable(it.box!)) continue;
       const d = Math.hypot(it.use[0] - this.pc.pos.x, it.use[1] - this.pc.pos.z);
-      if (d < bestD && Math.abs(this.pc.pos.y - it.y) < 1.2) {
-        bestD = d;
-        best = it;
-      }
+      const near = it.minY !== undefined ? this.pc.pos.y >= it.minY - 0.1 : Math.abs(this.pc.pos.y - it.y) < 1.2;
+      if (d < (it.reach ?? 1.9) && near) cands.push([d, it]);
     }
-    if (!best) return false;
+    cands.sort((a, b) => a[0] - b[0]);
+    for (const [, best] of cands) {
+      let r: { text: string; price: number; can: boolean; hold?: boolean } | null;
+      if (best.kind in TR_KINDS) r = this.tr && snap ? this.tr.promptFor(best, snap, me, { useKey: this.useKey, solo: this.transport.solo, weaponName: this.weapon.def.name }) : null;
+      else r = this.basePrompt(best, me);
+      if (!r) continue;
+      const poor = r.can && me.points < r.price;
+      this.hud.prompt(r.text, null, poor);
+      if (r.hold) {
+        // cavar e montar: segurar F (a simulação conta o tempo)
+        const want = r.can && this.input.held('use') && !this.weapon.busy ? best.id : null;
+        if (want !== this.holdId) {
+          this.holdId = want;
+          this.transport.send({ t: 'hold', id: want });
+        }
+        return true;
+      }
+      this.releaseHold();
+      if (r.can && this.input.hit('use') && !this.weapon.busy && this.buyPending <= 0) {
+        if (poor) {
+          this.audio.deny();
+        } else {
+          this.buyPending = 1;
+          this.transport.send({ t: 'interact', id: best.id, weapon: this.weapon.def.id });
+        }
+      }
+      return true;
+    }
+    this.releaseHold();
+    return false;
+  }
 
+  private releaseHold() {
+    if (this.holdId === null) return;
+    this.holdId = null;
+    this.transport.send({ t: 'hold', id: null });
+  }
+
+  // Texto, preço e se dá para comprar o que está na frente (Cidade, Rota e o que é comum aos mapas).
+  private basePrompt(best: Interactable, me: NetPlayer): { text: string; price: number; can: boolean } | null {
     let text: string;
     let price = 0;
     let can = true;
@@ -1510,9 +1675,9 @@ export class Game {
         text = `Pressione <b>${this.useKey}</b> para girar a <b>Caixa Misteriosa</b> <span class="price">${price}</span>`;
       } else if (b.state === 'offer' && b.pid === this.transport.localId && b.weapon) {
         const full = me.weapons.length >= 2 + (me.perks.includes('mula') ? 1 : 0);
-        text = `Pressione <b>${this.useKey}</b> para pegar <b>${WEAPONS[b.weapon]?.name ?? b.weapon}</b>${full ? `<small>No lugar de: ${this.weapon.def.name}</small>` : ''}`;
+        text = `Pressione <b>${this.useKey}</b> para pegar <b>${b.weapon === 'artilharia' ? '3 Granadas de Artilharia' : WEAPONS[b.weapon]?.name ?? b.weapon}</b>${full ? `<small>No lugar de: ${this.weapon.def.name}</small>` : ''}`;
       } else {
-        return false;
+        return null;
       }
     } else if (best.kind === 'bank') {
       const bal = bankBalance(this.o.playerName);
@@ -1546,11 +1711,11 @@ export class Game {
       }
     } else if (best.kind === 'candle') {
       const f = this.buffer.latest!.s.forge;
-      if (f.on || f.candles[best.candle!]) return false;
+      if (f.on || f.candles[best.candle!]) return null;
       text = `Pressione <b>${this.useKey}</b> para acender a vela`;
     } else if (best.kind === 'ritual') {
       const r = this.buffer.latest?.s.ritual;
-      if (!r || r.state !== 'idle' || r.candles[best.candle!]) return false;
+      if (!r || r.state !== 'idle' || r.candles[best.candle!]) return null;
       if (!this.buffer.latest!.s.forge.on) {
         text = 'Uma vela preta, fria<small>Algo precisa queimar antes dela</small>';
         can = false;
@@ -1558,18 +1723,18 @@ export class Game {
         text = `Pressione <b>${this.useKey}</b> para acender a <b>vela preta</b>`;
       }
     } else if (best.kind === 'power') {
-      if (this.buffer.latest?.s.power) return false;
+      if (this.buffer.latest?.s.power) return null;
       text = `Pressione <b>${this.useKey}</b> para ligar a <b>energia</b><small>Acende as bebidas e abre o cofre da Forja</small>`;
     } else if (best.kind === 'forge') {
       const f = this.buffer.latest!.s.forge;
       const def = this.weapon.def;
       if (!f.on) {
-        text = this.o.map.forge.candles.length ? 'A Forja está fria. Acenda as três velas do cemitério.' : 'A Forja está fria. Ligue a energia na Usina.';
+        text = this.o.map.forgeNeedsGenerators ? 'A Forja ainda dorme no fundo do poço. Ligue os 6 geradores.' : this.o.map.forge.candles.length ? 'A Forja está fria. Acenda as três velas do cemitério.' : 'A Forja está fria. Ligue a energia na Usina.';
         can = false;
       } else if (f.state === 'ready' && f.pid === this.transport.localId && f.weapon) {
         text = `Pressione <b>${this.useKey}</b> para pegar <b>${WEAPONS[f.weapon]?.name}</b>`;
       } else if (f.state !== 'idle') {
-        return false;
+        return null;
       } else if (def.upgraded || !WEAPONS[upgradeId(def.id)]) {
         text = 'Esta arma já foi forjada';
         can = false;
@@ -1607,14 +1772,18 @@ export class Game {
     } else {
       const d = PERKS[best.perk as PerkId];
       price = perkPrice(d.id, this.transport.solo);
+      const pg = this.o.map.perkGen?.[d.id];
       if (this.o.map.perksNeedPower && !this.buffer.latest?.s.power) {
         text = `<b>${d.name}</b> sem energia<small>Ligue a alavanca na Usina</small>`;
+        can = false;
+      } else if (pg !== undefined && !this.buffer.latest?.s.tr?.gens[pg]?.on) {
+        text = `<b>${d.name}</b> sem energia<small>Ligue o gerador desta área</small>`;
         can = false;
       } else if (me.perks.includes(d.id)) {
         text = `Você já tem <b>${d.name}</b>`;
         can = false;
-      } else if (me.perks.length >= MAX_PERKS) {
-        text = `Limite de ${MAX_PERKS} bebidas`;
+      } else if (me.perks.length >= MAX_PERKS + (me.extraPerk ? 1 : 0)) {
+        text = `Limite de ${MAX_PERKS + (me.extraPerk ? 1 : 0)} bebidas`;
         can = false;
       } else if (d.id === 'folego' && this.transport.solo && me.selfRevives >= SOLO_SELF_REVIVES) {
         text = 'Segundo Fôlego esgotado nesta partida';
@@ -1623,17 +1792,7 @@ export class Game {
         text = `Pressione <b>${this.useKey}</b> para beber <b>${d.name}</b> <span class="price">${price}</span><small>${d.desc}</small>`;
       }
     }
-    const poor = can && me.points < price;
-    this.hud.prompt(text, null, poor);
-    if (can && this.input.hit('use') && !this.weapon.busy && this.buyPending <= 0) {
-      if (poor) {
-        this.audio.deny();
-      } else {
-        this.buyPending = 1;
-        this.transport.send({ t: 'interact', id: best.id, weapon: this.weapon.def.id });
-      }
-    }
-    return true;
+    return { text, price, can };
   }
 
   // Aplica os efeitos das bebidas que dependem do navegador (recarga, cadência, corrida) e toca as vinhetas.
@@ -1969,6 +2128,7 @@ export class Game {
         <div class="panel gameover">
           <h1>FIM DE JOGO</h1>
           <p class="survived">${players.length > 1 ? 'Vocês sobreviveram' : 'Você sobreviveu'} ${round} rodada${round === 1 ? '' : 's'} <span class="muted">· ${mins}:${secs} de partida · ${escapeHtml(this.o.map.name)}</span></p>
+          ${this.buffer.latest?.s.tr?.missao.step === 6 ? '<p class="survived">★ Missão <b>Canção da Escavação</b> concluída</p>' : ''}
           ${result ? `<div class="levelup"><span class="emb"></span><div class="lvl-info"><div class="xp-gain">+<span class="xp-count">0</span> XP</div><div class="xp-bar"><i></i></div><div class="lvl-line muted"></div>${result.record ? '<div class="new-level">Novo recorde pessoal!</div>' : ''}</div></div>` : ''}
           <table><thead><tr><th>Nome</th><th>Pontos</th><th>Abates</th><th>Na cabeça</th><th>Quedas</th><th>Reanimações</th></tr></thead><tbody>${rows}</tbody></table>
           <p class="muted online-note"></p>
@@ -1988,6 +2148,7 @@ export class Game {
           mode: this.transport.solo ? 'solo' : 'coop', map: this.o.map.id, round: Math.max(round, startRound), startRound,
           players: this.buffer.latest?.s.players.length ?? 1, kills: me.kills, headshots: me.headshots,
           downs: me.downs, revives: me.revives, seconds: Math.round(this.t),
+          missao: this.buffer.latest?.s.tr?.missao.step === 6,
         }).then((m) => (note.textContent = m), (err: Error) => (note.textContent = `Placar online: ${err.message}`));
       }
     }, 2200);
@@ -2063,6 +2224,11 @@ export class Game {
     this.input.dispose();
     this.transport.close();
     this.audio.stopAmbience();
+    if (this.tr) {
+      this.audio.stopTrincheira();
+      this.audio.setWeather('limpo');
+      this.tr.dispose();
+    }
     this.hud.dispose();
     this.mapView.dispose();
     this.foliage.dispose();

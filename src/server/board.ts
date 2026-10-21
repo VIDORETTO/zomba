@@ -116,6 +116,7 @@ export class Board {
     const run: OnlineRun = {
       name, mode: r.mode, map: r.map, round: r.round, startRound: r.startRound, players: r.players,
       kills: r.kills, headshots: r.headshots, date: new Date().toISOString().slice(0, 10), verified,
+      ...(r.missao ? { missao: true } : {}),
     };
     const start = (x: { startRound: number }) => (x.startRound === 1 ? 'zero' : 'custom');
     const i = this.data.runs.findIndex((x) => nameKey(x.name) === key && x.mode === run.mode && x.map === run.map && start(x) === start(run));

@@ -17,6 +17,8 @@ export interface OnlineRun {
   date: string;
   // registrada pelo próprio servidor (co-op); as do solo vêm do navegador do jogador
   verified: boolean;
+  // missão principal da Trincheira concluída nesta partida
+  missao?: boolean;
 }
 
 export interface OnlinePlayer {
@@ -42,6 +44,7 @@ export interface RunInput {
   downs: number;
   revives: number;
   seconds: number;
+  missao?: boolean;
 }
 
 export const BOARD = {
@@ -84,5 +87,5 @@ export function checkRun(r: Partial<RunInput> | null | undefined, maps: string[]
   if (seconds < (round - startRound) * INTERMISSION_TIME * 0.8) return 'partida rápida demais';
   // abates: no máximo uns 60 zumbis (ou cães) por rodada por jogador, com folga
   if (kills > (round - startRound + 1) * 200 * players) return 'abates demais';
-  return { mode, map: String(r.map), round, startRound, players, kills, headshots, downs, revives, seconds };
+  return { mode, map: String(r.map), round, startRound, players, kills, headshots, downs, revives, seconds, ...(r.missao === true && String(r.map) === 'trincheira' ? { missao: true } : {}) };
 }

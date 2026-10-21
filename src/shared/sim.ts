@@ -1,21 +1,25 @@
 import {
   BARRICADE, BISPO, BLEEDOUT_TIME, BOSS, BUS, DOGS, VULTO, FIRST_ROUND_DELAY, INTERMISSION_TIME, LAVA_DAMAGE, LAVA_INTERVAL,
-  PLAYER, POINTS, REVIVE_RANGE, REVIVE_TIME, ZOMBIE,
+  PLAYER, POINTS, REVIVE_RANGE, REVIVE_TIME, TRINCHEIRA, ZOMBIE,
 } from './constants';
 import { ENTRY_BOARDS, entryPoints, type MapDef } from './map/types';
 import { NavGrid } from './navgrid';
-import { BUS_DOOR, busCollide, busGround, toLocal, toWorld } from './busBody';
+import { BUS_DOOR, TANK_BODY, busCollide, busGround, toLocal, toWorld } from './busBody';
+import { TrincheiraSystems, type TrHost } from './trincheira';
+import { bossHealth, zombieHealth } from './rounds';
 import type {
   BoxState, ForgeState, GameEvent, NetPlayer, NetZombie, PlayerInput, ProjectileKind, RoundState, Snapshot, ZombieAnim, ZombieKind,
 } from './protocol';
 import { angleLerp, clamp } from './rng';
 import { MAX_PERKS, PERKS, PERK_FX, SELF_REVIVE_TIME, SOLO_SELF_REVIVES, perkPrice, type PerkId } from './perks';
-import { POWERUP, POWERUPS, type PowerupKind } from './powerups';
+import { DEFAULT_POOL, POWERUP, POWERUPS, type PowerupKind } from './powerups';
 import { BANK, MAX_START_ROUND, startPoints } from './progress';
 import { BOX, BOX_POOL, FORGE, GRENADE, KNIFE, PROJECTILES, SIGHTS, WEAPONS, WONDER, ammoPrice, baseId, damageFor, sightFits, upgradeId, wallAmmoPrice, type HitPart, type WeaponDef } from './weapons';
+
+export { bossHealth, zombieHealth };
 import { World } from './world';
 
-interface SimPlayer extends NetPlayer {
+export interface SimPlayer extends NetPlayer {
   lastHurt: number;
   lavaTimer: number;
   reviveTarget: string | null;
@@ -31,7 +35,7 @@ interface SimPlayer extends NetPlayer {
 
 interface SimGrenade {
   id: number;
-  kind: Exclude<ProjectileKind, 'orb'>;
+  kind: Exclude<ProjectileKind, 'orb' | 'orbRaio'>;
   weapon: string;
   traveled: number;
   stuck: boolean;
@@ -46,7 +50,7 @@ interface SimGrenade {
   t: number;
 }
 
-interface SimZombie {
+export interface SimZombie {
   id: number;
   x: number;
   y: number;
@@ -72,6 +76,27 @@ interface SimZombie {
   boss?: BossState;
   // só o Bispo
   bispo?: BispoState;
+  // Trincheira: Blindado, Cruzado, queimadura, frio e se é extra (não conta para o total da rodada)
+  panzer?: PanzerState;
+  templar?: { atkT: number };
+  burn?: { t: number; dps: number; acc: number; pid: string; weapon: string };
+  frost?: number;
+  frostPid?: string;
+  extra?: boolean;
+}
+
+export interface PanzerState {
+  maxHp: number;
+  visor: boolean;
+  visorTaken: number;
+  state: 'walk' | 'flame' | 'claw' | 'jump';
+  t: number;
+  flameCD: number;
+  clawCD: number;
+  farT: number;
+  flameAcc: number;
+  target: string | null;
+  hit: boolean;
 }
 
 interface BispoState {
@@ -123,16 +148,8 @@ const isBoss = (z: { kind: ZombieKind }) => z.kind === 4;
 const isVulto = (z: { kind: ZombieKind }) => z.kind === 5;
 const isBispo = (z: { kind: ZombieKind }) => z.kind === 6;
 // chefões: não morrem de Golpe Fatal nem da Bomba, não são atropelados nem engolidos
-const isChief = (z: { kind: ZombieKind }) => z.kind === 4 || z.kind === 6;
-
-export function bossHealth(round: number, players: number): number {
-  return BOSS.healthMult * zombieHealth(round) * Math.max(1, players);
-}
-
-export function zombieHealth(round: number): number {
-  if (round < 10) return 150 + 100 * (round - 1);
-  return Math.round(950 * Math.pow(1.1, round - 9));
-}
+const isChief = (z: { kind: ZombieKind }) => z.kind === 4 || z.kind === 6 || z.kind === 7;
+const isPanzer = (z: { kind: ZombieKind }) => z.kind === 7;
 
 const r3 = (v: number) => Math.round(v * 1000) / 1000;
 
@@ -156,7 +173,7 @@ export class GameSim {
   private grenades: SimGrenade[] = [];
   private nextGid = 1;
   // buracos negros do Vórtice e os zumbis que eles estão puxando neste passo
-  private vortices: { id: number; x: number; y: number; z: number; r: number; t: number; dur: number; pid: string; damage: number; pulse: number }[] = [];
+  private vortices: { id: number; x: number; y: number; z: number; r: number; t: number; dur: number; pid: string; damage: number; pulse: number; vx?: number; vz?: number }[] = [];
   private readonly sucked = new Set<number>();
   // como o próximo zumbi morto morre (arremessado, engolido, eletrocutado): vai junto no evento
   private killFx: { fling?: [number, number, number]; sucked?: boolean; shock?: boolean } | null = null;
@@ -194,6 +211,9 @@ export class GameSim {
   private readonly fogT = new Map<string, number>();
   private vultoT = 0;
   private noFogT = 0;
+  // Trincheira: regras do mapa (null nos outros mapas) e a arma que causa o dano que está sendo aplicado
+  readonly tr!: TrincheiraSystems | null;
+  private curWeapon: string | null = null;
 
   constructor(map: MapDef, readonly solo: boolean, opts: { startRound?: number } = {}) {
     this.firstRound = Math.max(1, Math.min(MAX_START_ROUND, Math.floor(opts.startRound ?? 1)));
@@ -203,6 +223,9 @@ export class GameSim {
       : this.firstRound + randInt(2, 4);
     this.nextBossRound = this.firstRound <= BOSS.firstRound ? BOSS.firstRound : this.firstRound + randInt(2, 4);
     if (this.nextBossRound === this.nextHellRound) this.nextBossRound++;
+    // Trincheira: sem cães infernais e o chefão é o Blindado (a classe da Trincheira cuida dele)
+    if (map.hellRounds === false) this.nextHellRound = Infinity;
+    if (map.boss === 'blindado') this.nextBossRound = Infinity;
     // ônibus parado na primeira parada da rota, esperando os jogadores
     const route = map.bus;
     if (route && route.stops.length) {
@@ -213,7 +236,7 @@ export class GameSim {
     }
     this.ritual = map.ritual ? { candles: map.ritual.candles.map(() => false), state: 'idle', t: 0 } : null;
     // mapa sem velas nem energia (Trincheira): a Forja já começa acesa
-    if (!map.forge.candles.length && !map.forgeNeedsPower) this.forge.on = true;
+    if (!map.forge.candles.length && !map.forgeNeedsPower && !map.forgeNeedsGenerators) this.forge.on = true;
     this.world = new World(map);
     this.nav = new NavGrid(this.world, ZOMBIE.radius);
     this.boards = map.entries.map(() => ENTRY_BOARDS);
@@ -222,7 +245,70 @@ export class GameSim {
     map.boxSpots.forEach((_, i) => {
       if (i !== this.box.loc) this.world.openDoors.add(`box-spot-${i}`);
     });
+    this.tr = map.trincheira ? new TrincheiraSystems(this.trHost()) : null;
     this.nav.rebuild();
+  }
+
+  // O que a Trincheira pode pedir à simulação (fechamentos sobre os membros privados daqui).
+  private trHost(): TrHost {
+    const self = this;
+    return {
+      map: this.world.map,
+      world: this.world,
+      nav: this.nav,
+      solo: this.solo,
+      players: this.players,
+      zombies: this.zombies,
+      time: () => self.time,
+      round: () => self.round,
+      state: () => self.state,
+      emit: (e) => self.emit(e),
+      addPoints: (p, d) => self.addPoints(p, d),
+      grantPerk: (p, perk) => self.grantPerk(p, perk),
+      giveWeapon: (p, w, held) => self.giveWeapon(p, w, held),
+      damageZombie: (z, dmg, p, part, knife, blast) => self.damageZombie(z, dmg, p, part, knife, blast),
+      damagePlayer: (p, dmg, fx, fz, lava) => self.damagePlayer(p, dmg, fx, fz, lava),
+      killSilently: (z, fx) => self.killSilently(z, fx),
+      makeZombie: (kind, x, z, hp, speed, extra) => self.makeZombie(kind, x, z, hp, speed, extra),
+      spawnZombie: (at) => self.spawnZombie(at) ?? null,
+      dropPowerup: (kind, x, y, z) => {
+        self.powerups.push({ id: self.nextPid++, kind, x, y, z, t: 0 });
+      },
+      randomPowerup: () => {
+        const pool = (self.world.map.powerupPool ?? DEFAULT_POOL).filter((k) => k !== 'freeperk' && (k !== 'firesale' || self.boxMoved));
+        return pool[Math.floor(Math.random() * pool.length)];
+      },
+      applyPowerupTo: (kind, p) => self.applyPowerup(kind, p),
+      rebuildNav: () => {
+        self.nav.rebuild();
+        self.navTimer = 0;
+      },
+      roundZombies: () => self.roundZombies(),
+      toSpawn: () => self.toSpawn,
+      groundY: (x, z, r, y) => self.world.groundHeight(x, z, r, y),
+      isRoundActive: () => self.state === 'active',
+      playerList: () => [...self.players.values()],
+      fireSale: () => self.effects.firesale > 0,
+      igniteForge: () => {
+        if (self.forge.on) return;
+        self.forge.on = true;
+        self.emit({ e: 'forge', phase: 'on', pid: null, weapon: null });
+      },
+      setWeapon: (w) => {
+        self.curWeapon = w;
+      },
+      spawnProjectile: (kind, weapon, pid, x, y, z, vx, vy, vz) => {
+        self.grenades.push({ id: self.nextGid++, kind, weapon, traveled: 0, stuck: false, stuckT: 0, pid, x, y, z, vx, vy, vz, t: 0 });
+      },
+      openVortexMoving: (pid, x, y, z, r, dur, damage, vx, vz) => {
+        const id = self.nextGid++;
+        self.vortices.push({ id, x, y, z, r, t: 0, dur, pid, damage, pulse: 0, vx, vz });
+        self.emit({ e: 'vortex', phase: 'open', id, x: r3(x), y: r3(y), z: r3(z), r, dur });
+      },
+      windBlast: (p, def, ox, oy, oz, dx, dy, dz) => self.windBlast(p as SimPlayer, def, ox, oy, oz, dx, dy, dz),
+      arcShot: (p, def, ox, oy, oz, dx, dy, dz) => self.arcShot(p as SimPlayer, def, ox, oy, oz, dx, dy, dz),
+      zombieOnSegment: (ax, ay, az, bx, by, bz) => self.zombieOnSegment(ax, ay, az, bx, by, bz),
+    };
   }
 
   addPlayer(id: string, name: string, slot: number, level = 1, bank = 0) {
@@ -242,6 +328,7 @@ export class GameSim {
   removePlayer(id: string) {
     const p = this.players.get(id);
     if (!p) return;
+    this.tr?.onPlayerGone(p);
     this.players.delete(id);
     this.fogT.delete(id);
     this.emit({ e: 'pleave', pid: id, name: p.name });
@@ -276,9 +363,12 @@ export class GameSim {
         p.pitch = msg.pitch;
         // caído também se mexe: rasteja devagar (o navegador limita a velocidade)
         const b = this.world.map.bounds;
-        p.x = clamp(msg.x, b.minX, b.maxX);
-        p.y = clamp(msg.y, -1, 30);
-        p.z = clamp(msg.z, b.minZ, b.maxZ);
+        // acabou de se teletransportar: ignora a posição velha que o navegador ainda manda
+        if (!this.tr?.teleporting(pid)) {
+          p.x = clamp(msg.x, b.minX, b.maxX);
+          p.y = clamp(msg.y, -1, 30);
+          p.z = clamp(msg.z, b.minZ, b.maxZ);
+        }
         p.crouch = p.life === 'alive' && msg.crouch;
         p.speed = msg.speed;
         break;
@@ -295,11 +385,15 @@ export class GameSim {
           if (d > def.range + 3) continue;
           const mult = p.perks.includes('gatilho') ? PERK_FX.gatilhoDamageMult : 1;
           const zx = z.x, zy = z.y, zz = z.z;
-          // Carrasco: com capacete a cabeça vale como corpo; sem ele, o triplo
+          // Carrasco: com capacete a cabeça vale como corpo; sem ele, o triplo. Blindado: o visor inteiro faz a cabeça valer como corpo; quebrado, o dobro
           const dmg = isBoss(z) && h.part === 'head'
             ? damageFor(def, 'body', d) * (z.boss!.armor ? 1 : BOSS.headMult)
-            : damageFor(def, h.part, d);
+            : isPanzer(z) && h.part === 'head'
+              ? damageFor(def, 'body', d) * (z.panzer!.visor ? 1 : 2)
+              : damageFor(def, h.part, d);
+          this.curWeapon = def.id;
           this.damageZombie(z, dmg * mult, p, h.part, false);
+          this.curWeapon = null;
           if (def.splash) {
             this.emit({ e: 'boom', x: r3(zx), y: r3(zy + 1.1), z: r3(zz), kind: 'fire' });
             for (const o of [...this.zombies.values()]) {
@@ -307,6 +401,12 @@ export class GameSim {
               this.damageZombie(o, def.splash.damage * mult, p, 'body', false, true);
             }
           }
+        }
+        // alvos dos enigmas e olhos dos colossos: um raio no meio da mira
+        if (this.tr && Array.isArray(msg.ray) && msg.ray.length === 6 && msg.ray.every(Number.isFinite)) {
+          const [ox, oy, oz, rx, ry, rz] = msg.ray;
+          const rl = Math.hypot(rx, ry, rz);
+          if (rl > 0.5 && Math.hypot(ox - p.x, oy - p.y - 1.4, oz - p.z) < 3) this.tr.rayShot(p, def.id, ox, oy, oz, rx / rl, ry / rl, rz / rl, def.range);
         }
         break;
       }
@@ -316,8 +416,19 @@ export class GameSim {
         this.emit({ e: 'knife', pid });
         if (msg.zid === null) return;
         const z = this.zombies.get(msg.zid);
-        if (!z || Math.hypot(z.x - p.x, z.z - p.z) > KNIFE.range + 1) return;
-        this.damageZombie(z, p.heavyKnife ? KNIFE.heavyDamage : KNIFE.damage, p, 'body', true);
+        if (!z || Math.hypot(z.x - p.x, z.z - p.z) > KNIFE.range + 1.2) return;
+        if (this.tr?.P(p).punho) {
+          // Punho de Ferro: o triplo da faca pesada e o zumbi voa
+          const dx = z.x - p.x, dz = z.z - p.z, dl = Math.hypot(dx, dz) || 1;
+          this.killFx = { fling: [r3((dx / dl) * 9), r3(5 + Math.random() * 2), r3((dz / dl) * 9)] };
+          this.curWeapon = 'punho';
+          this.damageZombie(z, KNIFE.heavyDamage * TRINCHEIRA.punhoMult, p, 'body', true);
+          this.killFx = null;
+        } else {
+          this.curWeapon = 'knife';
+          this.damageZombie(z, p.heavyKnife ? KNIFE.heavyDamage : KNIFE.damage, p, 'body', true);
+        }
+        this.curWeapon = null;
         break;
       }
       case 'revive':
@@ -345,6 +456,11 @@ export class GameSim {
         const dl = Math.hypot(msg.dx, msg.dy, msg.dz);
         if (!Number.isFinite(dl) || dl < 1e-3 || Math.hypot(msg.x - p.x, msg.y - p.y - 1.4, msg.z - p.z) > 2.5) return;
         p.lastLaunch = this.time;
+        if (def.staff && this.tr) {
+          this.tr.launchStaff(p, def, msg.x, msg.y, msg.z, msg.dx / dl, msg.dy / dl, msg.dz / dl, !!msg.charged);
+          break;
+        }
+        if (def.projectile === 'frost') break;
         if (def.projectile === 'wind' || def.projectile === 'arc') {
           const ox = msg.x, oy = msg.y, oz = msg.z, dx = msg.dx / dl, dy = msg.dy / dl, dz = msg.dz / dl;
           this.emit({ e: 'shot', pid, weapon: def.id });
@@ -360,6 +476,20 @@ export class GameSim {
         this.emit({ e: 'shot', pid, weapon: def.id });
         break;
       }
+      case 'hold':
+        if (this.tr) this.tr.hold(p, typeof msg.id === 'string' && msg.id.length < 48 ? msg.id : null);
+        break;
+      case 'artillery': {
+        if (!this.tr || p.life === 'dead') return;
+        const sp = Math.hypot(msg.vx, msg.vy, msg.vz);
+        if (Math.hypot(msg.x - p.x, msg.y - p.y - 1.4, msg.z - p.z) > 2.5 || sp > 25 || !Number.isFinite(sp)) return;
+        if (!this.tr.throwArtillery(p)) return;
+        this.grenades.push({
+          id: this.nextGid++, kind: 'artilharia', weapon: '', traveled: 0, stuck: false, stuckT: 0,
+          pid: p.id, x: msg.x, y: msg.y, z: msg.z, vx: msg.vx, vy: msg.vy, vz: msg.vz, t: 0,
+        });
+        break;
+      }
       case 'repair':
         p.repairEntry = p.life === 'alive' && msg.entry !== null && this.boards[msg.entry] !== undefined ? msg.entry : null;
         if (p.repairEntry === null) p.repairT = 0;
@@ -370,10 +500,13 @@ export class GameSim {
   // Compra num objeto do mapa (caixote de munição ou máquina de bebida). A simulação confere tudo.
   private interact(p: SimPlayer, id: string, weapon: string) {
     if (p.life !== 'alive') return;
-    const it = this.world.map.interactables.find((i) => i.id === id);
+    const it = this.world.map.interactables.find((i) => i.id === id) ?? this.tr?.virtualIt(id);
     if (!it) return;
     const deny = (reason: 'pontos' | 'limite' | 'possui' | 'longe' | 'esgotado' | 'cheio' | 'desligada' | 'unica' | 'mira') => this.emit({ e: 'deny', pid: p.id, reason });
-    if (Math.hypot(p.x - it.use[0], p.z - it.use[1]) > 2.6) return deny('longe');
+    if (Math.hypot(p.x - it.use[0], p.z - it.use[1]) > (it.reach !== undefined ? it.reach + 0.7 : 2.6)) return deny('longe');
+    if (it.minY !== undefined && p.y < it.minY) return deny('longe');
+    // Trincheira: geradores, Fonte, tanque, peças, cajados e o resto
+    if (this.tr && this.tr.interact(p, it)) return;
 
     if (it.kind === 'door') {
       const d = this.world.map.doors.find((x) => x.id === it.door);
@@ -492,7 +625,11 @@ export class GameSim {
       if (it.box !== b.loc || b.state === 'moving' || b.state === 'spinning') return;
       if (b.state === 'offer') {
         if (b.pid !== p.id) return;
-        this.giveWeapon(p, b.weapon!, weapon);
+        // Trincheira: raramente a caixa entrega 3 Granadas de Artilharia em vez de uma arma
+        if (b.weapon === 'artilharia' && this.tr) {
+          this.tr.P(p).artilharia += 3;
+          this.emit({ e: 'peca', pid: p.id, key: 'artilharia' });
+        } else this.giveWeapon(p, b.weapon!, weapon);
         this.emit({ e: 'box', phase: 'take', loc: b.loc, pid: p.id, weapon: b.weapon });
         Object.assign(b, { state: 'idle', t: 0, weapon: null, pid: null });
         return;
@@ -564,8 +701,11 @@ export class GameSim {
 
     const perk = it.perk!;
     if (this.world.map.perksNeedPower && !this.power) return deny('desligada');
+    // Trincheira: cada bebida fixa só vende com o gerador da área ligado
+    const pg = this.world.map.perkGen?.[perk];
+    if (pg !== undefined && this.tr && !this.tr.gens[pg].on) return deny('desligada');
     if (p.perks.includes(perk)) return deny('possui');
-    if (p.perks.length >= MAX_PERKS) return deny('limite');
+    if (p.perks.length >= (this.tr ? this.tr.perkLimit(p) : MAX_PERKS)) return deny('limite');
     if (perk === 'folego' && this.solo && p.selfRevives >= SOLO_SELF_REVIVES) return deny('esgotado');
     const price = perkPrice(perk, this.solo);
     if (p.points < price) return deny('pontos');
@@ -605,11 +745,13 @@ export class GameSim {
 
   // Sorteio da caixa: nunca uma arma que o jogador já tem.
   private pickBoxWeapon(p: SimPlayer): string {
+    if (this.tr && Math.random() < 0.03) return 'artilharia';
     // arma maravilha única: fica fora do sorteio enquanto alguém a tiver (ou ela estiver na Forja)
     const taken = new Set<string>();
     for (const o of this.players.values()) for (const w of o.weapons) taken.add(baseId(w));
     if (this.forge.weapon) taken.add(baseId(this.forge.weapon));
-    const pool = BOX_POOL.filter(([w]) => !p.weapons.includes(w) && !p.weapons.includes(upgradeId(w)) && !(WEAPONS[w].unique && taken.has(w)));
+    const excl = this.world.map.boxExclude ?? [];
+    const pool = BOX_POOL.filter(([w]) => !excl.includes(w) && !p.weapons.includes(w) && !p.weapons.includes(upgradeId(w)) && !(WEAPONS[w].unique && taken.has(w)));
     const total = pool.reduce((a, [, wt]) => a + wt, 0);
     let r = Math.random() * total;
     for (const [w, wt] of pool) {
@@ -685,7 +827,7 @@ export class GameSim {
     let kind: PowerupKind | null = null;
     if (last && POWERUP.guaranteedAmmoRounds.includes(this.round)) kind = 'maxammo';
     else if (this.dropsThisRound < POWERUP.maxPerRound && Math.random() < POWERUP.dropChance) {
-      const pool = (Object.keys(POWERUPS) as PowerupKind[]).filter((k) => k !== this.lastDrop && (k !== 'firesale' || this.boxMoved));
+      const pool = (this.world.map.powerupPool ?? DEFAULT_POOL).filter((k) => k !== this.lastDrop && (k !== 'firesale' || this.boxMoved));
       kind = pool[Math.floor(Math.random() * pool.length)];
     }
     if (!kind) return;
@@ -729,6 +871,9 @@ export class GameSim {
         this.grantPerk(p, missing[Math.floor(Math.random() * missing.length)]);
         break;
       }
+      case 'sangue':
+        this.tr?.giveBlood(p);
+        break;
       case 'carpenter':
         for (let i = 0; i < this.boards.length; i++) this.boards[i] = ENTRY_BOARDS;
         for (const o of alive) this.addPoints(o, POWERUP.carpenterPoints);
@@ -816,6 +961,7 @@ export class GameSim {
         this.emit({ e: 'bispo', phase: 'phase', zid: z.id, x: r3(z.x), z: r3(z.z), n: b.phase });
       }
     }
+    if (z.panzer && part === 'head') this.tr?.panzerHeadHit(z, dmg);
     if (z.boss) {
       z.boss.taken += dmg;
       if (z.boss.armor && z.boss.taken >= z.boss.maxHp * BOSS.armorFrac && z.hp > 0) {
@@ -833,6 +979,7 @@ export class GameSim {
     if (isDog(z)) this.dogBlast(z);
     if (isBoss(z)) this.bossDeath(z);
     if (isBispo(z)) this.bispoDeath(z);
+    if (isPanzer(z)) this.tr?.onPanzerDeath(z, p);
     p.kills++;
     if (part === 'head' && !knife) p.headshots++;
     this.addPoints(p, knife ? POINTS.knifeKill : part === 'head' ? POINTS.headKill : POINTS.kill);
@@ -841,11 +988,44 @@ export class GameSim {
       x: r3(z.x), y: r3(z.y), z: r3(z.z), yaw: r3(z.yaw), kind: z.kind, look: z.look,
       ...(this.killFx ?? {}),
     });
+    this.tr?.onKill(z, p, { knife, weapon: this.curWeapon });
     this.maybeDrop(z);
+  }
+
+  // Tira um zumbi do jogo sem pontos nem item (esmagado pelo tanque ou pelo colosso, queimado, dispersado pela missão).
+  private killSilently(z: SimZombie, fx: { fling?: [number, number, number]; sucked?: boolean; shock?: boolean } = {}) {
+    if (!this.zombies.delete(z.id)) return;
+    if (z.entry >= 0 && this.occupant[z.entry] === z.id) this.occupant[z.entry] = null;
+    this.emit({
+      e: 'zkill', zid: z.id, pid: '', part: 'body',
+      x: r3(z.x), y: r3(z.y), z: r3(z.z), yaw: r3(z.yaw), kind: z.kind, look: z.look, ...fx,
+    });
+  }
+
+  // Zumbi de um tipo novo (Blindado, Cruzado) no ponto dado.
+  private makeZombie(kind: 0 | 1 | 2 | 7 | 8, x: number, z: number, hp: number, speed: number, extra: Partial<SimZombie>): SimZombie {
+    const ref = [...this.players.values()].find((p) => p.life === 'alive');
+    const zb: SimZombie = {
+      id: this.nextZid++,
+      x, y: this.world.groundHeight(x, z, ZOMBIE.radius, 0.2), z,
+      yaw: ref ? Math.atan2(ref.x - x, ref.z - z) : 0,
+      hp, kind, speed, anim: 'rise', t: 0, look: Math.floor(Math.random() * 1e6),
+      attackT: 0, attackHit: false, losT: 0, los: false, bestNav: 0xffff, stuckT: 0,
+      entry: -1, phase: 'none', phaseT: 0,
+      ...extra,
+    };
+    this.zombies.set(zb.id, zb);
+    this.emit({ e: 'zrise', zid: zb.id, x: r3(x), z: r3(z) });
+    return zb;
   }
 
   private damagePlayer(p: SimPlayer, dmg: number, fromX: number, fromZ: number, lava: boolean) {
     if (p.life !== 'alive') return;
+    // Trincheira: o Escudo de costas e a invulnerabilidade da saída da cabine
+    if (this.tr) {
+      dmg = this.tr.filterDamage(p, dmg, fromX, fromZ);
+      if (dmg <= 0) return;
+    }
     p.health -= dmg;
     p.lastHurt = this.time;
     this.emit({ e: 'phurt', pid: p.id, dmg, fromX: r3(fromX), fromZ: r3(fromZ), lava });
@@ -916,16 +1096,17 @@ export class GameSim {
       });
       this.emit({ e: 'prespawn', pid: p.id, x, z });
     }
+    this.tr?.roundStarted(this.round);
     this.emit({ e: 'roundStart', round: this.round, hell: this.hell });
   }
 
   private spawnDelay(): number {
     if (this.hell) return DOGS.spawnDelay / (1 + 0.25 * (this.players.size - 1));
-    const base = Math.max(0.3, 2.0 * Math.pow(0.95, this.round - 1));
+    const base = Math.max(0.3, 2.0 * Math.pow(0.95, this.round - 1)) * (this.tr?.slowSpawns ? 2 : 1);
     return base / (1 + 0.25 * (this.players.size - 1));
   }
 
-  private spawnZombie(at?: [number, number]) {
+  private spawnZombie(at?: [number, number]): SimZombie | undefined {
     const alive = [...this.players.values()].filter((p) => p.life === 'alive');
     const ref = alive.length ? alive : [...this.players.values()];
     // candidatos: pontos de surgir da terra e entradas com tábuas (as entradas pesam o dobro)
@@ -949,6 +1130,7 @@ export class GameSim {
     }
     if (!pool.length) pool = scored.filter((c) => c.d >= 8);
     if (!pool.length) pool = scored;
+    if (!at && !pool.length) return undefined;
     const pick = at ? { x: at[0], z: at[1], entry: -1, d: 0 } : pool[Math.floor(Math.random() * pool.length)];
     const jitter = pick.entry < 0 ? 1.5 : 0.6;
     const x = pick.x + (Math.random() - 0.5) * jitter;
@@ -977,6 +1159,7 @@ export class GameSim {
     }
     this.zombies.set(zb.id, zb);
     if (pick.entry < 0) this.emit({ e: 'zrise', zid: zb.id, x: r3(x), z: r3(z) });
+    return zb;
   }
 
   // Lugar para o raio de um cão: perto (mas não colado) de um jogador vivo, num ponto que dá para alcançar.
@@ -1348,9 +1531,12 @@ export class GameSim {
   }
 
   private explode(g: SimGrenade) {
+    // Trincheira: a bola do Cajado de Fogo queima; a Granada de Artilharia só marca o chão (as bombas caem depois)
+    if (g.kind === 'fogo') return void this.tr?.fireballImpact(g);
+    if (g.kind === 'artilharia') return void this.tr?.artilleryLanded(g.x, g.z, g.pid);
     const isGrenade = g.kind === 'grenade';
     const def = isGrenade ? null : WEAPONS[g.weapon];
-    const cfg = isGrenade ? null : PROJECTILES[g.kind as Exclude<ProjectileKind, 'grenade' | 'orb'>];
+    const cfg = isGrenade ? null : PROJECTILES[g.kind as Exclude<ProjectileKind, 'grenade' | 'orb' | 'orbRaio' | 'artilharia'>];
     const radius = isGrenade ? GRENADE.radius : cfg!.radius;
     const maxD = isGrenade ? GRENADE.damage : def!.damage;
     const minD = isGrenade ? GRENADE.minDamage : def!.damage * cfg!.minDamage;
@@ -1372,7 +1558,7 @@ export class GameSim {
       const g = this.grenades[i];
       g.t += dt;
       // granada de mão e do tambor quicam; os outros voam até bater
-      if (g.kind !== 'grenade' && g.kind !== 'drum') {
+      if (g.kind !== 'grenade' && g.kind !== 'drum' && g.kind !== 'artilharia') {
         const cfg = PROJECTILES[g.kind];
         if (g.stuck) {
           g.stuckT += dt;
@@ -1471,7 +1657,7 @@ export class GameSim {
         g.vx *= 0.6;
         g.vz *= 0.6;
       }
-      if (g.t < (g.kind === 'drum' ? PROJECTILES.drum.fuse! : GRENADE.fuse)) continue;
+      if (g.t < (g.kind === 'drum' ? PROJECTILES.drum.fuse! : g.kind === 'artilharia' ? PROJECTILES.artilharia.fuse! : GRENADE.fuse)) continue;
       this.grenades.splice(i, 1);
       this.explode(g);
     }
@@ -1560,6 +1746,10 @@ export class GameSim {
     for (let i = this.vortices.length - 1; i >= 0; i--) {
       const v = this.vortices[i];
       v.t += dt;
+      if (v.vx || v.vz) {
+        v.x += (v.vx ?? 0) * dt;
+        v.z += (v.vz ?? 0) * dt;
+      }
       if (v.t >= v.dur) {
         this.vortices.splice(i, 1);
         this.emit({ e: 'vortex', phase: 'close', id: v.id, x: r3(v.x), y: r3(v.y), z: r3(v.z), r: v.r, dur: v.dur });
@@ -1891,6 +2081,8 @@ export class GameSim {
   // pontos de surgir da terra nas áreas já abertas
   private openSpawns() {
     const open = (a: string) => this.world.openDoors.has(a);
+    // Trincheira: uma área também vale como aberta se há um jogador vivo dentro dela (tanque, Câmara Antiga)
+    if (this.tr) return this.world.map.zombieSpawns.filter((s) => this.tr!.spawnValid(s));
     return this.world.map.zombieSpawns.filter((s) => s.area === null || (Array.isArray(s.area) ? s.area.some(open) : open(s.area)));
   }
 
@@ -1980,9 +2172,10 @@ export class GameSim {
           this.spawnBoss();
         }
       }
-      if (this.toSpawn === 0 && this.roundZombies() === 0 && this.bossTimer < 0) {
+      if (this.toSpawn === 0 && this.roundZombies() === 0 && this.bossTimer < 0 && !this.tr?.bossPending()) {
         this.state = 'intermission';
         this.stateTimer = INTERMISSION_TIME;
+        this.tr?.onRoundEnd(this.round);
         this.emit({ e: 'roundEnd', round: this.round, hell: this.hell });
         if (this.hell) this.endHellRound();
       }
@@ -1996,6 +2189,7 @@ export class GameSim {
     this.updatePowerups(dt);
     this.updateForge(dt);
     this.updateBus(dt);
+    this.tr?.tick(dt);
     this.updateFog(dt);
     this.updateVortices(dt);
     this.updateZombies(dt);
@@ -2006,7 +2200,7 @@ export class GameSim {
   // zumbis que contam para a rodada (os Vultos não contam)
   private roundZombies(): number {
     let n = 0;
-    for (const z of this.zombies.values()) if (!isVulto(z)) n++;
+    for (const z of this.zombies.values()) if (!isVulto(z) && z.kind !== 8) n++;
     return n;
   }
 
@@ -2223,6 +2417,7 @@ export class GameSim {
           if (p.bleed <= 0) {
             p.life = 'dead';
             p.bleed = 0;
+            this.tr?.onPlayerGone(p);
             this.emit({ e: 'pdead', pid: p.id });
             this.checkGameOver();
           }
@@ -2232,7 +2427,8 @@ export class GameSim {
   }
 
   private updateZombies(dt: number) {
-    const targets = [...this.players.values()].filter((p) => p.life === 'alive');
+    // Sangue Morto: quem bebeu some dos alvos dos zumbis
+    const targets = [...this.players.values()].filter((p) => p.life === 'alive' && (!this.tr || this.tr.targetable(p)));
     this.navTimer -= dt;
     if (this.navTimer <= 0) {
       this.navTimer = 0.25;
@@ -2250,7 +2446,15 @@ export class GameSim {
       }
       const dog = isDog(z);
       if (z.anim === 'rise') {
-        if (z.t >= (dog ? DOGS.arriveTime : isBoss(z) ? BOSS.riseTime : isBispo(z) ? BISPO.riseTime : isVulto(z) ? VULTO.riseTime : ZOMBIE.riseTime)) z.anim = 'move';
+        if (z.t >= (dog ? DOGS.arriveTime : isBoss(z) || isPanzer(z) ? BOSS.riseTime : isBispo(z) ? BISPO.riseTime : isVulto(z) ? VULTO.riseTime : ZOMBIE.riseTime)) z.anim = 'move';
+        continue;
+      }
+      if (this.tr && z.kind === 7) {
+        this.tr.updatePanzer(z, dt, targets, all);
+        continue;
+      }
+      if (this.tr && z.kind === 8) {
+        this.tr.updateTemplar(z, dt, targets, all);
         continue;
       }
       if (isBoss(z)) {
@@ -2318,8 +2522,10 @@ export class GameSim {
         dz = door[1] - z.z;
       }
       const dl = Math.hypot(dx, dz) || 1;
-      let vx = (dx / dl) * z.speed;
-      let vz = (dz / dl) * z.speed;
+      // frio do Cajado de Gelo: até 70% mais lento
+      const slow = z.frost ? 1 - 0.7 * z.frost : 1;
+      let vx = (dx / dl) * z.speed * slow;
+      let vz = (dz / dl) * z.speed * slow;
 
       // separação entre zumbis e para não entrar no jogador
       let sx = 0;
@@ -2355,6 +2561,7 @@ export class GameSim {
         busCollide(this.bus, z, C.radius);
         z.y = Math.max(z.y, busGround(this.bus, z.x, z.z, C.radius, z.y, 0.5));
       }
+      if (this.tr) busCollide(this.tr.tankPose(), z, C.radius, TANK_BODY);
       z.yaw = angleLerp(z.yaw, Math.atan2(dx, dz), Math.min(1, dt * 6));
 
       // Zumbi preso longe de todos: reaparece em outro ponto.
@@ -2387,6 +2594,7 @@ export class GameSim {
         bleed: r3(p.bleed), revive: r3(p.revive),
         maxHealth: p.maxHealth, perks: [...p.perks], selfRevives: p.selfRevives,
         weapons: [...p.weapons], grenades: p.grenades, heavyKnife: p.heavyKnife, sights: { ...p.sights }, level: p.level, earned: p.earned,
+        ...(this.tr ? this.tr.playerFields(p) : {}),
       });
     }
     const zombies: NetZombie[] = [];
@@ -2403,8 +2611,11 @@ export class GameSim {
       power: this.power,
       bus: this.bus ? { x: r3(this.bus.x), z: r3(this.bus.z), yaw: r3(this.bus.yaw), stop: this.bus.stop, wait: r3(Math.max(0, this.bus.wait)) } : null,
       boss: (() => {
-        const b = [...this.zombies.values()].find((z) => z.boss);
-        return b ? { hp: r3(Math.max(0, b.hp) / b.boss!.maxHp), armor: b.boss!.armor } : null;
+        const b = [...this.zombies.values()].find((z) => z.boss || z.panzer);
+        if (!b) return null;
+        return b.panzer
+          ? { hp: r3(Math.max(0, b.hp) / b.panzer.maxHp), armor: b.panzer.visor }
+          : { hp: r3(Math.max(0, b.hp) / b.boss!.maxHp), armor: b.boss!.armor };
       })(),
       ritual: this.ritual ? { candles: [...this.ritual.candles], state: this.ritual.state } : null,
       bispo: (() => {
@@ -2425,6 +2636,7 @@ export class GameSim {
       forge: { ...this.forge, candles: [...this.forge.candles], t: r3(Math.max(0, this.forge.t)) },
       players,
       zombies,
+      ...(this.tr ? { tr: this.tr.snap() } : {}),
     };
   }
 }

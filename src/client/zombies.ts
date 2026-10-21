@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { BISPO, BOSS, DOGS, VULTO, ZOMBIE } from '../shared/constants';
+import { BISPO, BOSS, DOGS, TRINCHEIRA, VULTO, ZOMBIE } from '../shared/constants';
 import type { GameEvent, ZombieAnim, ZombieKind } from '../shared/protocol';
 import { angleLerp, clamp, lerp, mulberry32 } from '../shared/rng';
 import type { AudioEngine } from './audio';
@@ -7,7 +7,9 @@ import type { FX } from './fx';
 import { animateBoss, buildBoss, type BossRig } from './boss';
 import { animateBispo, buildBispo, type BispoRig } from './bispo';
 import { animateDog, buildDog, type DogRig } from './dog';
-import { buildHumanoid, flatMat, type Humanoid } from './humanoid';
+import { animateBlindado, buildBlindado, type BlindadoRig } from './blindado';
+import { animateCape, buildCruzado, type CruzadoRig } from './cruzado';
+import { buildHumanoid, flatMat, part, type Humanoid } from './humanoid';
 import type { Sample } from './snapbuffer';
 import type { TexSet } from './textures';
 
@@ -16,7 +18,16 @@ const SHIRT = [0x86705a, 0xb2aa98, 0x5e7088, 0x963e34, 0x6c7a5e, 0xa49070, 0x555
 const PANTS = [0x46506a, 0x5e5040, 0x726a58, 0x404040, 0x5a6274, 0x76664f];
 const HAIR = [0x1a1410, 0x3a2a1a, 0x5a5048, 0x2a2420, 0x6a6058];
 
-const KIND_SPEED = [ZOMBIE.walkSpeed, ZOMBIE.runSpeed, ZOMBIE.sprintSpeed, 0, 0, VULTO.speed, BISPO.speed[0]];
+const KIND_SPEED = [ZOMBIE.walkSpeed, ZOMBIE.runSpeed, ZOMBIE.sprintSpeed, 0, 0, VULTO.speed, BISPO.speed[0], 1.9, TRINCHEIRA.templarSpeed];
+
+// Visual de 1918 (Trincheira): capotes de lã, capacetes redondos, máscaras de gás, bandoleiras e lama na roupa
+export type Era = 'padrao' | 'ww1';
+const COAT = [0x6b5f4a, 0x59554a, 0x4e5240, 0x70664f, 0x4a4a46, 0x5f5444, 0x7a6e56];
+const WOOL = [0x4a4538, 0x3e3d36, 0x544a3a, 0x353530];
+const MUD = 0x3a2c1e;
+const OVERLAY_BOX = new THREE.BoxGeometry(1, 1, 1);
+const ICE_MAT = new THREE.MeshBasicMaterial({ color: 0xaee4ff, transparent: true, opacity: 0.45, depthWrite: false });
+const BURN_MAT = new THREE.MeshBasicMaterial({ color: new THREE.Color(2.2, 0.7, 0.15), transparent: true, opacity: 0.5, depthWrite: false, blending: THREE.AdditiveBlending });
 
 class ZombieView {
   readonly h: Humanoid;
@@ -48,31 +59,39 @@ class ZombieView {
   // jeito de morrer: 0 = cai para a frente ou para trás, 1 = de joelhos e de cara, 2 = de lado girando
   readonly deathStyle: number;
 
-  constructor(readonly id: number, readonly kind: ZombieKind, readonly look: number, tex: TexSet) {
+  // Cruzado: capa balançando
+  cape: CruzadoRig | null = null;
+
+  constructor(readonly id: number, readonly kind: ZombieKind, readonly look: number, tex: TexSet, era: Era = 'padrao') {
     const r = mulberry32(look);
     this.rnd = r;
     const pick = <T,>(a: T[]) => a[Math.floor(r() * a.length)];
+    const ww1 = era === 'ww1' && kind <= 2;
     const skin = flatMat(pick(SKIN), tex.grime);
-    const shirt = flatMat(pick(SHIRT), tex.grime);
+    const shirt = flatMat(ww1 ? pick(COAT) : pick(SHIRT), tex.grime);
     // Vulto: criatura pequena e escura da névoa, de olhos claros
     const vulto = kind === 5;
     const shade = flatMat(0x24201e, tex.grime);
-    this.h = buildHumanoid(vulto ? {
+    if (kind === 8) {
+      this.cape = buildCruzado(tex, look);
+      this.h = this.cape.h;
+    } else this.h = buildHumanoid(vulto ? {
       skin: shade, shirt: shade, pants: shade, shoes: shade, hair: null,
       eyes: flatMat(0x000000, null, 0xb8e0ff, 4), jaw: flatMat(0x0e0c0c),
       scale: 0.58 + r() * 0.06, bulk: 0.8,
     } : {
       skin,
       shirt,
-      sleeves: r() < 0.35 ? skin : shirt,
-      pants: flatMat(pick(PANTS), tex.grime),
-      shoes: flatMat(0x1e1a16),
-      hair: r() < 0.7 ? flatMat(pick(HAIR)) : null,
+      sleeves: ww1 ? shirt : r() < 0.35 ? skin : shirt,
+      pants: flatMat(ww1 ? pick(WOOL) : pick(PANTS), tex.grime),
+      shoes: flatMat(ww1 ? 0x2a2018 : 0x1e1a16),
+      hair: ww1 ? null : r() < 0.7 ? flatMat(pick(HAIR)) : null,
       eyes: flatMat(0x000000, null, 0xffa030, 5),
       jaw: flatMat(0x4a2a24, tex.grime),
       scale: 0.94 + r() * 0.12,
       bulk: 0.9 + r() * 0.25,
     });
+    if (ww1) this.dressWw1(r, tex, shirt);
     for (const m of this.h.hitMeshes) m.userData.zid = id;
     this.limp = r() < 0.35 ? 0.4 + r() * 0.4 : 1;
     this.armStyle = r();
@@ -80,6 +99,80 @@ class ZombieView {
     this.groanT = 1 + r() * 5;
     this.fallDir = r() < 0.5 ? 1 : -1;
     this.deathStyle = Math.floor(r() * 3);
+  }
+
+  // Equipamento de soldado de 1918 (genérico, sem insígnias): capacete redondo, boné ou máscara de gás,
+  // bandoleira, cartucheiras, gola do capote e lama nas botas e na barra.
+  private dressWw1(r: () => number, tex: TexSet, coat: THREE.Material) {
+    const h = this.h;
+    const steel = flatMat(0x4c5048, tex.grime);
+    const leather = flatMat(0x4a3320, tex.grime);
+    const cloth = flatMat(0x5a5342, tex.grime);
+    const rubber = flatMat(0x252320, tex.grime);
+    const mud = flatMat(MUD, tex.grime);
+    const hits = h.hitMeshes;
+    const roll = r();
+    if (roll < 0.45) {
+      // capacete redondo de aço com aba curta
+      part(h.head, 0.29, 0.1, 0.31, 0, 0.3, 0, steel, 'head', hits);
+      part(h.head, 0.25, 0.07, 0.27, 0, 0.37, 0, steel, 'head', hits);
+      part(h.head, 0.33, 0.025, 0.35, 0, 0.255, 0, steel, 'head', hits);
+    } else if (roll < 0.7) {
+      // boné de lã com aba
+      part(h.head, 0.27, 0.09, 0.29, 0, 0.3, 0, cloth, 'head', hits);
+      part(h.head, 0.25, 0.025, 0.12, 0, 0.27, 0.19, leather, 'head', hits);
+    } else if (roll < 0.9) {
+      // máscara de gás com capacete: olhos de vidro e filtro na frente
+      part(h.head, 0.29, 0.1, 0.31, 0, 0.3, 0, steel, 'head', hits);
+      part(h.head, 0.25, 0.07, 0.27, 0, 0.37, 0, steel, 'head', hits);
+      part(h.head, 0.26, 0.2, 0.06, 0, 0.1, 0.15, rubber, 'head', hits);
+      for (const x of [-0.065, 0.065]) part(h.head, 0.07, 0.07, 0.03, x, 0.15, 0.185, flatMat(0x101414, null, 0x203028, 0.8), null, hits);
+      part(h.head, 0.09, 0.09, 0.08, 0, 0.03, 0.21, steel, 'head', hits);
+    } else {
+      // cabeça enfaixada
+      part(h.head, 0.27, 0.12, 0.29, 0, 0.26, 0, cloth, 'head', hits);
+    }
+    // gola do capote e bandoleira atravessada com cartucheiras
+    part(h.torso, 0.46, 0.08, 0.28, 0, 0.55, 0, coat, null, hits);
+    const strap = part(h.torso, 0.07, 0.66, 0.02, 0, 0.28, 0.135, leather, null, hits);
+    strap.rotation.z = 0.7;
+    for (let i = 0; i < 3; i++) part(h.torso, 0.07, 0.07, 0.04, 0.13 - i * 0.13, 0.13 + i * 0.15, 0.15, leather, null, hits).rotation.z = 0.7;
+    // barra do capote e lama nas pernas
+    part(h.hips, 0.4, 0.4, 0.24, 0, -0.2, 0, coat, 'body', hits);
+    for (const leg of [h.legL, h.legR]) part(leg.lower, 0.15, 0.2, 0.16, 0, -0.34, 0.01, mud, null, hits);
+    if (r() < 0.6) part(h.torso, 0.22, 0.18, 0.02, (r() - 0.5) * 0.2, 0.2, 0.125, mud, null, hits);
+  }
+}
+
+// Blindado: humanoide enorme em armadura a vapor; a corrente da garra vive no espaço do mundo
+class BlindadoView {
+  readonly rig: BlindadoRig;
+  readonly h: Humanoid;
+  readonly kind: ZombieKind = 7;
+  phase = 0;
+  speed = 0;
+  lastX = 0;
+  lastZ = 0;
+  yaw = 0;
+  anim: ZombieAnim = 'rise';
+  animT = 0;
+  riseT = 0;
+  attackT = 99;
+  climbT = 0;
+  groanT = 3;
+  dying = false;
+  deathT = 0;
+  fallDir = -1;
+  fling: THREE.Vector3 | null = null;
+  flingY = 0;
+  shrink = false;
+  stepSide = 0;
+  chain: { pid: string } | null = null;
+
+  constructor(readonly id: number, readonly look: number, tex: TexSet) {
+    this.rig = buildBlindado(tex);
+    this.h = this.rig.h;
+    for (const m of this.h.hitMeshes) m.userData.zid = id;
   }
 }
 
@@ -169,12 +262,13 @@ class BispoView {
   }
 }
 
-type View = ZombieView | DogView | BossView | BispoView;
+type View = ZombieView | DogView | BossView | BispoView | BlindadoView;
 
-function makeView(id: number, kind: ZombieKind, look: number, tex: TexSet): View {
+function makeView(id: number, kind: ZombieKind, look: number, tex: TexSet, era: Era = 'padrao'): View {
   if (kind === 4) return new BossView(id, look, tex);
   if (kind === 6) return new BispoView(id, look, tex);
-  return kind === 3 ? new DogView(id, look, tex) : new ZombieView(id, kind, look, tex);
+  if (kind === 7) return new BlindadoView(id, look, tex);
+  return kind === 3 ? new DogView(id, look, tex) : new ZombieView(id, kind, look, tex, era);
 }
 
 // Tom da voz de cada zumbi (sai do sorteio da aparência); o Vulto, pequeno, tem a voz mais aguda.
@@ -199,6 +293,10 @@ export class ZombieManager {
   locate: (pid: string) => THREE.Vector3 | null = () => null;
   // Bispo imune (trocando de fase): a Game copia do estado da partida
   bispoShield = false;
+  // visual dos zumbis comuns: 'ww1' = soldados de 1918 (Trincheira). Ligue antes da partida começar.
+  era: Era = 'padrao';
+  // queimando ou congelado (camada de cor sobre o corpo), por zumbi
+  private readonly statuses = new Map<number, { kind: 'queima' | 'congela'; t: number; overlay: THREE.Group }>();
 
   constructor(scene: THREE.Scene, private readonly tex: TexSet, private readonly fx: FX, private readonly audio: AudioEngine) {
     scene.add(this.group);
@@ -217,8 +315,8 @@ export class ZombieManager {
     for (const v of this.views.values()) {
       const p = v.h.root.position;
       const dog = v instanceof DogView;
-      const boss = v instanceof BossView || v instanceof BispoView;
-      const rising = v.anim === 'rise' && (v instanceof BispoView ? v.animT < BISPO.riseTime * 0.7 : boss ? v.animT < BOSS.riseTime * 0.6 : v.riseT < (dog ? DOGS.arriveTime * 0.8 : ZOMBIE.riseTime * 0.6));
+      const boss = v instanceof BossView || v instanceof BispoView || v instanceof BlindadoView;
+      const rising = v.anim === 'rise' && (v instanceof BispoView ? v.animT < BISPO.riseTime * 0.7 : v instanceof BlindadoView ? v.animT < 2.4 * 0.8 : boss ? v.animT < BOSS.riseTime * 0.6 : v.riseT < (dog ? DOGS.arriveTime * 0.8 : ZOMBIE.riseTime * 0.6));
       out.push({ id: v.id, x: p.x, y: p.y, z: p.z, rising, top: dog ? 0.6 : boss ? 2.3 : 1.25 });
     }
     return out;
@@ -249,6 +347,8 @@ export class ZombieManager {
         if (v instanceof DogView) this.audio.dogBark(v.h.root.position);
         else if (v instanceof BossView) this.audio.bossRoar(v.h.root.position, 0.6);
         else if (v instanceof BispoView) this.audio.bispoVoice(v.h.root.position, 0.7);
+        else if (v instanceof BlindadoView) this.audio.bossRoar(v.h.root.position, 0.5);
+        else if (v instanceof ZombieView && v.kind === 8) this.audio.trSound('cruzado-grito', v.h.root.position, 0.8);
         else if (v) this.audio.zombieAttack(v.h.root.position, voicePitch(v));
         break;
       }
@@ -261,6 +361,34 @@ export class ZombieManager {
         if (!(v instanceof BossView)) break;
         if (e.phase === 'chain' && e.pid) v.chain = { pid: e.pid };
         if (e.phase === 'armor') this.breakHelmet(v);
+        break;
+      }
+      case 'blindado': {
+        const v = this.views.get(e.zid);
+        const at = new THREE.Vector3(e.x, 1.2, e.z);
+        if (e.phase === 'spawn') {
+          this.audio.trSound('blindado-chega', at);
+          this.fx.fireBurst(at.clone().setY(0.4));
+          this.quake = Math.max(this.quake, 0.5 * Math.max(0, 1 - at.distanceTo(this.listener) / 30));
+        } else if (e.phase === 'flame') this.audio.trSound('blindado-fogo', v ? v.h.root.position : at);
+        else if (e.phase === 'claw') {
+          this.audio.trSound('blindado-garra', v ? v.h.root.position : at);
+          if (v instanceof BlindadoView && e.pid) v.chain = { pid: e.pid };
+        } else if (e.phase === 'jump') this.audio.trSound('blindado-salto', v ? v.h.root.position : at);
+        else if (e.phase === 'visor' && v instanceof BlindadoView) this.breakHelmet(v);
+        break;
+      }
+      case 'fx': {
+        // status em zumbi: queimando, congelado, estilhaçou
+        if (e.zid === undefined) break;
+        if (e.kind === 'queima' || e.kind === 'congela') this.setStatus(e.zid, e.kind, 2.5);
+        else if (e.kind === 'estilhaca') {
+          const v = this.views.get(e.zid);
+          const at = v ? v.h.root.position.clone().setY(v.h.root.position.y + 1) : new THREE.Vector3(e.x, e.y, e.z);
+          this.setStatus(e.zid, null);
+          this.audio.trSound('gelo-quebra', at);
+          for (let k = 0; k < 5; k++) this.fx.impact(at.clone().add(new THREE.Vector3((Math.random() - 0.5) * 0.8, (Math.random() - 0.5) * 0.8, (Math.random() - 0.5) * 0.8)), 0, 1, 0, 'glass');
+        }
         break;
       }
       case 'zvanish': {
@@ -297,13 +425,14 @@ export class ZombieManager {
         this.dead.set(e.zid, this.t);
         let v = this.views.get(e.zid);
         if (!v) {
-          v = makeView(e.zid, e.kind, e.look, this.tex);
+          v = makeView(e.zid, e.kind, e.look, this.tex, this.era);
           v.h.root.position.set(e.x, e.y, e.z);
           v.h.root.rotation.y = e.yaw;
           this.group.add(v.h.root);
         }
         this.views.delete(e.zid);
-        if (v instanceof BossView) v.rig.line.visible = false;
+        if (v instanceof BossView || v instanceof BlindadoView) v.rig.line.visible = false;
+        this.setStatus(e.zid, null);
         v.dying = true;
         v.deathT = 0;
         if (v instanceof DogView) {
@@ -322,7 +451,7 @@ export class ZombieManager {
           this.corpses.push(v);
           break;
         }
-        if (e.fling && !(v instanceof BossView)) {
+        if (e.fling && !(v instanceof BossView) && !(v instanceof BlindadoView)) {
           v.fling = new THREE.Vector3(...e.fling);
           v.flingY = v.h.root.position.y;
           v.fallDir = -1;
@@ -333,7 +462,7 @@ export class ZombieManager {
           this.fx.blood(this.tmp, new THREE.Vector3(0, 1, 0), 2.2);
           v.fallDir = -1;
         }
-        if (v instanceof BossView) this.audio.bossRoar(v.h.root.position, 1.2);
+        if (v instanceof BossView || v instanceof BlindadoView) this.audio.bossRoar(v.h.root.position, 1.2);
         else if (v instanceof BispoView) {
           v.rig.shield.visible = false;
           this.audio.bispoVoice(v.h.root.position, 1.4);
@@ -364,7 +493,7 @@ export class ZombieManager {
         const za = a.zombies.get(zb.id) ?? zb;
         let v = this.views.get(zb.id);
         if (!v) {
-          v = makeView(zb.id, zb.kind, zb.look, this.tex);
+          v = makeView(zb.id, zb.kind, zb.look, this.tex, this.era);
           v.h.root.position.set(zb.x, zb.y, zb.z);
           v.lastX = zb.x;
           v.lastZ = zb.z;
@@ -372,13 +501,13 @@ export class ZombieManager {
           v.anim = zb.anim;
           this.views.set(zb.id, v);
           this.group.add(v.h.root);
-          if (v instanceof BossView) this.group.add(v.rig.line);
+          if (v instanceof BossView || v instanceof BlindadoView) this.group.add(v.rig.line);
         }
         const anim = k < 0.5 ? za.anim : zb.anim;
         if (anim === 'rise' && v.anim !== 'rise') v.riseT = 0;
         if (anim === 'attack' && v.anim !== 'attack') v.attackT = 0;
         if (anim === 'climb' && v.anim !== 'climb') v.climbT = 0;
-        if ((v instanceof BossView || v instanceof BispoView) && anim !== v.anim) v.animT = 0;
+        if ((v instanceof BossView || v instanceof BispoView || v instanceof BlindadoView) && anim !== v.anim) v.animT = 0;
         v.anim = anim;
         const p = v.h.root.position;
         const nx = lerp(za.x, zb.x, k);
@@ -396,7 +525,7 @@ export class ZombieManager {
       for (const [id, v] of this.views) {
         if (!seen.has(id) && !b.zombies.has(id)) {
           this.group.remove(v.h.root);
-          if (v instanceof BossView) this.group.remove(v.rig.line);
+          if (v instanceof BossView || v instanceof BlindadoView) this.group.remove(v.rig.line);
           this.views.delete(id);
         }
       }
@@ -412,6 +541,11 @@ export class ZombieManager {
           if (v.anim === 'move') this.audio.bossRoar(v.h.root.position, 0.45);
           continue;
         }
+        if (v instanceof BlindadoView) {
+          v.groanT = 5 + Math.random() * 4;
+          if (v.anim === 'move') this.audio.bossRoar(v.h.root.position, 0.4);
+          continue;
+        }
         if (v instanceof BispoView) {
           v.groanT = 5 + Math.random() * 4;
           this.audio.bispoVoice(v.h.root.position, 0.4);
@@ -421,10 +555,13 @@ export class ZombieManager {
         if (v.h.root.position.distanceTo(listener) < 32) {
           if (dog) this.audio.dogGrowl(v.h.root.position);
           else if (v.kind === 5) this.audio.vultoHiss(v.h.root.position);
+          else if (v.kind === 8) this.audio.trSound('cruzado-grito', v.h.root.position, 0.7);
           else this.audio.zombieGroan(v.h.root.position, v.kind, voicePitch(v));
         }
       }
     }
+
+    this.updateStatuses(dt);
 
     for (let i = this.flyers.length - 1; i >= 0; i--) {
       const f = this.flyers[i];
@@ -454,7 +591,7 @@ export class ZombieManager {
   }
 
   // capacete arrancado: some da cabeça e sai voando (e para de contar como alvo)
-  private breakHelmet(v: BossView) {
+  private breakHelmet(v: BossView | BlindadoView) {
     const helm = v.rig.helmet;
     if (!helm.visible) return;
     helm.updateWorldMatrix(true, true);
@@ -516,6 +653,10 @@ export class ZombieManager {
       this.animateBossView(v, dt);
       return;
     }
+    if (v instanceof BlindadoView) {
+      this.animateBlindadoView(v, dt);
+      return;
+    }
     if (v instanceof BispoView) {
       const p = v.h.root.position;
       const moved = Math.hypot(p.x - v.lastX, p.z - v.lastZ);
@@ -545,7 +686,7 @@ export class ZombieManager {
     v.speed = lerp(v.speed, Math.min(inst, 7), 1 - Math.exp(-dt * 8));
     h.root.rotation.y = v.yaw;
 
-    const kind = v.kind === 5 ? 2 : v.kind;
+    const kind = v.kind === 5 ? 2 : v.kind === 8 ? 0 : v.kind;
     const norm = clamp(v.speed / KIND_SPEED[v.kind], 0, 1.3);
     v.phase += dt * v.speed * (kind === 0 ? 2.9 : 2.1);
     const ph = v.phase;
@@ -571,6 +712,11 @@ export class ZombieManager {
       armL = -1.35 + Math.sin(ph * 0.5 + 1) * 0.15;
       armR = -1.3 + Math.sin(ph * 0.5) * 0.15;
       if (v.armStyle < 0.25) armR = s * 0.35;
+      // Cruzado: braços caídos, marchando
+      if (v.kind === 8) {
+        armL = -0.3 + s * 0.3;
+        armR = -0.3 - s * 0.3;
+      }
     } else if (kind === 1) {
       armL = -1.1 + s * 0.45;
       armR = -1.1 - s * 0.45;
@@ -650,6 +796,123 @@ export class ZombieManager {
     h.armL.lower.rotation.x = elbow;
     h.armR.lower.rotation.x = elbow;
     h.torso.rotation.x = lean;
+    if (v.cape) animateCape(v.cape, v.speed, t);
+  }
+
+  // ---------- Blindado ----------
+
+  private animateBlindadoView(v: BlindadoView, dt: number) {
+    const p = v.h.root.position;
+    const moved = Math.hypot(p.x - v.lastX, p.z - v.lastZ);
+    v.lastX = p.x;
+    v.lastZ = p.z;
+    v.speed = lerp(v.speed, Math.min(dt > 0 ? moved / dt : 0, 12), 1 - Math.exp(-dt * 8));
+    v.animT += dt;
+    v.h.root.rotation.y = v.yaw;
+    const before = Math.sin(v.phase);
+    v.phase += dt * v.speed * 1.4;
+    const after = Math.sin(v.phase);
+    if (v.speed > 0.6 && Math.sign(before) !== Math.sign(after)) {
+      this.audio.bossStep(p, false);
+      this.quake = Math.max(this.quake, 0.18 * Math.max(0, 1 - p.distanceTo(this.listener) / 18));
+    }
+    animateBlindado(v.rig, { phase: v.phase, speed: v.speed, t: this.t, anim: v.anim, animT: v.animT });
+    // fogo do lança-chamas e jatos da mochila soltam brasas
+    if (v.rig.flame.visible || v.rig.pack.visible) {
+      v.h.root.updateMatrixWorld(true);
+      const src = v.rig.flame.visible ? v.rig.flame : v.rig.pack;
+      src.getWorldPosition(this.tmp);
+      this.fx.flame('blindado-' + v.id + (v.rig.flame.visible ? 'f' : 'p'), this.tmp, dt, 40, v.rig.flame.visible ? 0.5 : 0.35);
+    }
+    // corrente da garra: da mão até o jogador, indo e voltando
+    const line = v.rig.line;
+    line.visible = false;
+    if (v.anim === 'chain' && v.chain) {
+      const S = BOSS.chain;
+      const out = clamp((v.animT - S.windup) / S.fly, 0, 1);
+      const back = clamp((v.animT - S.windup - S.fly - 0.15) / (S.recover * 0.6), 0, 1);
+      const k = out * (1 - back);
+      if (k > 0.01) {
+        v.h.root.updateMatrixWorld(true);
+        const hand = v.h.armR.lower.localToWorld(new THREE.Vector3(0.12, -0.4, 0.03));
+        const target = this.locate(v.chain.pid) ?? hand.clone().add(new THREE.Vector3(Math.sin(v.yaw) * 14, -1, Math.cos(v.yaw) * 14));
+        const len = hand.distanceTo(target);
+        line.visible = true;
+        line.position.copy(hand);
+        line.lookAt(target);
+        v.rig.lineBody.scale.z = Math.max(0.01, len * k);
+        v.rig.hook.position.z = len * k;
+      }
+    }
+  }
+
+  // ---------- queimando e congelado ----------
+
+  // Camada de cor sobre o corpo do zumbi por `secs` segundos: laranja e brasas (queima) ou gelo azulado (congela).
+  // Chamar de novo renova o tempo; kind null tira na hora.
+  setStatus(zid: number, kind: 'queima' | 'congela' | null, secs = 2.5) {
+    const cur = this.statuses.get(zid);
+    if (kind === null) {
+      if (cur) {
+        cur.overlay.removeFromParent();
+        this.statuses.delete(zid);
+      }
+      return;
+    }
+    const v = this.views.get(zid);
+    if (!v) return;
+    if (cur && cur.kind === kind) {
+      cur.t = secs;
+      return;
+    }
+    if (cur) cur.overlay.removeFromParent();
+    const overlay = this.buildOverlay(v, kind);
+    this.statuses.set(zid, { kind, t: secs, overlay });
+  }
+
+  private buildOverlay(v: View, kind: 'queima' | 'congela'): THREE.Group {
+    const mat = kind === 'congela' ? ICE_MAT : BURN_MAT;
+    const g = new THREE.Group();
+    const big = v instanceof BossView || v instanceof BlindadoView ? 1.45 : v instanceof BispoView ? 1.1 : 1;
+    const add = (parent: THREE.Object3D, w: number, h: number, d: number, x: number, y: number, z: number) => {
+      const m = new THREE.Mesh(OVERLAY_BOX, mat);
+      m.scale.set(w, h, d);
+      m.position.set(x, y, z);
+      m.renderOrder = 2;
+      g.add(m);
+      parent.add(m);
+    };
+    const h = v.h as Humanoid | DogRig;
+    if ('torso' in h) {
+      add(h.torso, 0.5 * big, 0.62, 0.34 * big, 0, 0.28, 0);
+      add(h.head, 0.31, 0.33, 0.33, 0, 0.12, 0);
+      for (const arm of [h.armL, h.armR]) add(arm.upper, 0.17 * big, 0.66, 0.17 * big, 0, -0.2, 0);
+      for (const leg of [h.legL, h.legR]) add(leg.upper, 0.2 * big, 0.95, 0.21 * big, 0, -0.45, 0);
+    } else {
+      add(h.root, 0.8, 0.8, 1.5, 0, 0.45, 0);
+    }
+    return g;
+  }
+
+  private updateStatuses(dt: number) {
+    for (const [id, st] of this.statuses) {
+      st.t -= dt;
+      const v = this.views.get(id);
+      if (st.t <= 0 || !v) {
+        st.overlay.removeFromParent();
+        this.statuses.delete(id);
+        continue;
+      }
+      const flick = 0.75 + Math.sin(this.t * 22 + id) * 0.25;
+      if (st.kind === 'queima') {
+        BURN_MAT.opacity = 0.5 * flick;
+        const p = v.h.root.position;
+        this.fx.flame('burn-' + id, this.tmp.set(p.x, p.y + 0.9, p.z), dt, 34, 0.32);
+      } else {
+        // aos poucos o gelo some no fim
+        ICE_MAT.opacity = 0.45;
+      }
+    }
   }
 
   private animateDogView(v: DogView, dt: number) {

@@ -112,15 +112,23 @@ Escolha **Rota** no menu (ou no lobby do co-op). Cinco paradas ligadas por uma e
 - **Itens que caem** (em todos os mapas): coluna de luz verde que atravessa a névoa, anel no chão, som ao cair e marcador na tela com o nome e a distância (na borda, se estiver fora da vista).
 - Cada parada tem prédios em que se entra, barricadas, bebidas, armas de parede e um local da Caixa; o nome da parada aparece ao chegar.
 
-### Mapa Trincheira (em construção, estilo Origins)
+### Mapa Trincheira (estilo Origins)
 
-Escolha **Trincheira** no menu. É uma frente de batalha de 1918, com lama, trincheiras, uma igreja, uma oficina, uma casamata, um quartel e uma escavação antiga no centro, onde fica a Forja. O jogo começa no **Posto de Comando**.
+Escolha **Trincheira** no menu. É uma frente de batalha de 1918, com lama, trincheiras, uma igreja, uma oficina, uma casamata, um quartel e uma escavação antiga no centro. O jogo começa no **Posto de Comando**.
 
-- Saída por dois portões de 750 (Casamata ou Estação do Tanque); qualquer um dá na lama da Terra de Ninguém.
-- Os portões da Oficina, da Vala Sul, do Quartel Norte e da Igreja abrem as outras áreas.
-- Por enquanto as bebidas funcionam sem gerador.
+- **Portões:** Casamata ou Estação (750) levam à lama da Terra de Ninguém; Oficina, Vala Sul, Quartel Norte e Igreja abrem as outras áreas. A Igreja também abre de graça quando o tanque para lá.
+- **Geradores:** são 6, todos desligados. Pague 200 por jogador dentro do círculo e fique nele. Cada um acende a bebida e a Fonte da Sorte da área; com os 6 ligados a Forja sobe do poço. Cruzados podem retomar um gerador.
+- **Lama:** deixa o jogador 30% mais lento. O tempo muda a cada rodada (limpo, chuva ou neve; a neve libera os montes de gelo).
+- **Pá e montes de terra:** pegue uma pá e segure F nos montes para achar itens, pontos, armas... ou zumbis. Com 30 montes a pá fica dourada.
+- **Tanque:** 500 pontos para uma volta (Igreja, plataforma da Escavação, Estação). Esmaga zumbis na frente e queima os de trás.
+- **Colossos:** Atlas, Golias e Titã atravessam o mapa pisando em pegadas marcadas; quem estiver na pegada morre.
+- **Inimigos:** o Blindado (chefão, a partir da rodada 8) e os Cruzados (recaptura de gerador). Não há cães infernais.
+- **Sangue Morto:** por 20 s os zumbis ignoram quem pegou.
+- **Peças e bancadas:** Escudo de Trincheira e Drone de Campo; Baús de Desafios; Granada de Artilharia (tecla 4).
+- **Portais e Câmara Antiga:** com gramofone e disco, as lajes dos 4 túneis afundam e levam à Câmara.
+- **Cajados elementais:** Fogo, Gelo, Vento e Raio, cada um com enigma e versão desperta (segure o gatilho para o ataque carregado); Punho de Ferro (Tábua de Pedra) e a missão final "Canção da Escavação".
 
-A especificação completa (planta, regras e as 9 fases) está em [`docs/trincheira/README.md`](docs/trincheira/README.md). A Fase 1 está pronta (o mapa jogável). Os geradores, o tanque, os colossos e os cajados vêm nas próximas fases.
+A especificação completa (planta, regras e as 9 fases) está em [`docs/trincheira/README.md`](docs/trincheira/README.md); o que a simulação manda e o cliente desenha está em [`docs/trincheira/CONTRATO.md`](docs/trincheira/CONTRATO.md). Todas as 9 fases estão prontas. Testes: `npx tsx tools/test-trincheira-sim.ts` (regras), `node tools/test-trincheira-jogo.mjs <pasta>` (jogo no navegador, com `npm run dev`), `node tools/test-trincheira-coop.mjs` (servidor), `npx tsx tools/tr-map-check.ts` (conferência do mapa). Atalhos de teste só em desenvolvimento: `window.__game.debugTr(comando, argumento)` com `?autoplay`.
 
 ## Próximos passos
 

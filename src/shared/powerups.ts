@@ -1,6 +1,6 @@
 // Itens que caem dos zumbis. Valem para todos os jogadores quando alguém pega.
 
-export type PowerupKind = 'maxammo' | 'insta' | 'double' | 'bomb' | 'carpenter' | 'firesale' | 'freeperk';
+export type PowerupKind = 'maxammo' | 'insta' | 'double' | 'bomb' | 'carpenter' | 'firesale' | 'freeperk' | 'sangue';
 
 export interface PowerupDef {
   kind: PowerupKind;
@@ -19,7 +19,12 @@ export const POWERUPS: Record<PowerupKind, PowerupDef> = {
   firesale: { kind: 'firesale', name: 'Liquidação', color: '#ff5a8a', glyph: '%', duration: 30 },
   // só o Carrasco deixa: quem pegar ganha uma bebida que não tem (sem contar o limite)
   freeperk: { kind: 'freeperk', name: 'Bebida Grátis', color: '#55b8ff', glyph: '✚', duration: 0 },
+  // Trincheira: os zumbis ignoram quem pegou (só vale para quem pegou)
+  sangue: { kind: 'sangue', name: 'Sangue Morto', color: '#9b1b1b', glyph: '◆', duration: 20 },
 };
+
+// itens que caem de zumbis por padrão (o Sangue Morto só entra nos mapas que o pedem em powerupPool)
+export const DEFAULT_POOL: PowerupKind[] = ['maxammo', 'insta', 'double', 'bomb', 'carpenter', 'firesale', 'freeperk'];
 
 export const POWERUP = {
   dropChance: 0.025,

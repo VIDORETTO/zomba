@@ -9,7 +9,7 @@ const SCALE: Record<MaterialId, number> = {
   asphalt: 6, sidewalk: 3, dirt: 5, concrete: 4, pavement: 6, brick: 3, brickDark: 3, plaster: 4,
   wood: 2.5, woodDark: 2.5, boards: 0, floorWood: 3, tile: 2, roof: 4, ceiling: 4,
   metal: 3, rust: 2, glass: 0, glassLit: 0, trim: 2, paintYellow: 1, paintWhite: 1,
-  carPaint: 4, tire: 1, lamp: 0, lava: 3, awning: 2, sandbag: 1.5, stone: 2.5, neon: 0, mud: 5,
+  carPaint: 4, tire: 1, lamp: 0, lava: 3, awning: 2, sandbag: 1.5, stone: 2.5, neon: 0, mud: 5, rune: 2.5, rivet: 2,
 };
 
 const DEFAULT_TINT: Partial<Record<MaterialId, number>> = {
@@ -19,6 +19,11 @@ const DEFAULT_TINT: Partial<Record<MaterialId, number>> = {
   ceiling: 0xb0a898,
   carPaint: 0x777777,
 };
+
+// materiais que ganham uma camada de neve (e a cor para onde vão)
+const SNOWY = new Set<MaterialId>(['dirt', 'mud', 'sandbag', 'roof', 'floorWood', 'wood']);
+const SNOW_COLOR = new THREE.Color(0xdfe6ee);
+const SNOW_FOG = new THREE.Color(0x9a9a9e);
 
 const NO_SHADOW = new Set<MaterialId>(['asphalt', 'pavement', 'dirt', 'paintYellow', 'paintWhite', 'lava', 'glass', 'glassLit', 'lamp', 'mud']);
 
@@ -41,6 +46,12 @@ export interface MapView {
   takeShadowDirty(): boolean;
   // energia (mapa Rota): sem ela as luzes das máquinas de bebida ficam quase apagadas
   setPower(on: boolean): void;
+  // geradores da Trincheira: as luzes com `gen` só acendem com o gerador ligado
+  setGens(on: boolean[]): void;
+  // neve (Trincheira): 0 a 1; clareia o chão, a lama, os sacos e a névoa
+  setSnow(k: number): void;
+  // escurece o sol e o céu (Câmara Antiga): 0 normal .. 1 bem escuro
+  setDim(k: number): void;
   dispose(): void;
 }
 
@@ -154,6 +165,7 @@ export function buildMapView(map: MapDef, tex: TexSet, scene: THREE.Scene, q: Qu
 
   const materials: THREE.Material[] = [];
   const lavaMats: AnyMat[] = [];
+  const snowMats: { mat: AnyMat; base: THREE.Color; amount: number }[] = [];
   // Junta os blocos de mesmo material numa malha só (poucas chamadas de desenho).
   function mergeInto(batch: Batch, target: THREE.Group, isStatic: boolean) {
     for (const e of batch.values()) {
@@ -162,6 +174,7 @@ export function buildMapView(map: MapDef, tex: TexSet, scene: THREE.Scene, q: Qu
       const m = makeMaterial(e.mat, e.tint, tex, q.simpleMaterials);
       materials.push(m);
       if (e.mat === 'lava') lavaMats.push(m);
+      if (SNOWY.has(e.mat)) snowMats.push({ mat: m, base: m.color.clone(), amount: e.mat === 'dirt' || e.mat === 'mud' || e.mat === 'sandbag' ? 0.92 : e.mat === 'roof' ? 0.8 : 0.55 });
       const mesh = new THREE.Mesh(geo, m);
       mesh.castShadow = q.shadows && !NO_SHADOW.has(e.mat);
       mesh.receiveShadow = q.shadows && e.mat !== 'lava' && e.mat !== 'lamp';
@@ -308,6 +321,11 @@ export function buildMapView(map: MapDef, tex: TexSet, scene: THREE.Scene, q: Qu
   let fogBase = map.fogDensity ?? FOG_DENSITY;
   let fogRoad = 0;
   let powerK = map.perksNeedPower ? 0.08 : 1;
+  let snowK = 0;
+  let dimK = 0;
+  // geradores: alvo (ligado ou não) e valor suavizado de cada um
+  let genOn: boolean[] = [];
+  const genK: number[] = [];
 
   // valores normais, para misturar com o clima infernal
   const base = {
@@ -334,11 +352,32 @@ export function buildMapView(map: MapDef, tex: TexSet, scene: THREE.Scene, q: Qu
       if (Math.abs(d - fogBase) < 1e-5 && Math.abs(road - fogRoad) < 1e-3) return;
       fogBase = d;
       fogRoad = road;
-      base.fog.copy(stopFog).lerp(roadFog, road);
+      base.fog.copy(stopFog).lerp(roadFog, road).lerp(SNOW_FOG, snowK);
       moodKey = '';
     },
     setPower(on: boolean) {
       powerK = on || !map.perksNeedPower ? 1 : 0.08;
+    },
+    setGens(on: boolean[]) {
+      genOn = on;
+    },
+    setSnow(k: number) {
+      k = Math.max(0, Math.min(1, k));
+      if (Math.abs(k - snowK) < 0.004) return;
+      snowK = k;
+      for (const m of snowMats) {
+        m.mat.color.copy(m.base).lerp(SNOW_COLOR, k * m.amount);
+        // um brilho próprio leve: a neve aparece mesmo na sombra e sob a luz alaranjada
+        m.mat.emissive.setRGB(0.5, 0.52, 0.56).multiplyScalar(k * m.amount * 0.22);
+      }
+      base.fog.copy(stopFog).lerp(roadFog, fogRoad).lerp(SNOW_FOG, k);
+      moodKey = '';
+    },
+    setDim(k: number) {
+      k = Math.max(0, Math.min(1, k));
+      if (Math.abs(k - dimK) < 0.004) return;
+      dimK = k;
+      moodKey = '';
     },
     takeShadowDirty() {
       const d = shadowDirty;
@@ -359,9 +398,9 @@ export function buildMapView(map: MapDef, tex: TexSet, scene: THREE.Scene, q: Qu
       skyMat.uniforms.top.value.copy(base.top).lerp(HELL.top, hell);
       skyMat.uniforms.sun.value.copy(base.sun).lerp(HELL.sun, hell);
       hemi.color.copy(base.hemi).lerp(HELL.hemi, hell);
-      hemi.intensity = base.hemiI * (1 - 0.15 * hell) + flash * 2.5;
+      hemi.intensity = (base.hemiI * (1 - 0.15 * hell) + flash * 2.5) * (1 - 0.4 * dimK);
       sunLight.color.copy(base.sunLight).lerp(HELL.sunLight, hell);
-      sunLight.intensity = base.sunI * (1 - 0.35 * hell);
+      sunLight.intensity = base.sunI * (1 - 0.35 * hell) * (1 - 0.8 * dimK);
     },
     setDoors(open: string[]) {
       for (const id of open) {
@@ -412,7 +451,13 @@ export function buildMapView(map: MapDef, tex: TexSet, scene: THREE.Scene, q: Qu
         else if (kind === 'lava') f = 0.85 + 0.15 * Math.sin(t * 1.3 + k);
         else if (kind === 'lamp') f = Math.sin(t * 0.7 + k) > 0.97 ? 0.15 : 1;
         else if (kind === 'interior') f = 0.92 + 0.08 * Math.sin(t * 9 + k) * Math.sin(t * 3.1);
-        sl.light.intensity = sl.src.def.intensity * f * (sl.src.def.perk ? powerK : 1);
+        const gi = sl.src.def.gen;
+        const gk = gi === undefined ? 1 : genK[gi] ?? 0.06;
+        sl.light.intensity = sl.src.def.intensity * f * (sl.src.def.perk ? powerK : 1) * gk;
+      }
+      for (let i = 0; i < genOn.length; i++) {
+        const target = genOn[i] ? 1 : 0.06;
+        genK[i] = (genK[i] ?? 0.06) + (target - (genK[i] ?? 0.06)) * Math.min(1, dt * 2.5);
       }
       for (const m of lavaMats) {
         m.emissiveIntensity = 2.1 + 0.5 * Math.sin(t * 1.7);

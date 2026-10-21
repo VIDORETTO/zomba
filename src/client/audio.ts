@@ -1,9 +1,10 @@
 import * as THREE from 'three';
+import { TrAudio, type TrSound, type Weather4 } from './trSound';
 
 // Sons sintetizados com Web Audio, com gravações CC0 (public/sfx, ver tools/build-sfx.mjs) para tiros,
 // passos, tábuas, impactos e as vozes dos zumbis. Se uma gravação não carregar, o som sintetizado toca no lugar.
 
-export type Surface = 'hard' | 'wood' | 'dirt';
+export type Surface = 'hard' | 'wood' | 'dirt' | 'mud';
 export type GunSound = 'pistol' | 'rifle' | 'smg' | 'shotgun' | 'magnum' | 'sniper';
 
 // gravações e quantas variações cada uma tem (arquivos <nome>-<n>.ogg)
@@ -37,6 +38,8 @@ export class AudioEngine {
   // último eco de tiro de cada arma (rajada não empilha eco)
   private readonly tailT = new Map<string, number>();
 
+  private tr!: TrAudio;
+
   constructor() {
     this.ctx = new AudioContext();
     this.master = this.ctx.createGain();
@@ -63,6 +66,49 @@ export class AudioEngine {
     this.shaper.curve = curve;
     this.shaper.connect(this.sfx);
     this.loadSamples();
+    this.tr = new TrAudio({
+      ctx: this.ctx, sfx: this.sfx, music: this.music, amb: this.amb,
+      now: () => this.now,
+      gain: (v, to) => this.gain(v, to),
+      env: (g, t, peak, a, d) => this.env(g, t, peak, a, d),
+      noiseSrc: (t, dur) => this.noiseSrc(t, dur),
+      noiseBuffer: this.noise,
+      filter: (type, f, q) => this.filter(type, f, q),
+      osc: (type, f, t, dur) => this.osc(type, f, t, dur),
+      out: (pos, ref, to) => this.out(pos, ref, to),
+      click: (f, q, dur, vol, delay, pos) => this.click(f, q, dur, vol, delay, pos),
+      voice: (pos, f0, f1, dur, vol, rough) => this.voice(pos, f0, f1, dur, vol, rough),
+      bell: (f, t, vol, decay) => this.bell(f, t, vol, decay),
+      pad: (fr, t, dur, vol, cut) => this.pad(fr, t, dur, vol, cut),
+      boom: (t, vol) => this.boom(t, vol),
+      listener: this.lastListener,
+    });
+  }
+
+  // ---------- Trincheira ----------
+
+  // Sons do mapa Trincheira (nomes em trSound.ts), todos sintetizados.
+  trSound(name: TrSound, pos?: THREE.Vector3, vol = 1) {
+    this.tr.play(name, pos, vol);
+  }
+
+  // clima da rodada: chuva contínua (neve só abafa o vento)
+  setWeather(w: Weather4) {
+    this.tr.setWeather(w);
+  }
+
+  // ambiente da Trincheira: tambor distante, vento e artilharia ao longe de tempos em tempos
+  startTrincheira() {
+    this.tr.startAmbient();
+  }
+
+  stopTrincheira() {
+    this.tr.stopAmbient();
+  }
+
+  // chamado a cada quadro pelo jogo (artilharia distante periódica)
+  trUpdate(dt: number) {
+    this.tr.update(dt);
   }
 
   private loadSamples() {
@@ -445,6 +491,7 @@ export class AudioEngine {
 
   footstep(surface: Surface, loud = 1) {
     // a madeira gravada soa mais forte que o concreto e a terra
+    if (surface === 'mud') return this.tr.mudStep(loud);
     const lv = surface === 'wood' ? 0.05 : surface === 'dirt' ? 0.085 : 0.095;
     if (this.sample(`step-${surface}`, this.sfx, R(0.85, 1.1) * lv * loud, R(0.92, 1.08))) return;
     const t = this.now;
