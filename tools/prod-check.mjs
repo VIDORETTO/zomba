@@ -49,7 +49,9 @@ const page = async (name) => {
   await p.waitForLoadState('networkidle');
   return p;
 };
+const turnReqs = [];
 const a = await page('Ana');
+a.on('response', (r) => r.url().includes('workers.dev') && turnReqs.push(`${r.status()} ${r.url()}`));
 check('menu sem campo de servidor nem aba de placar online', (await a.isHidden('#server-adv')) && (await a.isHidden('#board-tabs [data-tab="online"]')));
 check('no navegador de produção não existe o atalho de desenvolvimento', await a.evaluate(() => !window.__game));
 await a.fill('#in-name', 'Ana');
@@ -72,6 +74,7 @@ await a.waitForTimeout(2500);
 check('a partida começou para os dois', true);
 await browser.close();
 srv.close?.();
+if (REMOTE) check('o jogo buscou as credenciais do TURN (Worker da Cloudflare) e a origem foi aceita', turnReqs.some((r) => r.startsWith('200')), turnReqs.join(' | ') || 'nenhum pedido');
 if (!REMOTE) check('o servidor do jogo só recebeu pedidos de arquivos (nada de /api)', requests.every((r) => !r.startsWith('/api')), requests.filter((r) => r.startsWith('/api')).join(','));
 check('nenhum erro de script', errs.length === 0, errs.slice(0, 2).join(' | '));
 console.log(fail ? `${fail} falharam` : 'tudo certo');

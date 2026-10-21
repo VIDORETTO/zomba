@@ -1,5 +1,7 @@
 # TURN gratuito (Cloudflare) para o co-op
 
+> **Estado atual (2026-10-21):** já está configurado. Worker `zomba-turn` em `https://zomba-turn.gvidoretto.workers.dev` (conta da Cloudflare de gvidoretto@gmail.com, chave TURN `zomba`), liberado só para `https://zomba.gabrielvidoretto.com.br`, e o endereço está em `.env.production` (`VITE_TURN_ENDPOINT`). Foi criado pela API (MCP da Cloudflare); o passo a passo abaixo serve para refazer à mão. Para trocar a chave: crie outra em Calls → TURN e atualize os segredos do Worker.
+
 **Para que serve.** O co-op do Zomba liga os navegadores direto uns nos outros. Em cerca de 1 a 2 de cada 10 duplas isso não fecha (internet de celular, CGNAT, roteadores fechados). Para essas, é preciso um **TURN**: um servidor que repassa os dados (cifrados). Não existe TURN público gratuito confiável, então o jogo busca as credenciais de um TURN seu.
 
 **Custo.** A Cloudflare dá 1 TB por mês grátis no TURN. Só passa por lá quem não conseguiu ligação direta, e o jogo usa poucos KB/s por jogador. O VPS não participa.

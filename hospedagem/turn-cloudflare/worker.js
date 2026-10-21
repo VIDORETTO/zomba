@@ -19,8 +19,8 @@ export default {
       return new Response(null, { status: 204, headers: { ...cors, 'access-control-allow-methods': 'GET', 'access-control-max-age': '86400' } });
     }
     if (request.method !== 'GET') return new Response('método não permitido', { status: 405, headers: cors });
-    // páginas de outros sites não podem gastar a cota
-    if (origin && !allowed.includes(origin)) return new Response('origem não permitida', { status: 403, headers: cors });
+    // páginas de outros sites (e pedidos sem origem, como curl) não podem gastar a cota
+    if (!allowed.includes(origin)) return new Response('origem não permitida', { status: 403, headers: cors });
     if (!env.TURN_KEY_ID || !env.TURN_KEY_API_TOKEN) return new Response('TURN não configurado', { status: 500, headers: cors });
 
     const res = await fetch(`https://rtc.live.cloudflare.com/v1/turn/keys/${env.TURN_KEY_ID}/credentials/generate-ice-servers`, {
