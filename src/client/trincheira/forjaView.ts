@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import type { GameEvent } from '../../shared/protocol';
 import { signTexture } from '../textures';
-import { basic, boxMesh, solid } from './common';
+import { additive, basic, boxMesh, glowSprite, solid } from './common';
 import type { TrCtx } from './ctx';
 
 const RISE = 6;
@@ -14,6 +14,9 @@ export class ForjaView {
   private up = false;
   private started = false;
   private dustT = 0;
+  private readonly ember: THREE.Sprite;
+  private pulse = 0;
+  private readonly runeLines: THREE.Mesh[] = [];
 
   constructor(private readonly c: TrCtx) {
     const [cx, cz] = c.T.ring.c;
@@ -25,7 +28,17 @@ export class ForjaView {
     this.g.add(boxMesh(2.6, 0.2, 1.82, dark, 0, 1.9, -0.49));
     this.g.add(boxMesh(0.8, 2.4, 0.8, stone, 0, 3.2, -0.5));
     const rune = basic(0x4fb8ff);
-    for (let k = 0; k < 4; k++) this.g.add(boxMesh(2.42, 0.06, 0.02, rune, 0, 0.33 + k * 0.4, 0.335));
+    for (let k = 0; k < 4; k++) {
+      const line = boxMesh(2.42, 0.06, 0.02, rune, 0, 0.33 + k * 0.4, 0.335);
+      this.g.add(line);
+      this.runeLines.push(line);
+    }
+    // runas na coluna de cima e a brasa na boca da Forja (o brilho laranja só aparece com ela erguida)
+    for (const sx of [-1, 1]) this.g.add(boxMesh(0.04, 1.8, 0.02, rune, sx * 0.25, 3.2, -0.09));
+    this.g.add(boxMesh(0.5, 0.45, 0.04, additive(0xff7a20, { opacity: 0.9, fog: false }), 0, 0.85, 0.33));
+    this.ember = glowSprite(0xff8a30, 2.4, 0);
+    this.ember.position.set(0, 0.95, 0.7);
+    this.g.add(this.ember);
     this.g.add(boxMesh(0.7, 0.45, 0.6, metal, 0, 0.225, 1.15));
     this.g.add(boxMesh(0.9, 0.27, 0.8, metal, 0, 0.585, 1.15));
     const sign = new THREE.Mesh(new THREE.PlaneGeometry(1.1, 0.3), new THREE.MeshBasicMaterial({ map: signTexture('FORJA', '#9fd8ff', '#10161e', 1.1, 0.3, false) }));
@@ -65,6 +78,11 @@ export class ForjaView {
     const e = 1 - Math.pow(1 - Math.min(1, k), 3);
     this.g.position.y = -DEPTH * (1 - e);
     this.g.visible = this.up || this.t >= 0;
+    // brasa na boca: brilho que respira e chamas pequenas (só com a Forja pronta)
+    const ember = this.up ? 1 : 0;
+    this.pulse += dt;
+    (this.ember.material as THREE.SpriteMaterial).opacity = ember * (0.55 + 0.2 * Math.sin(this.pulse * 5) + 0.1 * Math.sin(this.pulse * 11));
+    if (this.up) this.c.fx.flame('forja-brasa', cx, 0.7, cz + 0.55, dt, 9, 0.35, 0xff8a30);
   }
 
   private startRise() {

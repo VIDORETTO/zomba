@@ -60,6 +60,8 @@ export class WeatherFx {
   private readonly snowMat: THREE.ShaderMaterial;
   private rainK = 0;
   private snowK = 0;
+  // neve no chão: sobe devagar enquanto neva (cheia em 80 s) e derrete em uns 60 s depois
+  private ground = 0;
   private current: Weather = 'limpo';
   private scale = 600;
 
@@ -112,6 +114,11 @@ export class WeatherFx {
     return this.snowK;
   }
 
+  // 0 a 1 de quanto a neve já se acumulou no chão
+  get snowGround() {
+    return this.ground;
+  }
+
   setWeather(w: Weather) {
     if (w === this.current) return;
     this.current = w;
@@ -121,6 +128,7 @@ export class WeatherFx {
   update(dt: number, t: number, cam: THREE.Vector3) {
     this.rainK += ((this.current === 'chuva' ? 1 : 0) - this.rainK) * Math.min(1, dt * 0.6);
     this.snowK += ((this.current === 'neve' ? 1 : 0) - this.snowK) * Math.min(1, dt * 0.35);
+    this.ground = Math.max(0, Math.min(1, this.ground + (this.current === 'neve' ? dt / 80 : -dt / 60)));
     for (const [obj, mat, k] of [[this.rain, this.rainMat, this.rainK], [this.snow, this.snowMat, this.snowK]] as const) {
       obj.visible = k > 0.01;
       if (!obj.visible) continue;

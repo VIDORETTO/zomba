@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import type { GameEvent, TrGen } from '../../shared/protocol';
-import { additive, beamMesh, clamp01, flatRing, glowSprite, smooth } from './common';
+import { additive, beamMesh, clamp01, flatRing, glowSprite, glowTex, Merger, smooth, solid } from './common';
 import type { TrCtx } from './ctx';
 
 interface GenFx {
@@ -12,7 +12,28 @@ interface GenFx {
   alert: THREE.Mesh;
   lamps: THREE.Sprite[];
   on: number;
+  // anel de progresso no chão (uniformes: uP = quanto já encheu, uBack = 1 quando o progresso está voltando)
+  prog: THREE.Mesh;
+  lastProg: number;
+  // cordão de lâmpadas: segundos desde que ligou (as lâmpadas acendem em sequência ao longo de LAMP_TIME)
+  lampT: number;
+  lit: number;
 }
+
+const LAMPS_PER_GEN = 20;
+const LAMP_TIME = 1.5;
+const PROG_V = /* glsl */ `
+  varying vec2 vP;
+  void main() { vP = position.xz; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }`;
+const PROG_F = /* glsl */ `
+  uniform float uP; uniform float uBack; uniform float uOpacity;
+  varying vec2 vP;
+  void main() {
+    float a = atan(vP.y, vP.x) / 6.2831853 + 0.5;
+    float fill = step(a, uP);
+    vec3 col = mix(vec3(0.35, 0.95, 1.0), vec3(1.0, 0.22, 0.15), uBack);
+    gl_FragColor = vec4(col, (0.18 + 0.72 * fill) * uOpacity);
+  }`;
 
 const OFF = new THREE.Color(0xff8a30);
 const ON = new THREE.Color(0x4fe8ff);
@@ -21,6 +42,9 @@ const ON = new THREE.Color(0x4fe8ff);
 export class GeneratorView {
   private readonly gens: GenFx[] = [];
   private readonly wallGeo: THREE.CylinderGeometry;
+  private readonly bulbs: THREE.InstancedMesh;
+  private readonly halos: THREE.Points;
+  private readonly haloCol: THREE.BufferAttribute;
 
   constructor(private readonly c: TrCtx) {
     this.wallGeo = new THREE.CylinderGeometry(1, 1, 1, 40, 1, true).translate(0, 0.5, 0);
@@ -44,10 +68,72 @@ export class GeneratorView {
         lamps.push(l);
         group.add(l);
       }
-      group.add(ring, alert, wall, beam, glow);
+      // anel de progresso: gira ao redor do círculo de captura e enche conforme a captura anda
+      const prog = new THREE.Mesh(
+        new THREE.RingGeometry(g.r - 0.1, g.r + 0.25, 72).rotateX(-Math.PI / 2),
+        new THREE.ShaderMaterial({ vertexShader: PROG_V, fragmentShader: PROG_F, uniforms: { uP: { value: 0 }, uBack: { value: 0 }, uOpacity: { value: 0 } }, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending }),
+      );
+      prog.name = `gerador-progresso-${this.gens.length}`;
+      prog.position.y = 0.09;
+      prog.renderOrder = 1;
+      prog.visible = false;
+      group.add(ring, alert, wall, beam, glow, prog);
       c.scene.add(group);
-      this.gens.push({ group, ring, wall, beam, glow, alert, lamps, on: 0 });
+      this.gens.push({ group, ring, wall, beam, glow, alert, lamps, on: 0, prog, lastProg: 0, lampT: 0, lit: 0 });
     }
+    // cordões de lâmpadas em volta de cada área: 4 postes e 4 arcos com 5 lâmpadas (uma malha instanciada para todos)
+    const lampsGroup = new THREE.Group();
+    lampsGroup.name = 'gerador-lampadas';
+    const posts = new Merger();
+    const wood = solid(c.tex, 'woodDark', 0x8a6a48, c.q.simpleMaterials);
+    const wire: number[] = [];
+    const bulbPos: THREE.Vector3[] = [];
+    for (const g of c.T.gens) {
+      const R = g.r + 2.0, H = 3.4;
+      const post = (k: number) => new THREE.Vector3(g.x + Math.cos(Math.PI / 4 + (k * Math.PI) / 2) * R, H, g.z + Math.sin(Math.PI / 4 + (k * Math.PI) / 2) * R);
+      for (let k = 0; k < 4; k++) {
+        const a = post(k), b = post(k + 1);
+        posts.span(wood, a.x - 0.06, 0, a.z - 0.06, a.x + 0.06, H + 0.1, a.z + 0.06);
+        let prev = a;
+        for (let j = 1; j <= 6; j++) {
+          const t = j / 6;
+          const p = new THREE.Vector3(a.x + (b.x - a.x) * t, H - 0.45 * (1 - (2 * t - 1) ** 2), a.z + (b.z - a.z) * t);
+          wire.push(prev.x, prev.y, prev.z, p.x, p.y, p.z);
+          prev = p;
+          if (j < 6) bulbPos.push(p.clone().setY(p.y - 0.1));
+        }
+      }
+    }
+    lampsGroup.add(posts.build('gerador-postes', false));
+    const lines = new THREE.LineSegments(new THREE.BufferGeometry().setAttribute('position', new THREE.Float32BufferAttribute(wire, 3)), new THREE.LineBasicMaterial({ color: 0x1a1612 }));
+    lines.frustumCulled = false;
+    lampsGroup.add(lines);
+    this.bulbs = new THREE.InstancedMesh(new THREE.OctahedronGeometry(0.12, 0), new THREE.MeshBasicMaterial({ color: 0xffffff }), bulbPos.length);
+    bulbPos.forEach((p, i) => {
+      this.bulbs.setMatrixAt(i, new THREE.Matrix4().setPosition(p));
+      this.bulbs.setColorAt(i, new THREE.Color(0x2a2018));
+    });
+    this.bulbs.frustumCulled = false;
+    lampsGroup.add(this.bulbs);
+    const hpos = new Float32Array(bulbPos.length * 3);
+    bulbPos.forEach((p, i) => p.toArray(hpos, i * 3));
+    const hgeo = new THREE.BufferGeometry();
+    hgeo.setAttribute('position', new THREE.BufferAttribute(hpos, 3));
+    this.haloCol = new THREE.BufferAttribute(new Float32Array(bulbPos.length * 3), 3);
+    hgeo.setAttribute('color', this.haloCol);
+    this.halos = new THREE.Points(hgeo, new THREE.PointsMaterial({ map: glowTex(), size: 1.3, sizeAttenuation: true, vertexColors: true, transparent: true, blending: THREE.AdditiveBlending, depthWrite: false, fog: false }));
+    this.halos.frustumCulled = false;
+    this.halos.renderOrder = 2;
+    lampsGroup.add(this.halos);
+    c.scene.add(lampsGroup);
+  }
+
+  // quantas lâmpadas do cordão do gerador i estão acesas / quantas ele tem
+  lampsLit(i: number) {
+    return this.gens[i]?.lit ?? 0;
+  }
+  lampsTotal(_i: number) {
+    return LAMPS_PER_GEN;
   }
 
   // cam: posição da câmera; de perto o feixe e o brilho desbotam (smoothstep de 2 a 12 m do eixo) para não cobrirem a tela
@@ -71,6 +157,23 @@ export class GeneratorView {
         v.beam.rotation.y = t * 0.6;
       }
       for (const l of v.lamps) (l.material as THREE.SpriteMaterial).opacity = v.on * (0.8 + 0.2 * Math.sin(t * 9 + l.position.x));
+      // anel de progresso: enche com a captura; vermelho quando o progresso está voltando
+      const pu = (v.prog.material as THREE.ShaderMaterial).uniforms;
+      v.prog.visible = s.capturing || (s.progress > 0.01 && !s.on);
+      pu.uP.value = s.progress;
+      if (s.capturing) pu.uBack.value = s.progress < v.lastProg - 1e-4 ? 1 : 0;
+      else if (s.progress < v.lastProg - 1e-4) pu.uBack.value = 1;
+      else if (s.progress === 0) pu.uBack.value = 0;
+      pu.uOpacity.value = 0.9;
+      v.lastProg = s.progress;
+      // cordão de lâmpadas: acende uma a uma em 1,5 s depois que o gerador liga e apaga de uma vez ao desligar
+      if (s.on) v.lampT += dt;
+      else v.lampT = 0;
+      const lit = s.on ? Math.min(LAMPS_PER_GEN, Math.floor(((v.lampT + 1e-6) / LAMP_TIME) * LAMPS_PER_GEN) + (v.lampT > 0 ? 1 : 0)) : 0;
+      if (lit !== v.lit) {
+        v.lit = lit;
+        this.lampsDirty = true;
+      }
       // parede de progresso
       v.wall.visible = s.capturing || (s.progress > 0.01 && !s.on);
       if (v.wall.visible) {
@@ -92,6 +195,29 @@ export class GeneratorView {
         return { x: g.x + Math.cos(a) * g.r, y: 0.2, z: g.z + Math.sin(a) * g.r, vy: 2 + Math.random() * 2, vx: -Math.cos(a) * 1.2, vz: -Math.sin(a) * 1.2, life: 0.9, size: 0.22, color: 0x7af0ff, alpha: 0.9 };
       });
     });
+    this.paintLamps();
+  }
+
+  private lampsDirty = true;
+  private readonly cOff = new THREE.Color(0x2a2018);
+  private readonly cOn = new THREE.Color(0xffe2a0).multiplyScalar(1.6);
+
+  // pinta as lâmpadas acesas (só quando algo mudou)
+  private paintLamps() {
+    if (!this.lampsDirty) return;
+    this.lampsDirty = false;
+    const per = this.bulbs.count / this.gens.length;
+    this.gens.forEach((v, gi) => {
+      for (let k = 0; k < per; k++) {
+        const i = gi * per + k;
+        const on = k < v.lit;
+        this.bulbs.setColorAt(i, on ? this.cOn : this.cOff);
+        const a = on ? 0.85 : 0;
+        this.haloCol.setXYZ(i, 1.0 * a, 0.78 * a, 0.42 * a);
+      }
+    });
+    if (this.bulbs.instanceColor) this.bulbs.instanceColor.needsUpdate = true;
+    this.haloCol.needsUpdate = true;
   }
 
   onEvent(e: GameEvent) {

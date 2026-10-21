@@ -152,6 +152,148 @@ for (const [dist, pitch] of [[8, 0.4], [25, 0.15]]) {
 }
 
 // ---------------------------------------------------------------------------
+// Cena: objetos esperados existem (por nome)
+// ---------------------------------------------------------------------------
+const nomes = (lista) => G((lista) => {
+  const g = window.__game;
+  const cont = {};
+  g.scene.traverse((o) => { if (o.name) cont[o.name] = (cont[o.name] ?? 0) + 1; });
+  return lista.map((n) => [n, cont[n] ?? 0]);
+}, lista);
+const existem = async (titulo, lista, minimos = {}) => {
+  const r = await nomes(lista);
+  const falta = r.filter(([n, c]) => c < (minimos[n] ?? 1)).map(([n]) => n);
+  check(titulo, falta.length === 0, falta.length ? `faltam: ${falta.join(', ')}` : r.map(([n, c]) => `${n}×${c}`).join(' '));
+};
+
+// B1: Escavação
+await existem('Escavação: poço, andaimes, guindaste, lonas, runas, anéis e pedestais existem na cena',
+  ['escavacao-poco', 'escavacao-andaime', 'escavacao-guindaste', 'escavacao-lona', 'escavacao-runas', 'escavacao-aneis', 'escavacao-pedestais'],
+  { 'escavacao-andaime': 2, 'escavacao-lona': 2 });
+{
+  const info = await G(() => {
+    const g = window.__game;
+    const rings = [], lonas = [];
+    g.scene.traverse((o) => { if (/^escavacao-anel-\d$/.test(o.name)) rings.push(o.name); });
+    return { rings: rings.length, ring: g.o.map.trincheira.ring };
+  });
+  check('Escavação: 4 anéis de pedra desenhados (parados)', info.rings === 4, `${info.rings}`);
+}
+// pulsa: a opacidade das runas varia com o tempo (6 medidas, de 300 em 300 ms)
+{
+  const v = [];
+  for (let i = 0; i < 6; i++) {
+    v.push(await G(() => { let m = null; window.__game.scene.traverse((o) => { if (o.name === 'escavacao-runas') m = o.children[0]; }); return m.material.opacity; }));
+    await page.waitForTimeout(300);
+  }
+  check('Escavação: as runas do chão pulsam', Math.max(...v) - Math.min(...v) > 0.05, v.map((x) => x.toFixed(2)).join(' '));
+}
+{
+  const [px, pz] = await G(() => window.__game.o.map.trincheira.ring.c);
+  await view(px, pz + 7, 0, -0.35, 2000);
+  await shot('b1-escavacao-poco');
+  await view(px, pz + 8.5, 0, 0.08, 2000);
+  await shot('b1-escavacao');
+}
+
+// B2: céu e clima
+await existem('Céu: nuvens, colunas de fumaça e sinalizador existem na cena', ['ceu-nuvens', 'fumaca-colunas', 'sinalizador']);
+{
+  const r = await G(() => {
+    const tr = window.__game.tr;
+    const cam = window.__game.camera.position;
+    const toques = [];
+    const play = tr.snd.play.bind(tr.snd);
+    tr.snd.play = (n, p, v) => { toques.push(n); play(n, p, v); };
+    const out = {};
+    // 60 s de relógio de teste, em passos de 0,1 s
+    const roda = (clima, seg) => {
+      const a = { ...tr.sky.stats };
+      for (let i = 0; i < seg * 10; i++) tr.sky.update(0.1, 1000 + i * 0.1, cam, clima);
+      const b = tr.sky.stats;
+      return { lightning: b.lightning - a.lightning, shells: b.shells - a.shells, flares: b.flares - a.flares };
+    };
+    out.limpo = roda('limpo', 60);
+    out.chuva = roda('chuva', 60);
+    // o trovão e o estrondo chegam atrasados pela distância: depois de mais 8 s os sons já tocaram
+    roda('limpo', 8);
+    out.sons = { trovao: toques.filter((n) => n === 'trovao').length, artilharia: toques.filter((n) => n === 'artilharia-longe').length };
+    return out;
+  });
+  check('Relâmpago: em 60 s de tempo limpo acontece ao menos 1', r.limpo.lightning >= 1, `${r.limpo.lightning}`);
+  check('Relâmpago: na chuva é mais frequente (6 a 15 s)', r.chuva.lightning >= 3, `${r.chuva.lightning} em 60 s`);
+  check('Artilharia ao longe: clarão no horizonte e estrondo, em 60 s', r.limpo.shells >= 1 && r.sons.artilharia >= r.limpo.shells, `${r.limpo.shells} clarões, ${r.sons.artilharia} estrondos`);
+  check('Trovão chega atrasado: tocou em todos os relâmpagos', r.sons.trovao >= r.limpo.lightning + r.chuva.lightning - 1, `${r.sons.trovao} trovões para ${r.limpo.lightning + r.chuva.lightning} relâmpagos`);
+  check('Sinalizador: aparece de 30 a 60 s', r.limpo.flares >= 1, `${r.limpo.flares}`);
+}
+{
+  // clarão de 0,15 s: quando o relâmpago cai, o clarão sobe a 1 e volta a 0 em ~0,15 s
+  const r = await G(() => {
+    const sky = window.__game.tr.sky, cam = window.__game.camera.position;
+    sky.update(0.01, 2000, cam, 'limpo');
+    sky.strike(cam);
+    const vals = [];
+    for (let i = 0; i < 25; i++) { sky.update(0.01, 2000 + i * 0.01, cam, 'limpo'); vals.push(sky.flash); }
+    return { pico: Math.max(...vals), fim: vals[vals.length - 1], duracao: vals.filter((v) => v > 0.05).length * 0.01 };
+  });
+  check('Clarão do relâmpago: pico 1 e dura ~0,15 s', r.pico > 0.95 && r.fim < 0.05 && r.duracao > 0.1 && r.duracao < 0.2, JSON.stringify(r));
+}
+{
+  // neve: a mistura no chão sobe devagar durante a rodada de neve
+  const r = await G(() => {
+    const w = window.__game.tr.weather, cam = window.__game.camera.position;
+    w.setWeather('neve');
+    const v = [w.snowGround];
+    for (let i = 1; i <= 600; i++) { w.update(0.1, 3000 + i * 0.1, cam); if (i % 200 === 0) v.push(w.snowGround); }
+    return v;
+  });
+  check('Neve: o chão vai de 0 a mais de 0,5 em 60 s, aos poucos', r[0] < 0.01 && r[1] > 0.1 && r[1] < r[2] && r[3] > 0.5, r.map((x) => x.toFixed(2)).join(' → '));
+  await G(() => { const w = window.__game.tr.weather; w.setWeather('limpo'); const cam = window.__game.camera.position; for (let i = 1; i <= 900; i++) w.update(0.1, 4000 + i * 0.1, cam); });
+}
+await view(-15, 20, Math.PI, 0.5, 2500);
+await shot('b2-ceu');
+await G(() => { window.__game.tr.sky.strike(window.__game.camera.position); });
+await page.waitForTimeout(60);
+await shot('b2-relampago');
+
+// B9: anel de progresso e cordões de lâmpadas dos geradores
+await existem('Geradores: anel de progresso e cordões de lâmpadas existem na cena', ['gerador-progresso-0', 'gerador-progresso-5', 'gerador-lampadas']);
+{
+  const r = await G(() => {
+    const gv = window.__game.tr.gens, cam = window.__game.camera.position;
+    const fake = (i, over) => Array.from({ length: 6 }, (_, k) => ({ on: false, progress: 0, capturing: false, attacked: false, ...(k === i ? over : {}) }));
+    const ring = () => { let m = null; window.__game.scene.traverse((o) => { if (o.name === 'gerador-progresso-0') m = o; }); return m.material.uniforms; };
+    const out = {};
+    gv.update(fake(0, { capturing: true, progress: 0.5 }), 0.016, 1, cam);
+    out.meio = { p: ring().uP.value, voltando: ring().uBack.value, visivel: ring() && true };
+    gv.update(fake(0, { capturing: true, progress: 0.8 }), 0.016, 1.1, cam);
+    out.subindo = ring().uBack.value;
+    // sem ninguém no círculo o progresso volta: o anel fica vermelho
+    gv.update(fake(0, { capturing: false, progress: 0.7 }), 0.016, 1.2, cam);
+    out.volta = ring().uBack.value;
+    // lâmpadas: apagadas, depois acendem em sequência ao longo de 1,5 s
+    gv.update(fake(0, {}), 0.016, 2, cam);
+    out.apagadas = gv.lampsLit(0);
+    out.total = gv.lampsTotal(0);
+    const ligado = fake(0, { on: true });
+    gv.update(ligado, 0.016, 3, cam);
+    for (let i = 0; i < 5; i++) gv.update(ligado, 0.1, 3.1 + i * 0.1, cam); // 0,5 s
+    out.aos05 = gv.lampsLit(0);
+    for (let i = 0; i < 15; i++) gv.update(ligado, 0.1, 4 + i * 0.1, cam); // 2 s no total
+    out.aos2 = gv.lampsLit(0);
+    return out;
+  });
+  check('Anel de progresso: com progress = 0,5 o anel está em 50%', Math.abs(r.meio.p - 0.5) < 0.02, `${r.meio.p}`);
+  check('Anel de progresso: sobe em ciano e fica vermelho quando o progresso volta', r.subindo < 0.5 && r.volta > 0.5, `subindo ${r.subindo}, voltando ${r.volta}`);
+  check('Lâmpadas: apagadas com o gerador desligado', r.apagadas === 0 && r.total >= 12, `${r.apagadas} de ${r.total}`);
+  check('Lâmpadas: acendem em sequência (parte aos 0,5 s, todas depois de 2 s)', r.aos05 > 0 && r.aos05 < r.total && r.aos2 === r.total, `${r.aos05} aos 0,5 s, ${r.aos2} aos 2 s de ${r.total}`);
+  // devolve o estado real
+  await G(() => window.__game.debugTr('gens'));
+}
+await view(gx + 7, gz + 3, Math.PI / 2 + 0.5, 0.25, 2500);
+await shot('b9-lampadas');
+
+// ---------------------------------------------------------------------------
 // F3: orçamento de desempenho (chamadas de desenho e triângulos por quadro, nos 6 pontos da tour)
 // ---------------------------------------------------------------------------
 const ORC = new URL('../docs/trincheira/orcamento.json', import.meta.url);

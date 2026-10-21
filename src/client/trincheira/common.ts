@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import type { Element } from '../../shared/protocol';
 
 // Som da Trincheira: o dono do áudio cria estes métodos no AudioEngine; aqui só chamamos (se faltar, não faz nada).
@@ -225,4 +226,70 @@ export function glowy(tex: Record<string, THREE.Texture>, color: number, simple:
     matCache.set(k, m);
   }
   return m;
+}
+
+// junta caixas e cilindros em uma malha por material
+export class Merger {
+  private readonly parts = new Map<THREE.Material, THREE.BufferGeometry[]>();
+  private readonly m = new THREE.Matrix4();
+  private readonly q = new THREE.Quaternion();
+  private readonly e = new THREE.Euler();
+
+  private add(mat: THREE.Material, geo: THREE.BufferGeometry, x: number, y: number, z: number, rx: number, ry: number, rz: number) {
+    this.e.set(rx, ry, rz, 'YXZ');
+    this.q.setFromEuler(this.e);
+    this.m.compose(new THREE.Vector3(x, y, z), this.q, new THREE.Vector3(1, 1, 1));
+    geo.applyMatrix4(this.m);
+    let list = this.parts.get(mat);
+    if (!list) this.parts.set(mat, (list = []));
+    list.push(geo);
+  }
+
+  // caixa centrada em (x, y, z)
+  box(mat: THREE.Material, w: number, h: number, d: number, x: number, y: number, z: number, ry = 0, rx = 0, rz = 0) {
+    this.add(mat, new THREE.BoxGeometry(w, h, d), x, y, z, rx, ry, rz);
+  }
+
+  // caixa pelos dois cantos opostos (mais fácil para tábuas e vigas)
+  span(mat: THREE.Material, x0: number, y0: number, z0: number, x1: number, y1: number, z1: number) {
+    this.box(mat, Math.abs(x1 - x0), Math.abs(y1 - y0), Math.abs(z1 - z0), (x0 + x1) / 2, (y0 + y1) / 2, (z0 + z1) / 2);
+  }
+
+  // viga entre dois pontos
+  beam(mat: THREE.Material, a: THREE.Vector3, b: THREE.Vector3, th: number) {
+    const len = a.distanceTo(b);
+    const mid = a.clone().add(b).multiplyScalar(0.5);
+    const g = new THREE.BoxGeometry(th, th, len);
+    const q = new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 0, 1), b.clone().sub(a).normalize());
+    this.m.compose(mid, q, new THREE.Vector3(1, 1, 1));
+    g.applyMatrix4(this.m);
+    let list = this.parts.get(mat);
+    if (!list) this.parts.set(mat, (list = []));
+    list.push(g);
+  }
+
+  cyl(mat: THREE.Material, rt: number, rb: number, h: number, seg: number, x: number, y: number, z: number, rx = 0, rz = 0, open = false) {
+    this.add(mat, new THREE.CylinderGeometry(rt, rb, h, seg, 1, open), x, y, z, rx, 0, rz);
+  }
+
+  geo(mat: THREE.Material, g: THREE.BufferGeometry) {
+    let list = this.parts.get(mat);
+    if (!list) this.parts.set(mat, (list = []));
+    list.push(g);
+  }
+
+  build(name: string, shadow = true): THREE.Group {
+    const group = new THREE.Group();
+    group.name = name;
+    for (const [mat, list] of this.parts) {
+      const merged = mergeGeometries(list.map((g) => (g.index ? g.toNonIndexed() : g)), false);
+      for (const g of list) g.dispose();
+      if (!merged) continue;
+      const mesh = new THREE.Mesh(merged, mat);
+      mesh.castShadow = shadow;
+      mesh.receiveShadow = true;
+      group.add(mesh);
+    }
+    return group;
+  }
 }

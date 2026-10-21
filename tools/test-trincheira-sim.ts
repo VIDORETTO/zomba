@@ -1106,6 +1106,25 @@ function missionToHarvest(players: number, plan: [number, El][]) {
   check('missão real: dono morto, o cajado vai para o vivo sem cajado (um por jogador)', holds(0).join() === 'cajado-fogo-d' && tr(s).staffs[1].st === 'pedestal');
 }
 
+// --- Escavação (B1): a decoração é só desenho, nada fecha o caminho ---
+{
+  const s = mk();
+  quiet(s);
+  const nav = raw(s).nav;
+  for (const d of map.doors) raw(s).world.openDoors.add(d.id);
+  raw(s).world.rebuild?.();
+  nav.rebuild();
+  const start = { x: map.playerSpawns[0][0], z: map.playerSpawns[0][1] };
+  nav.update([start]);
+  const reach = (x: number, z: number) => nav.distanceAt(x, z) < 0xffff;
+  const near = (x: number, z: number, r: number) => reach(x, z) || Array.from({ length: 16 }, (_, k) => k).some((k) => reach(x + Math.cos((k / 16) * 6.283) * r, z + Math.sin((k / 16) * 6.283) * r));
+  const ids2 = map.interactables.filter((i) => /^(staff-|forge$|poco$|part:gramofone)/.test(i.id));
+  const bad = ids2.filter((i) => !near(i.use[0], i.use[1], Math.min(1.7, (i.reach ?? 1.9) * 0.85)));
+  check('Escavação: pedestais, Forja, poço e gramofone alcançáveis com tudo aberto', ids2.length >= 7 && bad.length === 0, bad.map((i) => i.id).join(' '));
+  const [rx, rz] = D.ring.c;
+  check('Escavação: o centro do poço continua sólido (o vão não é andável)', !reach(rx, rz));
+}
+
 // --- protocolo e tamanho do snapshot ---
 {
   const s = mk(4);

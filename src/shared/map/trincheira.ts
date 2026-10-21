@@ -598,7 +598,7 @@ export function buildTrincheira(): MapDef {
   ring(6.5, 28, (a, b) => seg(a, along(a, b, 0.6), -0.07, 0.07, 0.026, 0.04, 'neon', 0x4fb8ff));
   ring(9.2, 36, (a, b) => seg(along(a, b, 0.2), along(a, b, 0.8), -0.06, 0.06, 0.026, 0.04, 'neon', 0x3a90d0));
   ring(L.ring.hole + 0.35, 14, (a, b) => seg(a, b, -0.35, 0.35, 0, 0.55, 'stone', 0x6e685e, 0.1));
-  box(rcx - L.ring.hole, -0.02, rcz - L.ring.hole, rcx + L.ring.hole, 0.03, rcz + L.ring.hole, 'stone', false, { tint: 0x141210 });
+  // o vão do poço fica aberto: o navegador desenha o poço em degraus lá dentro (escavacaoView.ts); a colisão é a dos blocos escondidos
   // a coluna da Forja sobe do poço quando os 6 geradores ligam: o navegador a desenha (aqui só o ponto de uso)
   interactables.push({ id: 'forge', kind: 'forge', use: [rcx, rcz + 2.9], y: 0 });
   lights.push({ pos: [rcx, 1.2, rcz + 1.6], color: 0x6ab8ff, intensity: 14, distance: 9, kind: 'interior' });
@@ -1261,7 +1261,7 @@ export function buildTrincheira(): MapDef {
     fizzSpots,
     trincheira,
     place: 'Norte da França, 1918',
-    sky: { top: 0x1e1d1c, sun: 0xc8925a },
+    sky: { top: 0x34373b, sun: 0xd8782e, warm: 0x6a2a10 },
     surface: { ox: OX, oz: OZ, w: GW, h: GH, data },
   };
 }

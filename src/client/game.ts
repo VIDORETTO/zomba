@@ -1551,6 +1551,7 @@ export class Game {
     });
     this.hellK = clamp(this.hellK + (hell ? dt / 2.5 : -dt / 4), 0, 1);
     this.boltFlash = Math.max(0, this.boltFlash - dt * 5);
+    this.mapView.setSkyFlash(this.tr?.skyFlash ?? 0);
     this.mapView.setMood(this.hellK, this.boltFlash);
     // Rota: névoa mais fechada na estrada; o nome da parada aparece ao chegar
     const zones = this.o.map.zones;

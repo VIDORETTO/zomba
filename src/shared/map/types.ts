@@ -243,7 +243,8 @@ export interface MapDef {
   // subtítulo da abertura (padrão: "Algum lugar no interior")
   place?: string;
   // céu: cor do alto e do brilho do sol (padrão: fim de tarde alaranjado)
-  sky?: { top: number; sun: number };
+  // warm: faixa quente logo acima do horizonte (opcional)
+  sky?: { top: number; sun: number; warm?: number };
   // ---------- Trincheira ----------
   // chefão do mapa (padrão: Carrasco); sem rodada infernal de cães
   boss?: 'carrasco' | 'blindado';

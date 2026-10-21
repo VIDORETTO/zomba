@@ -61,7 +61,6 @@ export class TrAudio {
   private wind: { src: AudioBufferSourceNode; gain: GainNode } | null = null;
   private weather: Weather4 = 'limpo';
   private ambient = false;
-  private shellT = 20;
   private drumT = 8;
   // sons parecidos não empilham (gelo-raio chega 10 vezes por segundo)
   private readonly lastT = new Map<string, number>();
@@ -223,7 +222,6 @@ export class TrAudio {
     src.connect(bp).connect(gain);
     this.wind = { src, gain };
     this.applyWeather();
-    this.shellT = R(8, 20);
     this.drumT = R(4, 10);
   }
 
@@ -243,18 +241,10 @@ export class TrAudio {
     }
   }
 
-  // artilharia ao longe e tambor de guerra distante, de tempos em tempos
+  // tambor de guerra distante, de tempos em tempos (a artilharia ao longe e os trovões vêm do SkyFx, com o clarão)
   update(dt: number) {
     if (!this.ambient) return;
-    this.shellT -= dt;
     this.drumT -= dt;
-    if (this.shellT <= 0) {
-      this.shellT = R(20, 50);
-      const a = Math.random() * Math.PI * 2;
-      const l = this.k.listener;
-      const d = R(70, 130);
-      this.play('artilharia-longe', new THREE.Vector3(l.x + Math.cos(a) * d, 12, l.z + Math.sin(a) * d), 1);
-    }
     if (this.drumT <= 0) {
       this.drumT = R(14, 28);
       this.distantDrum();

@@ -11,6 +11,7 @@ import type { Sample } from '../snapbuffer';
 import type { TexSet } from '../textures';
 import { BenchView, DroneView } from './benchView';
 import { CamaraFx } from './camaraFx';
+import { EscavacaoView } from './escavacaoView';
 import { Snd } from './common';
 import { ColossusView } from './colossusView';
 import type { TrCtx } from './ctx';
@@ -19,6 +20,7 @@ import { ForjaView } from './forjaView';
 import { GeneratorView } from './generatorView';
 import { MoundView } from './moundView';
 import { PartsView } from './partsView';
+import { SkyFx } from './skyFx';
 import { StaffView } from './staffView';
 import { TankView } from './tankView';
 import { TrFx } from './trFx';
@@ -36,7 +38,7 @@ export interface TrOptions {
   quality: QualityConfig;
   audio: unknown;
   // neve, escuridão da Câmara e luzes dos geradores no mapa (opcional)
-  mapView?: { setSnow(k: number): void; setDim(k: number): void; setGens(on: boolean[]): void };
+  mapView?: { setSnow(k: number, ground?: number): void; setDim(k: number): void; setGens(on: boolean[]): void };
 }
 
 const EI: Record<Element, number> = { fogo: 0, gelo: 1, vento: 2, raio: 3 };
@@ -47,6 +49,10 @@ const GOALS = [TRINCHEIRA.challenge[0], 1, TRINCHEIRA.challenge[2], 1];
 export class TrincheiraClient {
   // tremor pedido pelos efeitos (o game.ts lê e zera, como faz com zombies.quake)
   quake = 0;
+  // clarão do céu (relâmpago e artilharia), 0 a 1: o game.ts o soma à luz do mapa
+  get skyFlash() {
+    return this.sky.flash;
+  }
   private hud: Hud | null = null;
   private readonly c: TrCtx;
   private readonly fx: TrFx;
@@ -54,9 +60,11 @@ export class TrincheiraClient {
   private readonly gens: GeneratorView;
   private readonly fizz: FizzView;
   private readonly forja: ForjaView;
+  private readonly escav: EscavacaoView;
   private readonly tank: TankView;
   private readonly colossus: ColossusView;
   private readonly weather: WeatherFx;
+  private readonly sky: SkyFx;
   private readonly mounds: MoundView;
   private readonly parts: PartsView;
   private readonly bench: BenchView;
@@ -88,9 +96,11 @@ export class TrincheiraClient {
     this.gens = new GeneratorView(this.c);
     this.fizz = new FizzView(this.c);
     this.forja = new ForjaView(this.c);
+    this.escav = new EscavacaoView(this.c);
     this.tank = new TankView(this.c);
     this.colossus = new ColossusView(this.c);
     this.weather = new WeatherFx(scene, opts.quality.particles, this.snd);
+    this.sky = new SkyFx(this.c);
     this.mounds = new MoundView(this.c);
     this.parts = new PartsView(this.c);
     this.bench = new BenchView(this.c);
@@ -164,11 +174,13 @@ export class TrincheiraClient {
     // clima
     this.weather.setWeather(tr.weather);
     this.weather.update(dt, t, cam.position);
-    this.opts.mapView?.setSnow(this.weather.snowAmount);
+    this.sky.update(dt, t, cam.position, tr.weather);
+    this.opts.mapView?.setSnow(this.weather.snowAmount, this.weather.snowGround);
     this.opts.mapView?.setGens(tr.gens.map((g) => g.on));
     this.gens.update(tr.gens, dt, t, cam.position);
     this.fizz.update(tr, dt, t);
     this.forja.update(tr.forjaUp, dt);
+    this.escav.update(tr, t);
     this.tank.update(sample, tr, dt, t);
     this.colossus.update(tr, dt, t);
     this.mounds.update(tr, t);
@@ -526,7 +538,7 @@ export class TrincheiraClient {
   }
 
   dispose() {
-    for (const v of [this.weather, this.fx]) v.dispose();
+    for (const v of [this.weather, this.fx, this.escav, this.sky]) v.dispose();
   }
 }
 

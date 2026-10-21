@@ -991,12 +991,13 @@ Pasta sugerida: `docs/trincheira/capturas/` (só capturas do nosso jogo).
 | Ticket | Antes | Depois |
 | --- | --- | --- |
 | A2 | `tr21-gerador-ligado` (e `capturas/a2-gerador-antes-8m.png`) | `capturas/a2-gerador-depois-8m.png`, `capturas/a2-gerador-depois-perto.png` |
-| B1 | `tr05-escavacao`, `tr06-forja` | |
-| B2 | `tr04-lama-sul` | |
-| B4 | `tr07-igreja` | |
-| B5 | `tr09-oficina` | |
+| B1 | `capturas/antes-tr05-escavacao.png`, `capturas/antes-tr06-forja.png` | `capturas/depois-b1-escavacao.png`, `capturas/depois-b1-escavacao-poco.png` |
+| B2 | `capturas/antes-tr04-lama-sul.png` | `capturas/depois-b2-ceu.png`, `capturas/depois-b2-relampago.png` |
+| B4 | `capturas/antes-tr07-igreja.png` | |
+| B5 | `capturas/antes-tr09-oficina.png`, `capturas/antes-tr10-casamata.png` | |
 | B7 | `e2-blindado` | |
 | B8 | `tr15-camara` | |
+| B9 | | `capturas/depois-b9-lampadas.png` |
 | E1 | `e3-cruzados` | `capturas/e1-avisos-depois.png` |
 
 ---
@@ -1015,7 +1016,16 @@ Pasta sugerida: `docs/trincheira/capturas/` (só capturas do nosso jogo).
 | F3 | pronto, falta o FPS do Firefox | 2026-10-21 | Contador real de chamadas e triângulos (`game.perf`, tecla F3), linha de base e teste dentro de +10% |
 | E1 | pronto | 2026-10-21 | `TrHud.setAlerts`: no máximo 2 avisos abaixo da barra do chefe, por prioridade, o resto vira "+N" |
 
+| B1 | pronto, falta aprovação das capturas | 2026-10-21 | `escavacaoView.ts`: poço em degraus (3 degraus), 2 andaimes, guindaste com corda e balde, 2 lonas com mesa e lampião, runas que pulsam (3 círculos), 4 anéis de pedra parados (C6), pedestais com laje e runa acesa. `ForjaView`: brasa na boca e runas na coluna. Removida a tampa preta do poço no construtor. Tudo sem colisão; geometria juntada por material |
+| B2 | pronto, falta aprovação das capturas | 2026-10-21 | `skyFx.ts`: nuvens que andam, 4 colunas de fumaça, sinalizadores, relâmpago de 0,15 s com trovão atrasado, clarão de artilharia no horizonte sincronizado com o estrondo (o sorteio saiu do `trSound`). Céu com faixa laranja e topo cinza-chumbo. Neve: o chão enche em 80 s (`snowGround`) e a névoa continua clareando rápido. `mapView.setSkyFlash` |
+| B9 | pronto | 2026-10-21 | Anel de progresso (shader, vermelho quando volta) e cordões de lâmpadas (20 por gerador, acendem em 1,5 s) |
+
 **Observações do S1**
 
 - `test-rota.mjs` tem 1 falha constante (FPS, por software) e 2 verificações de tempo do ônibus que oscilam. Medido nos dois lados (com e sem as mudanças do S1): igual, não é regressão.
 - Os demais tickets estão a fazer.
+
+**Observações do S2**
+
+- O orçamento de desempenho subiu com o conteúdo novo (B1, B2, B9): até +8% em chamadas e +12% em triângulos nos pontos que enxergam a Escavação, dentro da margem de 10% depois de trocar as lâmpadas esféricas por octaedros. Linha de base mantida.
+- `test-box.mjs` falhou uma vez em 3 execuções (tempo, por software); o mesmo vale para `test-rota.mjs` (ver S1).

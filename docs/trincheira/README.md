@@ -996,3 +996,9 @@ Veja `POLIMENTO.md`, seção 11, para o estado de cada ticket.
 - **Avisos do topo:** `TrHud.setAlerts` (no máximo 2).
 - **Desempenho:** `game.perf` (chamadas e triângulos por quadro), tecla F3 mostra, `docs/trincheira/orcamento.json` guarda a linha de base.
 - **Testes:** `tools/test-trincheira-visual.mjs` (novo).
+
+### Polimento S2: primeira impressão (2026-10-21)
+
+- **Escavação:** `src/client/trincheira/escavacaoView.ts` (tudo só desenho). O vão do poço ficou aberto no construtor (a colisão vem dos blocos escondidos de sempre).
+- **Céu e clima:** `src/client/trincheira/skyFx.ts`. Relâmpago, artilharia ao longe e trovão agora nascem aqui (o `trSound` só toca). `MapDef.sky.warm` pinta a faixa quente do horizonte. `mapView.setSnow(k, ground)` separa névoa (rápida) de neve no chão (lenta).
+- **Geradores:** anel de progresso e cordões de lâmpadas.

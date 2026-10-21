@@ -24,6 +24,7 @@ const DEFAULT_TINT: Partial<Record<MaterialId, number>> = {
 const SNOWY = new Set<MaterialId>(['dirt', 'mud', 'sandbag', 'roof', 'floorWood', 'wood']);
 const SNOW_COLOR = new THREE.Color(0xdfe6ee);
 const SNOW_FOG = new THREE.Color(0x9a9a9e);
+const SKY_FLASH = new THREE.Color(0xc4d4ff);
 
 const NO_SHADOW = new Set<MaterialId>(['asphalt', 'pavement', 'dirt', 'paintYellow', 'paintWhite', 'lava', 'glass', 'glassLit', 'lamp', 'mud']);
 
@@ -49,9 +50,12 @@ export interface MapView {
   // geradores da Trincheira: as luzes com `gen` só acendem com o gerador ligado
   setGens(on: boolean[]): void;
   // neve (Trincheira): 0 a 1; clareia o chão, a lama, os sacos e a névoa
-  setSnow(k: number): void;
+  // k: quanto neva (névoa clara); ground: quanto já cobriu o chão (padrão = k)
+  setSnow(k: number, ground?: number): void;
   // escurece o sol e o céu (Câmara Antiga): 0 normal .. 1 bem escuro
   setDim(k: number): void;
+  // clarão do céu (relâmpago): 0 a 1
+  setSkyFlash(k: number): void;
   dispose(): void;
 }
 
@@ -264,6 +268,7 @@ export function buildMapView(map: MapDef, tex: TexSet, scene: THREE.Scene, q: Qu
       horizon: { value: new THREE.Color(map.fogColor ?? FOG_COLOR) },
       sun: { value: new THREE.Color(map.sky?.sun ?? 0xff8a3a) },
       sunDir: { value: sunDir },
+      warm: { value: new THREE.Color(map.sky?.warm ?? 0x000000) },
     },
     vertexShader: /* glsl */ `
       varying vec3 vDir;
@@ -273,11 +278,13 @@ export function buildMapView(map: MapDef, tex: TexSet, scene: THREE.Scene, q: Qu
         gl_Position = p.xyww;
       }`,
     fragmentShader: /* glsl */ `
-      uniform vec3 top; uniform vec3 horizon; uniform vec3 sun; uniform vec3 sunDir;
+      uniform vec3 top; uniform vec3 horizon; uniform vec3 sun; uniform vec3 sunDir; uniform vec3 warm;
       varying vec3 vDir;
       void main() {
         float h = clamp(vDir.y, 0.0, 1.0);
         vec3 c = mix(horizon, top, pow(h, 0.55));
+        // faixa laranja-avermelhada logo acima do horizonte (a base continua na cor da névoa, sem emenda)
+        c += warm * smoothstep(0.0, 0.07, h) * (1.0 - smoothstep(0.07, 0.34, h));
         float s = max(dot(normalize(vDir), sunDir), 0.0);
         c += sun * (pow(s, 24.0) * 0.55 + pow(s, 4.0) * 0.12);
         gl_FragColor = vec4(c, 1.0);
@@ -322,6 +329,8 @@ export function buildMapView(map: MapDef, tex: TexSet, scene: THREE.Scene, q: Qu
   let fogRoad = 0;
   let powerK = map.perksNeedPower ? 0.08 : 1;
   let snowK = 0;
+  let groundK = 0;
+  let skyFlashK = 0;
   let dimK = 0;
   // geradores: alvo (ligado ou não) e valor suavizado de cada um
   let genOn: boolean[] = [];
@@ -361,16 +370,27 @@ export function buildMapView(map: MapDef, tex: TexSet, scene: THREE.Scene, q: Qu
     setGens(on: boolean[]) {
       genOn = on;
     },
-    setSnow(k: number) {
+    setSnow(k: number, ground = k) {
       k = Math.max(0, Math.min(1, k));
+      ground = Math.max(0, Math.min(1, ground));
+      if (Math.abs(ground - groundK) >= 0.004) {
+        groundK = ground;
+        for (const m of snowMats) {
+          m.mat.color.copy(m.base).lerp(SNOW_COLOR, ground * m.amount);
+          // um brilho próprio leve: a neve aparece mesmo na sombra e sob a luz alaranjada
+          m.mat.emissive.setRGB(0.5, 0.52, 0.56).multiplyScalar(ground * m.amount * 0.22);
+        }
+      }
       if (Math.abs(k - snowK) < 0.004) return;
       snowK = k;
-      for (const m of snowMats) {
-        m.mat.color.copy(m.base).lerp(SNOW_COLOR, k * m.amount);
-        // um brilho próprio leve: a neve aparece mesmo na sombra e sob a luz alaranjada
-        m.mat.emissive.setRGB(0.5, 0.52, 0.56).multiplyScalar(k * m.amount * 0.22);
-      }
       base.fog.copy(stopFog).lerp(roadFog, fogRoad).lerp(SNOW_FOG, k);
+      moodKey = '';
+    },
+    // clarão do céu (relâmpago da Trincheira): sol, luz ambiente e névoa acendem juntos
+    setSkyFlash(k: number) {
+      k = Math.max(0, Math.min(1, k));
+      if (Math.abs(k - skyFlashK) < 0.004) return;
+      skyFlashK = k;
       moodKey = '';
     },
     setDim(k: number) {
@@ -385,12 +405,13 @@ export function buildMapView(map: MapDef, tex: TexSet, scene: THREE.Scene, q: Qu
       return d;
     },
     setMood(hell: number, flash: number) {
-      const key = hell.toFixed(3) + ':' + flash.toFixed(3);
+      const key = hell.toFixed(3) + ':' + flash.toFixed(3) + ':' + skyFlashK.toFixed(2);
       if (key === moodKey) return;
       moodKey = key;
       fogColor.copy(base.fog).lerp(HELL.fog, hell);
       // clarão do raio: a névoa acende em laranja
       if (flash > 0) fogColor.lerp(new THREE.Color(0xff8a40), flash * 0.35);
+      if (skyFlashK > 0) fogColor.lerp(SKY_FLASH, skyFlashK * 0.45);
       fog.color.copy(fogColor);
       fog.density = fogBase + (HELL.density - FOG_DENSITY) * hell;
       bg.copy(fogColor);
@@ -398,9 +419,9 @@ export function buildMapView(map: MapDef, tex: TexSet, scene: THREE.Scene, q: Qu
       skyMat.uniforms.top.value.copy(base.top).lerp(HELL.top, hell);
       skyMat.uniforms.sun.value.copy(base.sun).lerp(HELL.sun, hell);
       hemi.color.copy(base.hemi).lerp(HELL.hemi, hell);
-      hemi.intensity = (base.hemiI * (1 - 0.15 * hell) + flash * 2.5) * (1 - 0.4 * dimK);
+      hemi.intensity = (base.hemiI * (1 - 0.15 * hell) + flash * 2.5 + skyFlashK * 2.2) * (1 - 0.4 * dimK);
       sunLight.color.copy(base.sunLight).lerp(HELL.sunLight, hell);
-      sunLight.intensity = base.sunI * (1 - 0.35 * hell) * (1 - 0.8 * dimK);
+      sunLight.intensity = base.sunI * (1 - 0.35 * hell) * (1 - 0.8 * dimK) + skyFlashK * 3.2;
     },
     setDoors(open: string[]) {
       for (const id of open) {
