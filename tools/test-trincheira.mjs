@@ -1,8 +1,8 @@
 // Teste no navegador (headless): mapa Trincheira (menu, portões, paredes, arma de parede, bebida, Caixa, zumbis, FPS).
 // Uso: node tools/test-trincheira.mjs <pasta>   (com npm run dev ligado)
-import { chromium } from 'playwright-core';
+import { launch } from './launch.mjs';
 const out = process.argv[2] ?? '.';
-const browser = await chromium.launch({ channel: 'chrome', headless: true, args: ['--ignore-gpu-blocklist', '--use-angle=d3d11'] });
+const browser = await launch();
 const page = await browser.newPage({ viewport: { width: 1280, height: 720 } });
 const errs = [];
 page.on('pageerror', (e) => errs.push(e.message));
@@ -27,7 +27,7 @@ const face = (id, look) => page.evaluate(([id, look]) => {
 }, [id, look]);
 const pos = () => page.evaluate(() => ({ x: window.__game.pc.pos.x, z: window.__game.pc.pos.z }));
 
-await page.goto('http://localhost:5173/?autoplay');
+await page.goto('http://127.0.0.1:5173/?autoplay');
 await page.waitForLoadState('networkidle');
 await page.click('#map-choice [data-map="trincheira"]');
 check('menu mostra a Trincheira', await page.evaluate(() => document.querySelector('#map-choice [data-map="trincheira"]').classList.contains('on') && /escavação/.test(document.querySelector('#map-desc').textContent)));

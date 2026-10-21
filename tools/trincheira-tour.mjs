@@ -1,13 +1,13 @@
 // Passeio fotográfico pela Trincheira: cada área vista de dentro. Uso: node tools/trincheira-tour.mjs <pasta> [aberto]
 // Com "aberto" todos os portões já começam abertos.
-import { chromium } from 'playwright-core';
+import { launch } from './launch.mjs';
 const out = process.argv[2] ?? '.';
 const openAll = process.argv[3] === 'aberto';
-const browser = await chromium.launch({ channel: 'chrome', headless: true, args: ['--ignore-gpu-blocklist', '--use-angle=d3d11'] });
+const browser = await launch();
 const page = await browser.newPage({ viewport: { width: 1280, height: 720 } });
 page.on('pageerror', (e) => console.log('[pageerror]', e.message));
 page.on('console', (m) => { if (m.type() === 'error') console.log('[console]', m.text()); });
-await page.goto('http://localhost:5173/?autoplay');
+await page.goto('http://127.0.0.1:5173/?autoplay');
 await page.waitForLoadState('networkidle');
 await page.click('#map-choice [data-map="trincheira"]');
 await page.click('#btn-solo');

@@ -16,6 +16,13 @@ await page.click('#map-choice [data-map="trincheira"]');
 await page.click('#btn-solo');
 await page.waitForFunction(() => window.__game, null, { timeout: 120000 });
 await page.waitForTimeout(2000);
+// A3: depois de 4 s do começo, as três linhas do título aparecem inteiras
+await page.waitForFunction(() => document.querySelector('.intro-line')?.textContent === 'TRINCHEIRA', null, { timeout: 60000 });
+await page.waitForTimeout(4000);
+{
+  const intro = await G(() => [...document.querySelectorAll('.intro-line')].map((d) => d.textContent));
+  check('título de entrada completo depois de 4 s', intro.length === 3 && intro[0] === 'TRINCHEIRA' && intro[1] === 'Norte da França, 1918' && /^.+, \d\d:\d\d$/.test(intro[2]), JSON.stringify(intro));
+}
 // sem zumbis nem dano: os testes controlam o que aparece
 await G(() => { const s = window.__game.transport.sim; s.toSpawn = 0; s.zombies.clear(); s.spawnZombie = () => undefined; const p = s.players.get('local'); p.health = p.maxHealth = 99999; window.__game.debugPoints(90000); });
 const at = (id) => G((id) => { const g = window.__game; const it = g.o.map.interactables.find((i) => i.id === id); g.debugView(it.use[0], it.use[1], 0, 0.05); return it.use; }, id);
@@ -130,6 +137,36 @@ await page.waitForTimeout(1500);
 check('tecla 4 arremessa a Granada de Artilharia', await sim((s) => s.tr.P(s.players.get('local')).artilharia === 2 || s.tr.strikes.length > 0));
 await page.waitForTimeout(3000);
 await page.screenshot({ path: `${out}/j7-artilharia.png` });
+
+// 10. E1: pilha de avisos no topo (barra de chefe fixa; no máximo 2 avisos embaixo, por prioridade)
+{
+  await G(() => { const s = window.__game.transport.sim; s.tr.robot = null; s.toSpawn = 0; s.zombies.clear(); window.__game.debugTr('tp:100,52'); });
+  await G(() => { window.__game.debugTr('blindado'); window.__game.debugTr('colosso', 'tita'); window.__game.debugTr('cruzados'); });
+  await page.waitForTimeout(2500);
+  const info = await G(() => {
+    const vis = (e) => e && !e.classList.contains('hidden') && getComputedStyle(e).display !== 'none';
+    const alerts = [...document.querySelectorAll('.tr-alerts .tr-alert')].filter(vis).map((e) => ({ id: e.dataset.id, top: e.getBoundingClientRect().top, text: e.textContent }));
+    const boss = document.querySelector('.bossbar');
+    return { alerts, bossVisible: vis(boss), bossBottom: boss ? boss.getBoundingClientRect().bottom : 0, old: !!document.querySelector('.tr-robot, .tr-recap') };
+  });
+  check('Blindado + colosso perto + Cruzados: no máximo 2 avisos abaixo da barra', info.bossVisible && info.alerts.length >= 1 && info.alerts.length <= 2, JSON.stringify(info.alerts.map((a) => a.id)));
+  check('o aviso do colosso perto vem primeiro, depois os Cruzados', info.alerts[0]?.id === 'colosso' && info.alerts[1]?.id === 'cruzados', JSON.stringify(info.alerts.map((a) => a.id)));
+  check('os avisos ficam abaixo da barra de chefe (sem se sobrepor)', info.alerts.every((a) => a.top >= info.bossBottom - 1), `barra termina em ${Math.round(info.bossBottom)}, avisos em ${info.alerts.map((a) => Math.round(a.top)).join(',')}`);
+  check('os painéis antigos (um em cima do outro) não existem mais', !info.old);
+  await page.screenshot({ path: `${out}/e1-avisos.png` });
+  // prioridade e excedente: 4 avisos falsos → mostra os 2 de maior prioridade e um ícone "+2"
+  const fake = await G(() => {
+    const hud = window.__game.hud.tr;
+    const mk = (id, prio) => ({ id, prio, text: id, color: '#fff', angle: null, dist: null });
+    hud.setAlerts([mk('d', 4), mk('b', 2), mk('a', 1), mk('c', 3)]);
+    const shown = [...document.querySelectorAll('.tr-alerts .tr-alert')].filter((e) => !e.classList.contains('hidden')).map((e) => e.dataset.id);
+    const more = document.querySelector('.tr-alerts .tr-more');
+    return { shown, more: more && !more.classList.contains('hidden') ? more.textContent : '' };
+  });
+  check('com 4 avisos: mostra os 2 de maior prioridade, em ordem', fake.shown.join() === 'a,b', fake.shown.join());
+  check('o que não cabe vira um ícone pequeno com a contagem', /\+2/.test(fake.more), fake.more);
+  await G(() => { const s = window.__game.transport.sim; s.tr.robot = null; });
+}
 
 const fpsv = await G(() => new Promise((res) => { let n = 0; const t0 = performance.now(); const f = () => { n++; if (performance.now() - t0 < 2000) requestAnimationFrame(f); else res(Math.round(n / ((performance.now() - t0) / 1000))); }; requestAnimationFrame(f); }));
 console.log('FPS (renderização por software):', fpsv);

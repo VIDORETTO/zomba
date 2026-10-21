@@ -1255,7 +1255,7 @@ export class TrincheiraSystems {
   onPanzerDeath(z: SimZombie, killer: SimPlayer | null) {
     this.emit({ e: 'blindado', phase: 'death', zid: z.id, x: r3(z.x), z: r3(z.z) });
     this.h.dropPowerup('maxammo', z.x, z.y, z.z);
-    if (killer) this.h.addPoints(killer, T.templarReward);
+    if (killer) this.h.addPoints(killer, T.panzerReward);
     // a 3ª peça do Cajado de Fogo cai do primeiro Blindado
     if (!this.fireThirdDropped && !this.team.has('fogo-3')) {
       this.fireThirdDropped = true;
@@ -1728,8 +1728,30 @@ export class TrincheiraSystems {
     if (p) {
       p.weapons = p.weapons.filter((w) => !(isStaff(w) && WEAPONS[w].staff === s.el));
     }
+    // quem põe o cajado desperto na Mesa o recebe de volta no fim da missão (travado a partir da etapa 3)
+    if (p && s.awake && !this.missionLocked()) s.prevOwner = p.id;
     s.st = 'pedestal';
     s.owner = '';
+  }
+
+  // fim da missão: cada cajado volta a quem o pôs na Mesa; sem esse dono (saiu, morreu ou já segura
+  // outro cajado), vai para o primeiro vivo sem cajado; sem ninguém, fica no pedestal
+  private handBackStaffs() {
+    const give = (s: StaffSim, o: SimPlayer) => {
+      this.h.giveWeapon(o, `cajado-${s.el}-d`, o.weapons[o.weapons.length - 1]);
+      s.st = 'mao';
+      s.owner = o.id;
+    };
+    const loose: StaffSim[] = [];
+    for (const s of this.staffs) {
+      const o = this.h.players.get(s.prevOwner);
+      if (o && o.life !== 'dead' && !this.holdingStaff(o)) give(s, o);
+      else loose.push(s);
+    }
+    for (const s of loose) {
+      const o = [...this.h.players.values()].find((x) => x.life !== 'dead' && !this.holdingStaff(x));
+      if (o) give(s, o);
+    }
   }
 
   private interactAltar(p: SimPlayer, it: Interactable): boolean {
@@ -2183,15 +2205,7 @@ export class TrincheiraSystems {
       if (p.life === 'dead') continue;
       for (const k of Object.keys(PERKS) as PerkId[]) if (!p.perks.includes(k)) this.h.grantPerk(p, k);
     }
-    // os cajados voltam para a mão de quem estava com eles
-    for (const s of this.staffs) {
-      const o = this.h.players.get(s.prevOwner);
-      if (o && o.life !== 'dead' && !this.holdingStaff(o)) {
-        this.h.giveWeapon(o, `cajado-${s.el}-d`, o.weapons[o.weapons.length - 1]);
-        s.st = 'mao';
-        s.owner = o.id;
-      }
-    }
+    this.handBackStaffs();
   }
 
   get missionDone() {

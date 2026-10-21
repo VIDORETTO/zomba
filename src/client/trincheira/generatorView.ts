@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import type { GameEvent, TrGen } from '../../shared/protocol';
-import { additive, beamMesh, flatRing, glowSprite } from './common';
+import { additive, beamMesh, clamp01, flatRing, glowSprite, smooth } from './common';
 import type { TrCtx } from './ctx';
 
 interface GenFx {
@@ -50,21 +50,24 @@ export class GeneratorView {
     }
   }
 
-  update(gens: TrGen[], dt: number, t: number) {
+  // cam: posição da câmera; de perto o feixe e o brilho desbotam (smoothstep de 2 a 12 m do eixo) para não cobrirem a tela
+  update(gens: TrGen[], dt: number, t: number, cam: THREE.Vector3) {
     gens.forEach((s, i) => {
       const v = this.gens[i];
       if (!v) return;
       const g = this.c.T.gens[i];
       v.on += ((s.on ? 1 : 0) - v.on) * Math.min(1, dt * 2.5);
+      const near = smooth(clamp01((Math.hypot(cam.x - g.x, cam.z - g.z) - 2) / 10));
       const col = OFF.clone().lerp(ON, v.on);
       (v.ring.material as THREE.MeshBasicMaterial).color.copy(col);
       (v.ring.material as THREE.MeshBasicMaterial).opacity = 0.45 + 0.25 * Math.sin(t * (s.capturing ? 7 : 1.6) + i) + (s.on ? 0.15 : 0);
       (v.glow.material as THREE.SpriteMaterial).color.copy(col);
       v.glow.scale.setScalar(2.6 + v.on * 1.6 + Math.sin(t * 3 + i) * 0.2);
+      (v.glow.material as THREE.SpriteMaterial).opacity = 0.7 * (0.3 + 0.7 * near);
       v.beam.visible = v.on > 0.02;
       if (v.beam.visible) {
         const m = v.beam.material as THREE.MeshBasicMaterial;
-        m.opacity = 0.5 * v.on * (0.85 + 0.15 * Math.sin(t * 5 + i));
+        m.opacity = 0.5 * v.on * near * (0.85 + 0.15 * Math.sin(t * 5 + i));
         v.beam.rotation.y = t * 0.6;
       }
       for (const l of v.lamps) (l.material as THREE.SpriteMaterial).opacity = v.on * (0.8 + 0.2 * Math.sin(t * 9 + l.position.x));
@@ -78,7 +81,12 @@ export class GeneratorView {
       const am = v.alert.material as THREE.MeshBasicMaterial;
       am.opacity = s.attacked ? 0.35 + 0.45 * (0.5 + 0.5 * Math.sin(t * 10)) : 0;
       // fumaça do motor e faíscas ao capturar
-      if (s.on) this.c.fx.smoke(`gen${i}`, g.x, 3.0, g.z, dt, 2.2, 0.9, 0x55524c);
+      // vapor claro e aditivo (nunca escurece o que está atrás, como a fumaça escura fazia dentro do feixe)
+      if (s.on) this.c.fx.stream(`gen${i}`, dt, 2.2, () => ({
+        x: g.x + (Math.random() - 0.5) * 0.3, y: 3.0, z: g.z + (Math.random() - 0.5) * 0.3,
+        vx: (Math.random() - 0.5) * 0.5 + 0.3, vy: 1.4 * (0.7 + Math.random() * 0.6), vz: (Math.random() - 0.5) * 0.5,
+        life: 2.2 + Math.random() * 1.4, size: 0.9, color: 0x5a7a84, alpha: 0.16, grow: 0.7,
+      }));
       if (s.capturing) this.c.fx.stream(`gencap${i}`, dt, 18, () => {
         const a = Math.random() * Math.PI * 2;
         return { x: g.x + Math.cos(a) * g.r, y: 0.2, z: g.z + Math.sin(a) * g.r, vy: 2 + Math.random() * 2, vx: -Math.cos(a) * 1.2, vz: -Math.sin(a) * 1.2, life: 0.9, size: 0.22, color: 0x7af0ff, alpha: 0.9 };

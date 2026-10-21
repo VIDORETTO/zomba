@@ -5,7 +5,7 @@ import { colossusFeet, colossusPose } from '../../shared/colossus';
 import type { Interactable, MapDef } from '../../shared/map/types';
 import type { Element, GameEvent, NetPlayer, Snapshot, TrincheiraSnap } from '../../shared/protocol';
 import { COLOSSI, ELEMENTS, ELEMENT_LIST, SET_PARTS, TEAM_ITEMS } from '../../shared/trincheira-info';
-import type { Hud } from '../hud';
+import type { Hud, TrAlert } from '../hud';
 import type { QualityConfig } from '../quality';
 import type { Sample } from '../snapbuffer';
 import type { TexSet } from '../textures';
@@ -166,7 +166,7 @@ export class TrincheiraClient {
     this.weather.update(dt, t, cam.position);
     this.opts.mapView?.setSnow(this.weather.snowAmount);
     this.opts.mapView?.setGens(tr.gens.map((g) => g.on));
-    this.gens.update(tr.gens, dt, t);
+    this.gens.update(tr.gens, dt, t, cam.position);
     this.fizz.update(tr, dt, t);
     this.forja.update(tr.forjaUp, dt);
     this.tank.update(sample, tr, dt, t);
@@ -199,7 +199,9 @@ export class TrincheiraClient {
     // desafios: aparecem perto de um baú
     const near = me && this.c.T.challengeChests.some((p) => Math.hypot(p[0] - me.x, p[1] - me.z) < 4);
     hud.setChallenges(!!near && !!me, me?.challenges ?? [0, 0, 0, 0], me?.claimed ?? [false, false, false, false], GOALS);
-    // colosso
+    // avisos do topo (no máximo 2 aparecem; ver TrHud.setAlerts). Prioridade: 1 colosso perto ou prestes a chegar,
+    // 2 Cruzados, 3 colosso longe
+    const alerts: TrAlert[] = [];
     const r = tr.robot;
     if (r) {
       const feet = colossusFeet(this.c.T, r.id, r.dir);
@@ -212,18 +214,20 @@ export class TrincheiraClient {
         const f = feet[r.step].r;
         danger = me.x > f[0] - 1 && me.x < f[2] + 1 && me.z > f[1] - 1 && me.z < f[3] + 1;
       }
-      hud.setRobot({
-        name, color: COLOSSI[r.id].eye, angle: a.angle, dist: a.dist, danger,
+      const near = r.phase === 'aviso' || a.dist < 60;
+      alerts.push({
+        id: 'colosso', prio: near ? 1 : 3, color: COLOSSI[r.id].eye, angle: a.angle, dist: a.dist, danger,
         text: r.phase === 'aviso' ? `<b>${name}</b> chega em ${Math.ceil(r.warn)} s` : danger ? `<b>SAIA DA PEGADA!</b> ${name}` : `<b>${name}</b> está passando`,
       });
-    } else hud.setRobot(null);
+    }
     // recaptura: seta para o gerador atacado
     const atk = tr.gens.findIndex((g) => g.attacked);
     if (atk >= 0) {
       const g = this.c.T.gens[atk];
       const a = this.yawAngle(cam, g.x, g.z);
-      hud.setRecapture({ text: `Cruzados atacam o gerador ${atk + 1}!`, angle: a.dist > 6 ? a.angle : null, dist: a.dist > 6 ? a.dist : null });
-    } else hud.setRecapture(null);
+      alerts.push({ id: 'cruzados', prio: 2, color: '#ff4a3a', text: `Cruzados atacam o gerador ${atk + 1}!`, angle: a.dist > 6 ? a.angle : null, dist: a.dist > 6 ? a.dist : null });
+    }
+    hud.setAlerts(alerts);
     // missão
     const showMission = tr.missao.step >= 2 || tr.staffs.some((s) => s.awake);
     hud.setMission(showMission ? tr.missao : null);

@@ -11,6 +11,7 @@ Foi escrito para **uma IA implementar sozinha**. Leia inteiro antes de começar.
 | Arquivo | Para que serve |
 | --- | --- |
 | `README.md` | Este documento: regras, números, arquitetura e fases. |
+| `POLIMENTO.md` | Plano de polimento depois das fases 1 a 9: tickets com esforço, especificação, testes primeiro (TDD) e ordem dos sprints. |
 | `planta.svg` | Planta de trabalho desenhada por nós, em **metros**, com grade de 10 m. Abra no navegador. |
 | `layout.json` | Os mesmos dados da planta, em metros, prontos para o construtor do mapa ler (áreas, lama, pegadas, portões, barricadas, rota do tanque e todos os pontos). |
 | `fonte/layout-src.mjs` | O traçado original, em pixels da planta de referência. **É a fonte**: para mudar o mapa, edite aqui. |
@@ -898,7 +899,7 @@ Regras puras (contas, sorteios, ciclos) vão em `tools/test-sim.ts`.
 | `tankCost` / `tankSpeed` / `tankStopWait` / `tankCooldown` / `tankFlameDps` / `tankFlameRange` | 500 / 5 / 10 / 30 / 300 / 4 |
 | `robotFirstRound` / `robotWarn` / `robotPause` / `stepLift` / `stepMove` / `stepDown` / `stepHold` | 2 / 8 / 20 / 1.5 / 2 / 1.5 / 1 |
 | `templarAfterGens` / `templarChance` / `templarForceAfter` / `templarBase` / `templarPerPlayer` / `templarHpMult` / `templarSpeed` / `templarTakeTime` / `templarReward` | 3 / 0.3 / 4 / 4 / 2 / 2 / 1.6 / 8 / 500 |
-| `panzerFirst` / `panzerGapMin` / `panzerGapMax` / `panzerFlameDps` / `panzerFlameRange` / `panzerClawRange` / `panzerClawCd` / `panzerVisorBreak` | 8 / 3 / 5 / 30 / 6 / 15 / 12 / 0.2 |
+| `panzerFirst` / `panzerGapMin` / `panzerGapMax` / `panzerFlameDps` / `panzerFlameRange` / `panzerClawRange` / `panzerClawCd` / `panzerVisorBreak` / `panzerReward` | 8 / 3 / 5 / 30 / 6 / 15 / 12 / 0.2 / 500 |
 | `zbloodTime` | 20 |
 | `shieldHp` / `shieldArc` | 1500 / 120° |
 | `droneTime` / `droneCd` / `droneRange` / `droneDmg` / `droneRate` | 60 / 90 / 18 / 150 / 0.5 |
@@ -984,3 +985,14 @@ Tudo da seção 6 está implementado: `src/shared/trincheira.ts` (regras, classe
   - os "soul chests" viraram os Baús de Almas da melhoria do Fogo;
   - as "ice carts" viraram carroças em chamas decorativas;
   - os montes vermelhos ("perk slot dig") viraram os montes de terra comuns.
+
+### Polimento S1: correções (2026-10-21)
+
+Veja `POLIMENTO.md`, seção 11, para o estado de cada ticket.
+
+- **Missão:** os cajados voltam a quem os pôs na Mesa (`prevOwner` anotado em `returnStaff`); sem dono válido vão para o primeiro vivo sem cajado, senão ficam no pedestal. A regra é igual no teste por atalho e na missão de verdade.
+- **Constante nova:** `panzerReward` (500) na tabela da seção 10.
+- **Feixe do gerador:** vapor claro aditivo em vez de fumaça escura; o feixe desbota de perto.
+- **Avisos do topo:** `TrHud.setAlerts` (no máximo 2).
+- **Desempenho:** `game.perf` (chamadas e triângulos por quadro), tecla F3 mostra, `docs/trincheira/orcamento.json` guarda a linha de base.
+- **Testes:** `tools/test-trincheira-visual.mjs` (novo).

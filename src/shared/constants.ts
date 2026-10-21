@@ -230,6 +230,7 @@ export const TRINCHEIRA = {
   templarSpeed: 1.6,
   templarTakeTime: 8,
   templarReward: 500,
+  panzerReward: 500,
   // Blindado
   panzerFirst: 8,
   panzerGapMin: 3,

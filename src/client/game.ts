@@ -188,12 +188,24 @@ export class Game {
   private fpsAcc = 0;
   private fpsN = 0;
   private fps = 0;
+  // F3: chamadas de desenho e triângulos do último quadro (o orçamento de desempenho do POLIMENTO F3)
+  perf = { calls: 0, tris: 0 };
+  private perfOn = false;
+  private onPerfKey = (e: KeyboardEvent) => {
+    if (e.code !== 'F3' || e.repeat) return;
+    e.preventDefault();
+    this.perfOn = !this.perfOn;
+    this.infoT = 0;
+  };
   private buyPending = 0;
   private readonly jingleT = new Map<string, number>();
   private infoT = 0;
 
   constructor(private readonly o: GameOptions) {
     this.renderer = o.renderer;
+    // conta só o que este quadro desenhou: zera no começo do desenho (ver step) e lê no fim
+    this.renderer.info.autoReset = false;
+    window.addEventListener('keydown', this.onPerfKey);
     this.transport = o.transport;
     this.audio = o.audio;
     this.settings = { ...o.settings };
@@ -1387,6 +1399,7 @@ export class Game {
     this.mapView.update(this.t, this.camera.position);
     this.foliage.update(this.t, this.camera.position);
 
+    this.renderer.info.reset();
     this.renderer.autoClear = true;
     // alta e média passam pelo acabamento (a média sem o brilho); a baixa desenha direto
     if (this.q.level !== 'baixa') {
@@ -1401,6 +1414,8 @@ export class Game {
       this.renderer.clearDepth();
       this.renderer.render(this.weapon.scene, this.weapon.camera);
     }
+    this.perf.calls = this.renderer.info.render.calls;
+    this.perf.tris = this.renderer.info.render.triangles;
 
     // som por último: um problema no áudio nunca impede a imagem
     this.audio.setListener(this.camera.position, fwd);
@@ -1912,7 +1927,8 @@ export class Game {
     if (this.t - this.infoT > 0.5) {
       this.infoT = this.t;
       const res = this.scale < 1 ? ` · ${Math.round(this.scale * 100)}%` : '';
-      this.hud.netinfo(`${this.fps} FPS${res}${this.transport.solo ? '' : ` · ${Math.round(this.transport.ping)} ms`}`);
+      const perf = this.perfOn ? ` · ${this.perf.calls} chamadas · ${(this.perf.tris / 1000).toFixed(0)} mil tri` : '';
+      this.hud.netinfo(`${this.fps} FPS${res}${perf}${this.transport.solo ? '' : ` · ${Math.round(this.transport.ping)} ms`}`);
     }
   }
 
@@ -2218,6 +2234,8 @@ export class Game {
 
     window.removeEventListener('resize', this.resize);
     window.removeEventListener('beforeunload', this.onBeforeUnload);
+    window.removeEventListener('keydown', this.onPerfKey);
+    this.renderer.info.autoReset = true;
     this.closePauseKeys();
     this.renderer.domElement.removeEventListener('click', this.onCanvasClick);
     this.input.unlock();

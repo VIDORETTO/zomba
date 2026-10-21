@@ -158,6 +158,8 @@ const zombie = (s: GameSim, x: number, z: number, hp = 150, kind = 0) => {
   quiet(s2);
   me(s2).points = 999999;
   tr(s2).debug('gens', undefined, me(s2));
+  // com o tempo a rodada avança e um sorteio de Cruzados poderia desligar o gerador de destino: sem recaptura aqui
+  tr(s2).startRecapture = () => undefined;
   const start = tr(s2).fizz.loc;
   let uses = 0;
   for (let i = 0; i < 8 && tr(s2).fizz.loc === start; i++) {
@@ -214,8 +216,22 @@ const zombie = (s: GameSim, x: number, z: number, hp = 150, kind = 0) => {
   goIt(s, ids.shovel(0));
   use(s, ids.shovel(0));
   check('pega a pá', tr(s).P(a).shovel);
+  // os montes das rodadas anteriores se somam: limpar antes e medir a proporção em muitas rodadas
+  {
+    const nComuns = D.mounds.length - 3;
+    let total = 0;
+    const N = 400;
+    for (let k = 0; k < N; k++) {
+      tr(s).mounds.clear();
+      tr(s).onRoundStart(3);
+      total += [...tr(s).mounds].filter((i: number) => i < nComuns).length;
+    }
+    const media = total / (N * nComuns);
+    check('começo de rodada põe montes (média de 45% ± 10%)', Math.abs(media - T.moundChance) < 0.1, `${(media * 100).toFixed(1)}%`);
+  }
+  tr(s).mounds.clear();
   tr(s).onRoundStart(3);
-  check('começo de rodada põe montes (45%)', tr(s).mounds.size >= 1 && tr(s).mounds.size <= 17, `${tr(s).mounds.size} montes`);
+  check('começo de rodada põe pelo menos um monte', tr(s).mounds.size >= 1 || [...Array(40).keys()].some(() => (tr(s).mounds.clear(), tr(s).onRoundStart(3), tr(s).mounds.size >= 1)));
   const idx = [...tr(s).mounds].find((i) => i < 18)!;
   goIt(s, ids.mound(idx));
   s.handle('p0', { t: 'hold', id: ids.mound(idx) });
@@ -831,14 +847,30 @@ const aim = (s: GameSim, weapon: string, charged = false) => {
     check('snapshot mostra o Blindado como chefão com o visor', !!snap.boss && snap.boss.armor === false);
     // ataques
     pz.panzer.flameCD = 0;
-    goto(s, pz.x + 3, pz.z);
+    // um ponto a 3 m com linha de visão (o Blindado surge em lugar sorteado, e uma parede no meio impede o ataque)
+    let spot: [number, number] = [pz.x + 3, pz.z];
+    for (let k = 0; k < 16; k++) {
+      const ang = (k / 16) * Math.PI * 2;
+      const sx = pz.x + Math.cos(ang) * 3, sz = pz.z + Math.sin(ang) * 3;
+      if (raw(s).world.lineOfSight(pz.x, pz.y + 1.8, pz.z, sx, pz.y + 1.2, sz)) { spot = [sx, sz]; break; }
+    }
+    goto(s, spot[0], spot[1]);
     const h0 = a.health;
     pz.hp = 9e9;
     run(s, 2);
     check('lança-chamas do Blindado machuca de perto', a.health < h0);
     const kills = a.points;
+    // o prêmio vem da constante do Blindado, não da dos Cruzados
+    const TT = T as unknown as { panzerReward: number; templarReward: number };
+    const oldPanzer = TT.panzerReward, oldTemplar = TT.templarReward;
+    TT.panzerReward = 777;
+    TT.templarReward = 123;
     pz.hp = 1;
     dmg(pz, 5, a, 'body', false);
+    check('Blindado morto paga panzerReward (e não templarReward)', a.points - kills >= 777 && a.points - kills < 777 + 100, `+${a.points - kills}`);
+    TT.panzerReward = oldPanzer;
+    TT.templarReward = oldTemplar;
+    a.points = kills + oldPanzer;
     const ev = s.drainEvents();
     check('Blindado morto: Munição Cheia e +500', has(ev, 'blindado', (e) => e.e === 'blindado' && e.phase === 'death') && a.points >= kills + 500 && raw(s).powerups.some((p: { kind: string }) => p.kind === 'maxammo'));
     check('o primeiro Blindado solta a 3ª peça do Cajado de Fogo', tr(s).drops.some((d: { key: string }) => d.key === 'fogo-3'));
@@ -857,9 +889,16 @@ const aim = (s: GameSim, weapon: string, charged = false) => {
   check('o gerador alvo pisca (atacado)', tr(s).gens.some((g: { attacked: boolean }) => g.attacked) && tr(s).recapturing);
   const spawn0 = templars.map((z: { x: number; z: number }) => [z.x, z.z]);
   const gi = tr(s).gens.findIndex((g: { attacked: boolean }) => g.attacked);
-  run(s, 40);
-  const near = [...raw(s).zombies.values()].filter((z: { kind: number; x: number; z: number }) => z.kind === 8 && Math.hypot(z.x - D.gens[gi].x, z.z - D.gens[gi].z) < 12).length;
-  check('os Cruzados andam até o gerador ignorando o jogador', near > 0, `${near} perto do gerador depois de 40 s`);
+  // o sorteio do ponto de surgir muda o caminho: espera até 100 s, de 5 em 5
+  const nearGen = () => [...raw(s).zombies.values()].filter((z: { kind: number; x: number; z: number }) => z.kind === 8 && Math.hypot(z.x - D.gens[gi].x, z.z - D.gens[gi].z) < 12).length;
+  let near = 0;
+  let gasto = 0;
+  while (!near && gasto < 100) {
+    run(s, 5);
+    gasto += 5;
+    near = nearGen();
+  }
+  check('os Cruzados andam até o gerador ignorando o jogador', near > 0, `${near} perto do gerador depois de ${gasto} s`);
   void spawn0;
   run(s, 60);
   check('Cruzado 8 s no círculo desliga o gerador', !tr(s).gens[gi].on, `gerador ${gi} ligado=${tr(s).gens[gi].on}`);
@@ -925,6 +964,146 @@ const aim = (s: GameSim, weapon: string, charged = false) => {
   const evs = run(s, 91);
   check('depois de 90 s: tudo morre e a missão termina', has(evs, 'missao', (e) => e.e === 'missao' && e.phase === 'fim') && raw(s).zombies.size === 0 && tr(s).missionDone);
   check('prêmio: todas as bebidas e cajados de volta às mãos', a.perks.length === 6 && a.weapons.some((w: string) => w.startsWith('cajado')));
+}
+
+// --- missão real, sem debug('missao') (A6 e A1) ---
+// Só são permitidos os atalhos de "dar peças" (itens) e "ligar geradores" (gens), que encurtam a coleta
+// mas não mudam regra de missão. O resto anda por interações, tiros em alvos e abates.
+type El = 'fogo' | 'gelo' | 'vento' | 'raio';
+const EL: El[] = ['fogo', 'gelo', 'vento', 'raio'];
+const elIdx = (el: El) => EL.indexOf(el);
+
+// resolve o enigma do elemento só com tiros e abates, como um jogador faria
+function solvePuzzle(s: GameSim, i: number, el: El) {
+  const a = me(s, i);
+  const wid = `cajado-${el}`;
+  if (el === 'fogo') {
+    D.chests.forEach((c) => {
+      for (let k = 0; k < T.fireChestKills; k++) {
+        const zb = zombie(s, c[0] + 2, c[1], 1);
+        raw(s).curWeapon = wid;
+        raw(s).damageZombie(zb, 10, a, 'body', false, true);
+        raw(s).curWeapon = null;
+      }
+    });
+  } else if (el === 'gelo') {
+    tr(s).debug('clima', 'neve', a);
+    for (const [x, z] of D.tombstones) {
+      for (let k = 0; k < 16; k++) {
+        const ox = x + Math.cos((k / 16) * 6.283) * 6, oy = 1.5, oz = z + Math.sin((k / 16) * 6.283) * 6;
+        const bx = x + (ox - x) / 6 * 0.9, bz = z + (oz - z) / 6 * 0.9;
+        if (!raw(s).world.lineOfSight(ox, oy, oz, bx, 0.6, bz)) continue;
+        const dx = x - ox, dy = 0.6 - oy, dz = z - oz, dl = Math.hypot(dx, dy, dz);
+        goto(s, ox, oz, i);
+        tr(s).rayShot(a, wid, ox, oy, oz, dx / dl, dy / dl, dz / dl, 25);
+        break;
+      }
+    }
+  } else if (el === 'vento') {
+    for (const [x, z] of D.domes) {
+      for (let k = 0; k < 64; k++) {
+        const R = [8, 14, 22, 30][k % 4];
+        const ox = x + Math.cos((k / 64) * 6.283 * 4) * R, oy = 1.5, oz = z + Math.sin((k / 64) * 6.283 * 4) * R;
+        const bx = x + (ox - x) / R * 1.5, bz = z + (oz - z) / R * 1.5;
+        if (!raw(s).world.lineOfSight(ox, oy, oz, bx, 1.0, bz)) continue;
+        const dx = x - ox, dy = 1.0 - oy, dz = z - oz, dl = Math.hypot(dx, dy, dz);
+        goto(s, ox, oz, i);
+        tr(s).rayShot(a, wid, ox, oy, oz, dx / dl, dy / dl, dz / dl, 14);
+        break;
+      }
+    }
+  } else {
+    for (const n of tr(s).staffs[elIdx('raio')].seq) {
+      const [x, y, z] = D.chamber.plates[n - 1];
+      goto(s, x, z + 6, i);
+      tr(s).rayShot(a, wid, x, y, z + 6, 0, 0, -1, 45);
+    }
+  }
+}
+
+// uma volta inteira de um cajado com o jogador i: montar, pegar, enigma, altar, encher, despertar e pôr na Mesa
+function staffJourney(s: GameSim, i: number, el: El) {
+  const a = me(s, i);
+  const st = tr(s).staffs[elIdx(el)];
+  goIt(s, ids.staff(el), i);
+  if (st.st === 'faltando') use(s, ids.staff(el), i);
+  use(s, ids.staff(el), i); // pega do pedestal
+  solvePuzzle(s, i, el);
+  goIt(s, ids.altar(el), i);
+  use(s, ids.altar(el), i); // põe no altar
+  const killer = me(s, 0);
+  for (let k = 0; k < T.staffChargeKills; k++) raw(s).damageZombie(zombie(s, 100, 50, 1), 5, killer, 'body', false, true);
+  use(s, ids.altar(el), i); // pega o desperto
+  goIt(s, ids.staff(el), i);
+  use(s, ids.staff(el), i); // devolve à Mesa
+  void a;
+}
+
+// monta uma partida na etapa 3 (colheita) só por interações; `plan` diz quem cumpre cada cajado
+function missionToHarvest(players: number, plan: [number, El][]) {
+  const s = mk(players, 3);
+  quiet(s);
+  tr(s).debug('gens', undefined, me(s));
+  tr(s).debug('itens', undefined, me(s));
+  s.tick(0.1);
+  ev0(s);
+  for (const [i, el] of plan) staffJourney(s, i, el);
+  s.tick(0.1);
+  return s;
+}
+
+{
+  const s = missionToHarvest(4, [[0, 'fogo'], [1, 'gelo'], [2, 'vento'], [3, 'raio']]);
+  check('missão real: os 4 cajados na Mesa e a colheita começa', tr(s).missao.step === 3 && tr(s).missao.active, `etapa ${tr(s).missao.step}`);
+  const a = me(s);
+  const [rx, rz] = D.ring.c;
+  for (let k = 0; k < T.missaoKills; k++) raw(s).damageZombie(zombie(s, rx + 3, rz, 1), 5, a, 'body', false, true);
+  check('missão real: 100 abates no anel levam aos olhos', tr(s).missao.step === 4);
+  for (const id of ['atlas', 'golias', 'tita']) {
+    tr(s).robot = null;
+    tr(s).debug('colosso', id, a);
+    run(s, T.robotWarn + 0.2);
+    const r = tr(s).robot;
+    r.sub = 'move';
+    r.t = 0.5;
+    const eye = (tr(s) as unknown as { eyeTarget(): { x: number; y: number; z: number } }).eyeTarget();
+    const ox = eye.x - 60, oy = 1.5, oz = eye.z;
+    goto(s, ox, oz);
+    const dx = eye.x - ox, dy = eye.y - oy, dz = eye.z - oz, dl = Math.hypot(dx, dy, dz);
+    tr(s).P(a).zblood = 10;
+    tr(s).rayShot(a, 'pistol', ox, oy, oz, dx / dl, dy / dl, dz / dl, 100);
+  }
+  check('missão real: 3 olhos com Sangue Morto liberam a defesa', tr(s).missao.step === 5, `etapa ${tr(s).missao.step}`);
+  tr(s).robot = null;
+  raw(s).damagePlayer = () => {};
+  goIt(s, ids.poco);
+  use(s, ids.poco);
+  check('missão real: F no poço começa a defesa', tr(s).missao.defense === 1);
+  const evs = run(s, 91);
+  check('missão real: 90 s depois a missão termina', has(evs, 'missao', (e) => e.e === 'missao' && e.phase === 'fim') && tr(s).missionDone);
+  const mine = (i: number, el: El) => me(s, i).weapons.includes(`cajado-${el}-d`);
+  check('missão real: quem pôs o cajado no pedestal o recebe de volta', mine(0, 'fogo') && mine(1, 'gelo') && mine(2, 'vento') && mine(3, 'raio'),
+    [0, 1, 2, 3].map((i) => me(s, i).weapons.filter((w: string) => w.startsWith('cajado')).join('+') || '-').join(' | '));
+  check('missão real: prêmio das bebidas para todos', [0, 1, 2, 3].every((i) => me(s, i).perks.length === 6));
+}
+{
+  // o dono saiu: o cajado vai para o primeiro vivo sem cajado
+  const s = missionToHarvest(4, [[0, 'fogo'], [1, 'gelo'], [3, 'vento'], [3, 'raio']]);
+  s.removePlayer('p3');
+  (tr(s) as unknown as { finishMission(): void }).finishMission();
+  const holds = (i: number) => me(s, i).weapons.filter((w: string) => w.startsWith('cajado'));
+  check('missão real: quem pôs o cajado e saiu — o cajado vai para um vivo sem cajado', holds(0).join() === 'cajado-fogo-d' && holds(1).join() === 'cajado-gelo-d' && holds(2).join() === 'cajado-vento-d',
+    [0, 1, 2].map((i) => holds(i).join('+') || '-').join(' | '));
+  const raio = tr(s).staffs[elIdx('raio')];
+  check('missão real: ninguém livre, o cajado fica no pedestal', raio.st === 'pedestal' && raio.owner === '');
+}
+{
+  // dono morto: mesma regra
+  const s = missionToHarvest(2, [[0, 'fogo'], [1, 'gelo']]);
+  me(s, 1).life = 'dead';
+  (tr(s) as unknown as { finishMission(): void }).finishMission();
+  const holds = (i: number) => me(s, i).weapons.filter((w: string) => w.startsWith('cajado'));
+  check('missão real: dono morto, o cajado vai para o vivo sem cajado (um por jogador)', holds(0).join() === 'cajado-fogo-d' && tr(s).staffs[1].st === 'pedestal');
 }
 
 // --- protocolo e tamanho do snapshot ---

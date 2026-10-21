@@ -698,16 +698,17 @@ details.adv[open] { display: flex; flex-direction: column; gap: 6px; }
 .tr-c.claimed { opacity: 0.55; }
 .tr-c.claimed em { color: #8fe08a; }
 
-.tr-robot, .tr-recap {
-  position: absolute; left: 50%; top: 64px; transform: translateX(-50%); display: flex; gap: 10px; align-items: center;
-  padding: 6px 16px; background: rgba(10, 8, 7, 0.7); border-bottom: 3px solid var(--c, #ffd23a); font: 700 17px var(--serif); letter-spacing: 0.08em; white-space: nowrap;
+/* avisos do topo (colosso, Cruzados): fixos abaixo da barra de chefe, no máximo 2, compactos */
+.tr-alerts { position: absolute; left: 50%; top: 62px; transform: translateX(-50%); display: flex; flex-direction: column; align-items: center; gap: 3px; pointer-events: none; }
+.tr-alert {
+  display: flex; gap: 8px; align-items: center; padding: 2px 12px; background: rgba(10, 8, 7, 0.7); border-bottom: 2px solid var(--c, #ffd23a);
+  font: 700 13px var(--serif); letter-spacing: 0.06em; white-space: nowrap; line-height: 1.4;
 }
-.tr-robot span { color: var(--c, #ffd23a); text-shadow: 0 0 10px var(--c, #ffd23a); }
-.tr-robot em, .tr-recap em { font: 600 14px var(--sans); font-style: normal; color: var(--muted); }
-.tr-robot .tr-arrow, .tr-recap .tr-arrow { display: inline-block; color: var(--c, #ffd23a); transition: transform 0.1s linear; }
-.tr-robot.danger { animation: blink 0.7s ease-in-out infinite; }
-.tr-recap { top: 106px; --c: #ff4a3a; }
-.tr-recap span { color: #ff8a7a; animation: blink 0.9s ease-in-out infinite; }
+.tr-alert span { color: var(--c, #ffd23a); text-shadow: 0 0 8px var(--c, #ffd23a); }
+.tr-alert em { font: 600 12px var(--sans); font-style: normal; color: var(--muted); }
+.tr-alert .tr-arrow { display: inline-block; font-size: 11px; color: var(--c, #ffd23a); transition: transform 0.1s linear; }
+.tr-alert.danger { animation: blink 0.7s ease-in-out infinite; }
+.tr-more { padding: 0 8px; background: rgba(10, 8, 7, 0.7); border-radius: 8px; font: 700 11px var(--sans); color: var(--muted); }
 
 .tr-mission { position: absolute; left: 24px; top: 38%; max-width: 300px; padding: 8px 12px; background: rgba(10, 8, 7, 0.6); border-left: 3px solid #9fd8ff; }
 .tr-mission ol { margin: 0; padding-left: 18px; font-size: 12px; line-height: 1.55; color: #7a7468; }

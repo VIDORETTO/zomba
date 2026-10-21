@@ -62,14 +62,27 @@ const IC = {
 const WEATHER_ICON: Record<Weather, string> = { limpo: '☀', chuva: '☂', neve: '❄' };
 const WEATHER_NAME: Record<Weather, string> = { limpo: 'Tempo limpo', chuva: 'Chuva', neve: 'Neve' };
 
+// aviso do topo da Trincheira (colosso, Cruzados...); prio menor = mais urgente
+export interface TrAlert {
+  id: string;
+  prio: number;
+  text: string;
+  color: string;
+  angle: number | null;
+  dist: number | null;
+  danger?: boolean;
+}
+export const TR_ALERT_MAX = 2;
+
 // Painéis da Trincheira: geradores, itens da equipe, desafios, aviso do colosso, missão, recaptura, Sangue Morto e status.
 export class TrHud {
   private readonly gens: HTMLElement;
   private readonly team: HTMLElement;
   private readonly chal: HTMLElement;
-  private readonly robot: HTMLElement;
+  private readonly alerts: HTMLElement;
+  private readonly alertEls: HTMLElement[] = [];
+  private readonly alertMore: HTMLElement;
   private readonly mission: HTMLElement;
-  private readonly recap: HTMLElement;
   private readonly blood: HTMLElement;
   private readonly status: HTMLElement;
   private readonly keys = new WeakMap<HTMLElement, string>();
@@ -80,9 +93,11 @@ export class TrHud {
     for (let i = 0; i < 6; i++) this.genEls.push(el('i', 'gen', this.gens, `${GEAR}<b>${i + 1}</b>`));
     this.team = el('div', 'tr-team hidden', root);
     this.chal = el('div', 'tr-chal hidden', root);
-    this.robot = el('div', 'tr-robot hidden', root, '<i class="tr-arrow">▲</i><span></span><em></em>');
+    // avisos do topo: no máximo TR_ALERT_MAX por vez (os dois elementos são reaproveitados), o resto vira "+N"
+    this.alerts = el('div', 'tr-alerts', root);
+    for (let i = 0; i < TR_ALERT_MAX; i++) this.alertEls.push(el('div', 'tr-alert hidden', this.alerts, '<i class="tr-arrow">▲</i><span></span><em></em>'));
+    this.alertMore = el('div', 'tr-more hidden', this.alerts);
     this.mission = el('div', 'tr-mission hidden', root);
-    this.recap = el('div', 'tr-recap hidden', root, '<i class="tr-arrow">▲</i><span></span><em></em>');
     this.blood = el('div', 'tr-blood hidden', root, '<span></span>');
     this.status = el('div', 'tr-status hidden', root);
   }
@@ -137,20 +152,31 @@ export class TrHud {
     this.put(this.chal, key, `<h4>Desafios</h4>${rows.join('')}`);
   }
 
-  setRobot(info: { name: string; color: string; text: string; angle: number | null; dist: number | null; danger: boolean } | null) {
-    this.robot.classList.toggle('hidden', !info);
-    if (!info) return;
-    this.robot.style.setProperty('--c', info.color);
-    this.robot.classList.toggle('danger', info.danger);
-    const key = info.text + '|' + (info.dist ?? '');
-    if (this.keys.get(this.robot) !== key) {
-      this.keys.set(this.robot, key);
-      this.robot.querySelector('span')!.innerHTML = info.text;
-      this.robot.querySelector('em')!.textContent = info.dist === null ? '' : `${info.dist} m`;
-    }
-    const a = this.robot.querySelector<HTMLElement>('.tr-arrow')!;
-    a.style.visibility = info.angle === null ? 'hidden' : 'visible';
-    if (info.angle !== null) a.style.transform = `rotate(${info.angle.toFixed(1)}deg)`;
+  // Avisos do topo, por prioridade (1 = mais urgente). Mostra os TR_ALERT_MAX primeiros; o que não cabe vira "+N".
+  setAlerts(list: TrAlert[]) {
+    const sorted = [...list].sort((p, q) => p.prio - q.prio);
+    this.alertEls.forEach((e, i) => {
+      const a = sorted[i];
+      e.classList.toggle('hidden', !a);
+      if (!a) return;
+      e.dataset.id = a.id;
+      e.style.setProperty('--c', a.color);
+      e.classList.toggle('danger', !!a.danger);
+      const key = `${a.id}|${a.text}|${a.dist ?? ''}`;
+      if (this.keys.get(e) !== key) {
+        this.keys.set(e, key);
+        e.querySelector('span')!.innerHTML = a.text;
+        e.querySelector('em')!.textContent = a.dist === null ? '' : `${a.dist} m`;
+      }
+      const ar = e.querySelector<HTMLElement>('.tr-arrow')!;
+      ar.style.visibility = a.angle === null ? 'hidden' : 'visible';
+      if (a.angle !== null) ar.style.transform = `rotate(${a.angle.toFixed(1)}deg)`;
+    });
+    const extra = Math.max(0, sorted.length - TR_ALERT_MAX);
+    this.alertMore.classList.toggle('hidden', extra === 0);
+    const t = extra ? `+${extra}` : '';
+    if (this.alertMore.textContent !== t) this.alertMore.textContent = t;
+    this.alertMore.title = sorted.slice(TR_ALERT_MAX).map((a) => a.text.replace(/<[^>]+>/g, '')).join('\n');
   }
 
   setMission(info: { step: number; count: number; t: number } | null) {
@@ -163,20 +189,6 @@ export class TrHud {
     const key = `${step}|${count}|${Math.ceil(t)}`;
     const list = MISSAO_STEPS.map((s, i) => `<li class="${i < cur ? 'ok' : i === cur ? 'now' : ''}">${s}${i === cur ? extra : ''}</li>`).join('');
     this.put(this.mission, key, `<h4>Canção da Escavação</h4><ol>${list}</ol>`);
-  }
-
-  setRecapture(info: { text: string; angle: number | null; dist: number | null } | null) {
-    this.recap.classList.toggle('hidden', !info);
-    if (!info) return;
-    const key = info.text + '|' + (info.dist ?? '');
-    if (this.keys.get(this.recap) !== key) {
-      this.keys.set(this.recap, key);
-      this.recap.querySelector('span')!.innerHTML = info.text;
-      this.recap.querySelector('em')!.textContent = info.dist === null ? '' : `${info.dist} m`;
-    }
-    const a = this.recap.querySelector<HTMLElement>('.tr-arrow')!;
-    a.style.visibility = info.angle === null ? 'hidden' : 'visible';
-    if (info.angle !== null) a.style.transform = `rotate(${info.angle.toFixed(1)}deg)`;
   }
 
   // Sangue Morto: borda vermelha e segundos que faltam
@@ -573,10 +585,12 @@ export class Hud {
     lines.forEach((l, i) => {
       const d = el('div', 'intro-line', this.intro, '');
       d.style.animationDelay = `${0.4 + i * 0.9}s`;
-      let k = 0;
+      // digita pelo relógio (45 ms por letra), não pela contagem de ticks: com o quadro pesado os ticks atrasam
       setTimeout(() => {
+        const t0 = performance.now();
         const iv = setInterval(() => {
-          d.textContent = l.slice(0, ++k);
+          const k = Math.min(l.length, Math.floor((performance.now() - t0) / 45) + 1);
+          d.textContent = l.slice(0, k);
           if (k >= l.length) clearInterval(iv);
         }, 45);
       }, 400 + i * 900);
