@@ -21,7 +21,7 @@ const GW = 260;
 const GH = 172;
 const BOUNDS: Rect = { minX: OX, minZ: OZ, maxX: OX + GW, maxZ: OZ + GH };
 // limites jogáveis: a Câmara Antiga fica a leste, fora da grade do mapa principal
-const LIMITS: Rect = { minX: OX, minZ: OZ, maxX: 200, maxZ: OZ + GH };
+const LIMITS: Rect = { minX: OX, minZ: OZ, maxX: 240, maxZ: OZ + GH };
 
 // borda de cada lugar: trincheira de tábuas, sacos de areia baixos (lama e Escavação) ou prédio
 type Style = 'trench' | 'low' | 'brick' | 'concrete' | 'crypt' | 'house' | 'church';
@@ -1101,6 +1101,32 @@ export function buildTrincheira(): MapDef {
     interactables.push({ id: ids.tank, kind: 'tank', use: lever, y: 0 });
   }
 
+  // ---------- cabines dos colossos: 3 salas de 6 x 6 m fora do mapa (x de 209 a 221), uma por colosso ----------
+  const cabins: TrincheiraData['cabins'] = [];
+  for (const [k, [id, eye]] of (Object.entries({ atlas: 0xffd23a, golias: 0x4aa8ff, tita: 0xff3a2a }) as ['atlas' | 'golias' | 'tita', number][]).entries()) {
+    const cx = 215, cz = -14 + k * 14;
+    const x0 = cx - 3, x1 = cx + 3, z0 = cz - 3, z1 = cz + 3;
+    const W = 0.4, H = 3.6;
+    const wall = 0x5c5c60;
+    // piso de aço e teto; paredes rebitadas (o oeste tem a janela do "olho", com vidro aceso)
+    box(x0 - W, -0.1, z0 - W, x1 + W, 0.02, z1 + W, 'rivet', false, { tint: 0x4a4a4e });
+    box(x0 - W, H, z0 - W, x1 + W, H + 0.3, z1 + W, 'rivet', true, { tint: 0x3c3c40 });
+    box(x0 - W, 0, z0 - W, x1 + W, H, z0, 'rivet', true, { tint: wall });
+    box(x0 - W, 0, z1, x1 + W, H, z1 + W, 'rivet', true, { tint: wall });
+    box(x1, 0, z0, x1 + W, H, z1, 'rivet', true, { tint: wall });
+    box(x0 - W, 0, z0, x0, 1.1, z1, 'rivet', true, { tint: wall });
+    box(x0 - W, 2.8, z0, x0, H, z1, 'rivet', true, { tint: wall });
+    box(x0 - 0.3, 1.1, z0, x0 - 0.05, 2.8, z1, 'glass', true, { tint: eye });
+    // painel de luzes na parede leste, mesa de comando e o pedestal do prêmio no meio
+    for (let q = 0; q < 5; q++) box(x1 - 0.12, 1.0 + (q % 2) * 0.5, z0 + 0.7 + q * 1.15, x1, 1.3 + (q % 2) * 0.5, z0 + 1.2 + q * 1.15, 'neon', false, { tint: q % 2 ? eye : 0x9fd8ff });
+    box(x1 - 0.9, 0, z0 + 0.4, x1 - 0.1, 0.9, z0 + 1.6, 'metal', true, { tint: 0x4a4a4c });
+    box(cx - 0.5, 0, cz - 0.5, cx + 0.5, 0.95, cz + 0.5, 'metal', true, { tint: 0x5a5a5e });
+    box(cx - 0.6, 0.95, cz - 0.6, cx + 0.6, 1.05, cz + 0.6, 'neon', false, { tint: eye });
+    lights.push({ pos: [cx, 2.7, cz], color: eye, intensity: 9, distance: 9, kind: 'interior' });
+    interactables.push({ id: `cabine-${id}`, kind: 'cabine', ref: id, use: [cx - 1.6, cz], y: 0 });
+    cabins.push({ id, c: [cx, cz], r: [x0, z0, x1, z1] });
+  }
+
   const trincheira: TrincheiraData = {
     gens, fizzGen: [0, 1, 2, 3, 4, 5],
     groups: { ox: OX, oz: OZ, w: GW, h: GH, data: '' },
@@ -1112,6 +1138,7 @@ export function buildTrincheira(): MapDef {
     tank: { path: tankPath, stops: tankStops, lever, leverNormal: leverN },
     ring: { c: [rcx, rcz], r: L.ring.r, hole: L.ring.hole },
     wallMix,
+    cabins,
     portals,
     chamber: { center: CC, hall: HALL, alcoves: alcoveData, plates },
     staffTable, chests, tombstones, domes, tabuaAltar, challengeChests, pickups, tankPart, windCrates, chamberRect,

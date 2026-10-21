@@ -94,7 +94,7 @@ const AUTOPLAY = import.meta.env.DEV && new URLSearchParams(location.search).has
 // interações novas da Trincheira (o texto do aviso vem do TrincheiraClient)
 const TR_KINDS: Record<string, true> = {
   generator: true, fizz: true, tank: true, shovel: true, mound: true, part: true, bench: true, gramofone: true, disco: true,
-  portal: true, crystal: true, staffPedestal: true, altar: true, tabua: true, tabuaAltar: true, challenge: true, missao: true, ring: true,
+  portal: true, crystal: true, staffPedestal: true, altar: true, tabua: true, tabuaAltar: true, challenge: true, missao: true, ring: true, cabine: true,
 };
 
 const WEEKDAYS =['Domingo', 'Segunda-feira', 'Terça-feira', 'Quarta-feira', 'Quinta-feira', 'Sexta-feira', 'Sábado'];
@@ -762,6 +762,13 @@ export class Game {
             this.shake = Math.max(this.shake, 0.9);
           }
           break;
+        case 'cabine':
+          // levado à cabine do colosso (ou de volta à pegada): o navegador move o jogador para onde a simulação mandou
+          if (e.pid === local && e.x !== undefined && e.z !== undefined && (e.phase === 'entra' || e.phase === 'volta')) {
+            this.pc.spawn(e.x, e.z, e.phase === 'entra' ? Math.PI / 2 : 0);
+            this.hud.whiteFlash();
+          }
+          break;
         case 'teleporte':
           // o navegador é quem mexe na posição: leva o jogador para a alcova ou de volta à boca do túnel
           if (e.pid === local && this.o.map.trincheira) {
@@ -812,6 +819,8 @@ export class Game {
               ocupado: 'Já está em uso.',
               desligada: 'Sem energia: ligue o gerador da área.',
               unica: 'Você já carrega um cajado.',
+              esgotado: 'O prêmio desta cabine já foi levado.',
+              longe: 'Só dá para pegar o prêmio de dentro da cabine.',
               aneis: 'Falta a 2ª etapa: gire os anéis da Escavação e acerte a esfera com este cajado.',
             };
             if (why[e.reason]) this.hud.notify(why[e.reason]!);

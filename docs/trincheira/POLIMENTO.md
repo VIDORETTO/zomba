@@ -1052,6 +1052,8 @@ Pasta sugerida: `docs/trincheira/capturas/` (só capturas do nosso jogo).
 | C5 | pronto | 2026-10-21 | Tecla `shield` (X), mensagens `shield` e `bash`, `TrPlayer.shieldHand`; bloqueio de frente (120°) na mão e de costas guardado; sem tiro na mão; pancada de 2 m com empurrão; −10% de velocidade; modelo na mão (`WeaponView.shieldRig`) e no boneco dos aliados |
 | C6 | pronto | 2026-10-21 | `TrincheiraSystems.rings`/`orbElement`/`interactRing`, 4 alavanca (`kind: 'ring'`), alvo `esfera`, altar recusa sem a etapa, `ringsStep`; anéis giram no navegador (4 símbolos por anel), marca, esfera e alavancas. O teste de missão (A6) passa pelos anéis |
 
+| C4 | pronto | 2026-10-21 | 3 salas de 6 × 6 m (x 209 a 221; `LIMITS.maxX` 240), `toCabin`/`tickCabins`/`interactCabine`, prêmio por F uma vez por colosso, volta à pegada em 15 s ou no fim da passagem com 3 s de invulnerabilidade; `NetPlayer.cabine`, `TrincheiraSnap.cabinTaken`, evento `cabine` com `phase`, `x`, `z`. A sala é simples (rebite, janela, painel e pedestal) |
+
 **Observações do S5**
 
 - O som das vinhetas é sintetizado; a aprovação "de ouvido" do D1 é do usuário.

@@ -67,6 +67,8 @@ export interface NetPlayer {
   // vida do Escudo de Trincheira (0 = sem escudo) e se ele está na mão (senão fica nas costas)
   shield?: number;
   shieldHand?: boolean;
+  // cabine do colosso em que o jogador está (senão ausente)
+  cabine?: 'atlas' | 'golias' | 'tita';
   // Punho de Ferro no lugar da faca
   punho?: boolean;
   // Granadas de Artilharia
@@ -206,6 +208,8 @@ export interface TrincheiraSnap {
   // anéis da Escavação: símbolo (0 fogo, 1 gelo, 2 vento, 3 raio) que cada um mostra na marca, e a esfera acesa do centro
   rings: number[];
   orb: Element | null;
+  // cabines cujo prêmio já foi levado (ids dos colossos)
+  cabinTaken: ('atlas' | 'golias' | 'tita')[];
 }
 
 export type GameEvent =
@@ -289,7 +293,8 @@ export type GameEvent =
   // colosso: buzina (vai entrar), pisada (pegada, quem morreu), entrou na cabine
   | { e: 'buzina'; robot: 'atlas' | 'golias' | 'tita'; dir: 1 | -1 }
   | { e: 'pisada'; robot: 'atlas' | 'golias' | 'tita'; foot: string; x: number; z: number; killed: string[]; zombies: number }
-  | { e: 'cabine'; pid: string; robot: 'atlas' | 'golias' | 'tita'; prize: string }
+  // phase: 'entra' (levado à cabine), 'premio' (pegou o prêmio) ou 'volta' (de volta à pegada); x e z = para onde o navegador leva quem entra ou sai
+  | { e: 'cabine'; pid: string; robot: 'atlas' | 'golias' | 'tita'; prize: string; phase?: 'entra' | 'premio' | 'volta'; x?: number; z?: number }
   // Cruzados: recaptura começou (gerador alvo), terminou
   | { e: 'recaptura'; phase: 'start' | 'win' | 'lose'; gen: number }
   // Blindado: chegou, lança-chamas (ligado/desligado), garra, salto, visor quebrou, morreu

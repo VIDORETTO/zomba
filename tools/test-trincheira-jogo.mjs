@@ -373,6 +373,36 @@ await page.screenshot({ path: `${out}/j7-artilharia.png` });
   await G(() => { window.__game.transport.sim.tr.rings = [1, 2, 3, 0]; });
 }
 
+// 19. C4: cabine do colosso (do pisão até o prêmio e a volta)
+{
+  // o tanque (de um teste anterior) pode estar passando por cima da pegada: estaciona-o longe
+  await G(() => { const g = window.__game, s = g.transport.sim; s.zombies.clear(); s.state = 'intermission'; s.stateTimer = 1e9; s.tr.robot = null; Object.assign(s.tr.tank, { state: 'parado', v: 0, wait: 0, x: 105, z: 25 }); s.tr.recapturing = false; s.tr.panzerQueue = 0; s.tr.panzerTimer = -1; for (const gg of s.tr.gens) gg.attacked = false; for (const f of g.o.map.trincheira.feet) s.world.openDoors.add(`pe-${f.id}`); s.nav.rebuild(); g.debugTr('colosso', 'golias'); });
+  await page.waitForFunction(() => window.__game.transport.sim.tr.robot?.phase === 'passos', null, { timeout: 30000 });
+  await G(() => {
+    const g = window.__game, s = g.transport.sim, r = s.tr.robot, f = r.feet[r.step];
+    r.hatch = true;
+    s.zombies.clear();
+    s.players.get('local').points = 0;
+    g.debugView(f.cx, f.cz, 0, 0);
+  });
+  await page.waitForFunction(() => window.__game.me.cabine === 'golias', null, { timeout: 15000 });
+  await page.waitForTimeout(900);
+  const dentro = await G(() => { const g = window.__game, c = g.o.map.trincheira.cabins.find((x) => x.id === 'golias'); return { x: g.pc.pos.x, z: g.pc.pos.z, ok: g.pc.pos.x >= c.r[0] && g.pc.pos.x <= c.r[2] && g.pc.pos.z >= c.r[1] && g.pc.pos.z <= c.r[3] }; });
+  check('Cabine: o jogador do navegador é levado para dentro da sala do colosso', dentro.ok, JSON.stringify(dentro));
+  await page.screenshot({ path: `${out}/c4-cabine.png` });
+  await G(() => { const g = window.__game, it = g.o.map.interactables.find((i) => i.id === 'cabine-golias'); g.debugView(it.use[0], it.use[1], Math.PI * 1.5, 0); });
+  await page.waitForTimeout(500);
+  const aviso = await prompt();
+  check('Cabine: o aviso do pedestal mostra o prêmio', /2000 pontos/.test(aviso), aviso);
+  await press('KeyF');
+  await page.waitForTimeout(700);
+  check('Cabine: F no pedestal dá o prêmio (Golias: 2000 pontos)', (await sim((s) => s.players.get('local').points)) >= 2000);
+  await G(() => { window.__game.transport.sim.tr.robot = null; });
+  await page.waitForFunction(() => !window.__game.me.cabine, null, { timeout: 8000 });
+  const fora = await G(() => window.__game.pc.pos.x < 200);
+  check('Cabine: sem colosso em cena o jogador volta para fora', fora);
+}
+
 // 10. E1: pilha de avisos no topo (barra de chefe fixa; no máximo 2 avisos embaixo, por prioridade)
 {
   await G(() => { const s = window.__game.transport.sim; s.tr.robot = null; s.toSpawn = 0; s.zombies.clear(); window.__game.debugTr('tp:100,52'); });

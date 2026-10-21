@@ -1516,6 +1516,107 @@ function missionToHarvest(players: number, plan: [number, El][]) {
   void EL;
 }
 
+// --- C4: cabine de verdade na cabeça do colosso ---
+{
+  const passagem = (players = 1, id: 'atlas' | 'golias' | 'tita' = 'atlas', abrir = true) => {
+    const s = mk(players, 2);
+    quiet(s);
+    tr(s).debug('colosso', id, me(s));
+    run(s, T.robotWarn + 0.1);
+    const r = tr(s).robot;
+    if (abrir) r.hatch = true;
+    const foot = r.feet[0];
+    for (let i = 0; i < players; i++) goto(s, foot.cx + i * 0.5, foot.cz, i);
+    return { s, foot, r };
+  };
+  const cab = (id: string) => D.cabins.find((c: { id: string }) => c.id === id)!;
+  {
+    const { s } = passagem();
+    check('cabines: 3 salas (uma por colosso) fora do mapa e da Câmara, de 6 × 6 m', D.cabins.length === 3 && D.cabins.every((c: { r: number[]; id: string }) => c.r[0] >= 200 && Math.abs(c.r[2] - c.r[0] - 6) < 0.01 && Math.abs(c.r[3] - c.r[1] - 6) < 0.01));
+    run(s, T.stepLift + T.stepMove + T.stepDown - 0.3);
+    const evs = run(s, 0.5);
+    const a = me(s);
+    const c = cab('atlas');
+    check('escotilha aberta, pé desce: o jogador vai para a cabine e não cai', a.life === 'alive' && a.x >= c.r[0] && a.x <= c.r[2] && a.z >= c.r[1] && a.z <= c.r[3] && has(evs, 'cabine'), `${a.x.toFixed(1)}, ${a.z.toFixed(1)} ${a.life}`);
+    check('o snapshot diz em que cabine o jogador está', s.snapshot().players[0].cabine === 'atlas');
+  }
+  {
+    const { s } = passagem();
+    run(s, T.stepLift + T.stepMove + T.stepDown + 0.2);
+    run(s, 0.8); // o navegador volta a mandar a posição depois do teletransporte
+    const a = me(s);
+    goIt(s, 'cabine-atlas');
+    const antes = a.points;
+    use(s, 'cabine-atlas');
+    check('o prêmio da cabine se pega com F (Atlas: Bebida Grátis) uma vez por colosso', a.perks.length === 1, a.perks.join(','));
+    a.perks = [];
+    use(s, 'cabine-atlas');
+    check('a segunda vez a cabine do mesmo colosso está vazia', a.perks.length === 0 && has(ev0(s), 'deny'));
+    void antes;
+  }
+  {
+    const { s, foot } = passagem();
+    run(s, T.stepLift + T.stepMove + T.stepDown + 0.2);
+    const a = me(s);
+    check('na cabine o jogador está longe da pegada (sala separada)', Math.hypot(a.x - foot.cx, a.z - foot.cz) > 40);
+    // fim da passagem (ou 15 s, o que vier antes): volta à pegada com 3 s de invulnerabilidade
+    run(s, 15.2);
+    check('volta à pegada depois de 15 s, na pegada onde estava', Math.hypot(a.x - foot.cx, a.z - foot.cz) < 12 && a.life === 'alive', `${a.x.toFixed(1)}, ${a.z.toFixed(1)}`);
+    const h0 = a.health;
+    raw(s).damagePlayer(a, 50, 0, 0, false);
+    check('os 3 s depois de voltar são de invulnerabilidade', a.health === h0);
+    run(s, 3.2);
+    raw(s).damagePlayer(a, 30, 0, 0, false);
+    check('depois dos 3 s o dano volta a valer', a.health === h0 - 30);
+  }
+  {
+    // se o colosso acaba de passar antes dos 15 s, volta quando a passagem termina
+    const { s, foot } = passagem();
+    run(s, T.stepLift + T.stepMove + T.stepDown + 0.2);
+    tr(s).robot = null;
+    run(s, 0.3);
+    const a = me(s);
+    check('a passagem termina antes dos 15 s: o jogador volta na hora', Math.hypot(a.x - foot.cx, a.z - foot.cz) < 12);
+  }
+  {
+    const { s } = passagem();
+    run(s, T.stepLift + T.stepMove + T.stepDown + 0.2);
+    // zumbis não nascem na cabine: o ponto de surgir nunca cai lá
+    delete raw(s).spawnZombie;
+    raw(s).toSpawn = 12;
+    raw(s).spawnTimer = 0;
+    run(s, 6);
+    const dentro = [...raw(s).zombies.values()].filter((z: { x: number }) => z.x >= 200).length;
+    check('zumbis não nascem na cabine', dentro === 0, `${dentro} dentro`);
+  }
+  {
+    const { s } = passagem(2);
+    run(s, T.stepLift + T.stepMove + T.stepDown + 0.2);
+    const c = cab('atlas');
+    const dentro = [0, 1].every((i) => me(s, i).x >= c.r[0] && me(s, i).x <= c.r[2]);
+    check('dois jogadores na mesma pegada vão juntos para a cabine', dentro && me(s, 0).life === 'alive' && me(s, 1).life === 'alive');
+  }
+  {
+    const { s } = passagem(1, 'atlas', false);
+    run(s, T.stepLift + T.stepMove + T.stepDown + 0.2);
+    check('sem a escotilha aberta, a pegada ainda esmaga', me(s).life !== 'alive');
+  }
+  {
+    // cada colosso tem a sua cabine e o seu prêmio (Golias 2000 pontos; Titã 3 granadas de artilharia)
+    const g = passagem(1, 'golias');
+    run(g.s, T.stepLift + T.stepMove + T.stepDown + 1);
+    goIt(g.s, 'cabine-golias');
+    const p0 = me(g.s).points;
+    use(g.s, 'cabine-golias');
+    check('prêmio de Golias: 2000 pontos', me(g.s).points - p0 === 2000, `${me(g.s).points - p0}`);
+    const t = passagem(1, 'tita');
+    run(t.s, T.stepLift + T.stepMove + T.stepDown + 1);
+    goIt(t.s, 'cabine-tita');
+    use(t.s, 'cabine-tita');
+    check('prêmio de Titã: 3 Granadas de Artilharia', tr(t.s).P(me(t.s)).artilharia === 3);
+  }
+}
+
 // --- Escavação (B1): a decoração é só desenho, nada fecha o caminho ---
 {
   const s = mk();

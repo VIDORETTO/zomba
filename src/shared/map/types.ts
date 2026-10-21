@@ -103,7 +103,7 @@ export interface Interactable {
   kind: 'ammo' | 'perk' | 'door' | 'weapon' | 'grenade' | 'knife' | 'box' | 'forge' | 'candle' | 'bank' | 'sight' | 'power' | 'ritual'
     // Trincheira
     | 'generator' | 'fizz' | 'tank' | 'shovel' | 'mound' | 'part' | 'bench' | 'gramofone' | 'disco'
-    | 'portal' | 'crystal' | 'staffPedestal' | 'altar' | 'tabua' | 'tabuaAltar' | 'challenge' | 'missao' | 'ring';
+    | 'portal' | 'crystal' | 'staffPedestal' | 'altar' | 'tabua' | 'tabuaAltar' | 'challenge' | 'missao' | 'ring' | 'cabine';
   perk?: import('../perks').PerkId;
   door?: string;
   weapon?: string;
@@ -282,6 +282,8 @@ export type Element4 = 'fogo' | 'gelo' | 'vento' | 'raio';
 
 // Dados fixos da Trincheira, montados pelo construtor do mapa (navegador e servidor têm os mesmos).
 export interface TrincheiraData {
+  // cabines dos colossos (C4): 3 salas de 6 x 6 m fora do mapa; c = centro, r = retângulo interno [x0, z0, x1, z1]
+  cabins: { id: 'atlas' | 'golias' | 'tita'; c: P2; r: R4 }[];
   // área (largura x altura em m²) de parede por estilo e material: confere a variedade das paredes (ticket B5)
   wallMix?: Record<string, Record<string, number>>;
   // 6 geradores: centro, raio do círculo, nome da área

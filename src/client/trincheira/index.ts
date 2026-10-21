@@ -373,7 +373,11 @@ export class TrincheiraClient {
         }
         break;
       case 'cabine':
-        if (e.pid === local) this.c.notify(`Você entrou na <b>cabine</b> de ${COLOSSI[e.robot].name}: ${e.prize}`);
+        if (e.pid === local) {
+          if (e.phase === 'entra') this.c.notify(`Você foi levado à <b>cabine</b> de ${COLOSSI[e.robot].name}: aperte <b>F</b> no pedestal para pegar o prêmio.`);
+          else if (e.phase === 'volta') this.c.notify('Você voltou à pegada: 3 s de proteção.');
+          else this.c.notify(`Prêmio da cabine de ${COLOSSI[e.robot].name}: <b>${e.prize}</b>`);
+        }
         break;
       case 'desafio':
         if (e.pid === local) {
@@ -558,6 +562,13 @@ export class TrincheiraClient {
         const ready = ch.some((v, i) => v >= GOALS[i] && !cl[i]);
         if (ready) return { text: `Pressione ${K} para retirar os prêmios do <b>Baú de Desafios</b>`, can: true, price: 0 };
         return { text: '<b>Baú de Desafios</b><small>Cumpra os desafios abaixo para abrir</small>', can: false, price: 0 };
+      }
+      case 'cabine': {
+        const id = it.ref as keyof typeof COLOSSI;
+        const nm = COLOSSI[id].name;
+        const prize = id === 'atlas' ? 'uma Bebida Grátis' : id === 'golias' ? '2000 pontos' : '3 Granadas de Artilharia';
+        if (tr.cabinTaken.includes(id)) return { text: `A cabine de <b>${nm}</b> já foi esvaziada`, can: false, price: 0 };
+        return { text: `Pressione ${K} para pegar o prêmio da cabine de <b>${nm}</b> <small>${prize} (um por partida)</small>`, can: true, price: 0 };
       }
       case 'ring': {
         const i = Number(it.id.replace('anel-', ''));

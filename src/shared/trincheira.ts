@@ -68,6 +68,8 @@ export interface TrPlayer {
   goldShovel: boolean;
   helmet: boolean;
   shield: number;
+  // cabine do colosso: onde está, para onde volta e até quando fica
+  cabin: { id: TrRobot['id']; back: [number, number]; until: number } | null;
   shieldHand: boolean;
   bashReady: number;
   shieldBrokenRound: number;
@@ -242,7 +244,7 @@ export class TrincheiraSystems {
     let t = this.ps.get(id);
     if (!t) {
       t = {
-        shovel: false, goldShovel: false, helmet: false, shield: 0, shieldHand: false, bashReady: 0, shieldBrokenRound: -1, punho: false, artilharia: 0, zblood: 0,
+        shovel: false, goldShovel: false, helmet: false, shield: 0, cabin: null, shieldHand: false, bashReady: 0, shieldBrokenRound: -1, punho: false, artilharia: 0, zblood: 0,
         flags: [0, 0, 0, 0], claimed: [false, false, false, false], extraPerk: false, digs: 0, hold: null, burn: 0, burnAcc: 0,
         tpUntil: 0, tpCool: 0, tunnelT: 0, tunnelEl: null, invUntil: 0, helmetGiven: false,
       };
@@ -972,7 +974,7 @@ export class TrincheiraSystems {
       const t = this.P(p);
       if (t.invUntil > this.h.time()) continue;
       if (r.hatch && p.life === 'alive') {
-        this.toCabin(p, r.id);
+        this.toCabin(p, r.id, foot);
         continue;
       }
       if (p.life === 'alive') {
@@ -1000,26 +1002,70 @@ export class TrincheiraSystems {
     this.emit({ e: 'pisada', robot: r.id, foot: foot.id, x: r3(foot.cx), z: r3(foot.cz), killed, zombies: n });
   }
 
-  // cabine do colosso (extra): prêmio único por colosso e volta à pegada com 3 s de invulnerabilidade
-  private toCabin(p: SimPlayer, id: TrRobot['id']) {
+  // cabine do colosso (C4): o jogador na pegada com a escotilha aberta é levado à sala do colosso, sem cair.
+  // Lá há um prêmio (F, uma vez por colosso por partida). Volta à pegada de onde saiu quando a passagem acaba ou
+  // em 15 s, o que vier antes, com 3 s de invulnerabilidade.
+  private toCabin(p: SimPlayer, id: TrRobot['id'], foot: FootRect) {
     const t = this.P(p);
-    const prizeKey = `cabine-${id}`;
-    let prize = 'nada';
-    if (!this.cabinTaken.has(prizeKey)) {
-      this.cabinTaken.add(prizeKey);
-      if (id === 'atlas') {
-        this.h.applyPowerupTo('freeperk', p);
-        prize = 'Bebida Grátis';
-      } else if (id === 'golias') {
-        this.h.addPoints(p, 2000);
-        prize = '2000 pontos';
-      } else {
-        t.artilharia += 3;
-        prize = '3 Granadas de Artilharia';
-      }
+    const cab = this.D.cabins.find((c) => c.id === id)!;
+    t.cabin = { id, back: [foot.cx, foot.cz], until: this.h.time() + T.cabinMax };
+    t.tpUntil = this.h.time() + 0.6;
+    t.hold = null;
+    // entra pelo lado leste da sala, de frente para a janela
+    p.x = cab.c[0] + 1.8;
+    p.z = cab.c[1] + (this.cabinSlot++ % 2 ? 0.8 : -0.8);
+    p.y = 0;
+    t.invUntil = this.h.time() + T.cabinMax + 3;
+    this.emit({ e: 'cabine', pid: p.id, robot: id, prize: '', phase: 'entra', x: r3(p.x), z: r3(p.z) });
+  }
+  private cabinSlot = 0;
+
+  // F no pedestal da cabine: o prêmio do colosso (só uma vez por colosso na partida)
+  private interactCabine(p: SimPlayer, it: Interactable): boolean {
+    const id = it.ref as TrRobot['id'];
+    const t = this.P(p);
+    if (!t.cabin || t.cabin.id !== id) {
+      this.emit({ e: 'deny', pid: p.id, reason: 'longe' });
+      return true;
     }
-    t.invUntil = this.h.time() + 3 + T.stepHold;
-    this.emit({ e: 'cabine', pid: p.id, robot: id, prize });
+    const prizeKey = `cabine-${id}`;
+    if (this.cabinTaken.has(prizeKey)) {
+      this.emit({ e: 'deny', pid: p.id, reason: 'esgotado' });
+      return true;
+    }
+    this.cabinTaken.add(prizeKey);
+    let prize: string;
+    if (id === 'atlas') {
+      this.h.applyPowerupTo('freeperk', p);
+      prize = 'Bebida Grátis';
+    } else if (id === 'golias') {
+      this.h.addPoints(p, 2000);
+      prize = '2000 pontos';
+    } else {
+      t.artilharia += 3;
+      prize = '3 Granadas de Artilharia';
+    }
+    this.emit({ e: 'cabine', pid: p.id, robot: id, prize, phase: 'premio' });
+    return true;
+  }
+
+  // volta da cabine: a passagem acabou (ou outro colosso entrou) ou passaram 15 s
+  private tickCabins() {
+    for (const p of this.h.players.values()) {
+      const t = this.P(p);
+      const c = t.cabin;
+      if (!c) continue;
+      const fim = !this.robot || this.robot.id !== c.id || this.h.time() >= c.until;
+      if (!fim && p.life !== 'dead') continue;
+      t.cabin = null;
+      if (p.life === 'dead') continue;
+      p.x = c.back[0];
+      p.z = c.back[1];
+      p.y = 0;
+      t.tpUntil = this.h.time() + 0.6;
+      t.invUntil = this.h.time() + 3;
+      this.emit({ e: 'cabine', pid: p.id, robot: c.id, prize: '', phase: 'volta', x: r3(p.x), z: r3(p.z) });
+    }
   }
   private cabinTaken = new Set<string>();
 
@@ -1909,7 +1955,7 @@ export class TrincheiraSystems {
   // dono sangrou até o fim ou saiu: o cajado volta sozinho ao pedestal
   onPlayerGone(p: SimPlayer) {
     const t = this.P(p);
-    Object.assign(t, { shovel: false, goldShovel: false, helmet: false, shield: 0, shieldHand: false, punho: false, hold: null, burn: 0, zblood: 0 });
+    Object.assign(t, { shovel: false, goldShovel: false, helmet: false, shield: 0, cabin: null, shieldHand: false, punho: false, hold: null, burn: 0, zblood: 0 });
     p.weapons = p.weapons.filter((w) => !isStaff(w));
     for (const s of this.staffs) {
       if (s.st === 'mao' && s.owner === p.id) {
@@ -2375,11 +2421,13 @@ export class TrincheiraSystems {
       case 'challenge': return this.interactChallenge(p, it);
       case 'missao': return this.interactPoco(p);
       case 'ring': return this.interactRing(p, it);
+      case 'cabine': return this.interactCabine(p, it);
       default: return false;
     }
   }
 
   tick(dt: number) {
+    this.tickCabins();
     this.tickGens(dt);
     this.tickForja(dt);
     this.tickFizz(dt);
@@ -2408,7 +2456,7 @@ export class TrincheiraSystems {
   playerFields(p: SimPlayer): Partial<NetPlayer> {
     const t = this.P(p);
     return {
-      shovel: t.shovel, goldShovel: t.goldShovel, helmet: t.helmet, shield: Math.round(t.shield), shieldHand: t.shieldHand && t.shield > 0, punho: t.punho,
+      shovel: t.shovel, goldShovel: t.goldShovel, helmet: t.helmet, shield: Math.round(t.shield), shieldHand: t.shieldHand && t.shield > 0, ...(t.cabin ? { cabine: t.cabin.id } : {}), punho: t.punho,
       artilharia: t.artilharia, zblood: r3(t.zblood), challenges: this.challengeProgress(p), claimed: [...t.claimed], extraPerk: t.extraPerk,
     };
   }
@@ -2446,6 +2494,7 @@ export class TrincheiraSystems {
       recapture: this.recapturing,
       rings: [...this.rings],
       orb: this.orbElement(),
+      cabinTaken: [...this.cabinTaken].map((k) => k.replace('cabine-', '') as TrRobot['id']),
     };
   }
 

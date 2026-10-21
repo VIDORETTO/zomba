@@ -513,7 +513,7 @@ São três robôs de cerca de 30 m de altura que atravessam o mapa pisando nas p
   Mensagem: "Esmagado por Atlas".
 - **Cabeça do colosso** (extra, Fase 9):
   - Quando o pé está **levantado** sobre uma pegada, a sola tem uma luz. Acertar 3 tiros nela abre a escotilha.
-  - Quem estiver na pegada quando esse pé descer **não morre**: é levado para a **cabine**, uma salinha fora do mapa como a Câmara.
+  - Quem estiver na pegada quando esse pé descer **não morre**: é levado para a **cabine**, uma sala de 6 × 6 m fora do mapa (x de 209 a 221; os limites do mapa foram para x = 240). Uma sala por colosso (`TrincheiraData.cabins`), de aço rebitado, com janela do "olho", painel de luzes e o pedestal do prêmio no meio. Dois jogadores na mesma pegada vão juntos; sem escotilha aberta, a pegada esmaga como sempre.
   - Na cabine há 1 prêmio por colosso por partida:
 
     | Colosso | Prêmio |
@@ -522,7 +522,9 @@ São três robôs de cerca de 30 m de altura que atravessam o mapa pisando nas p
     | Golias | 2000 pontos |
     | Titã | 3 Granadas de Artilharia |
 
-  - Ao fim da passagem, o jogador é deixado na última pegada (com 3 s de invulnerabilidade).
+  - O prêmio se pega com F no pedestal (`cabine-atlas`, `cabine-golias`, `cabine-tita`), uma vez por colosso por partida.
+  - Ao fim da passagem, ou depois de 15 s (`TRINCHEIRA.cabinMax`), o que vier primeiro, o jogador volta à pegada de onde saiu, com 3 s de invulnerabilidade. Nesse tempo ele não toma dano de ninguém (a cabine não tem zumbis, porque nenhum ponto de surgir cai lá).
+  - Snapshot: `NetPlayer.cabine` e `TrincheiraSnap.cabinTaken`. O evento `cabine` ganhou `phase` (`entra`, `premio`, `volta`) e `x`, `z` (para onde o navegador leva o jogador).
 - **Snapshot:**
 
   ```
@@ -996,7 +998,7 @@ Tudo da seção 6 está implementado: `src/shared/trincheira.ts` (regras, classe
 - Cada jogador dentro do círculo do gerador paga 200 (e a captura anda mais rápido com mais gente).
 - O tanque, ao parar na Igreja com alguém em cima, **abre o portão da Igreja** (de graça). A plataforma da Igreja não tem passagem própria: o portão aberto é a passagem.
 - O tanque é um veículo à parte do ônibus; `busBody.ts` aceita as medidas de cada veículo (`BodyDims`). Convés a 1,15 m, sobe-se pulando.
-- A cabine dos colossos (extra da seção 6.8) é simplificada: acertar a sola 3 vezes abre a escotilha; quem estiver na pegada quando o pé desce **não morre**, ganha o prêmio do colosso e 4 s de invulnerabilidade, mas não é levado a uma sala separada.
+- A cabine dos colossos agora é uma sala de verdade (C4, 6.8); a versão simplificada saiu.
 - A 3ª peça do Cajado de Fogo cai do primeiro Blindado morto (peça solta, `tr.drops`).
 - Cruzados nascem a 25–40 m do gerador atacado (ou mais perto se a área for pequena) onde há caminho até ele.
 - A missão trava os cajados nos pedestais da colheita até o fim; ao terminar, voltam para quem os tinha (um cajado por jogador).

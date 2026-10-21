@@ -248,6 +248,8 @@ export const TRINCHEIRA = {
   panzerVisorBreak: 0.2,
   zbloodTime: 20,
   shieldHp: 1500,
+  // cabine do colosso: tempo máximo lá dentro (s) antes de voltar à pegada
+  cabinMax: 15,
   // anéis da Escavação: a 2ª etapa da melhoria dos cajados (false = só o enigma, como antes)
   ringsStep: true,
   shieldArc: 120,
