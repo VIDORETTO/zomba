@@ -1,0 +1,21 @@
+# Servidor interno do jogo: só entrega os arquivos de /srv/zomba (sem HTTPS: quem fala com a internet é o Caddy da frente).
+{
+	auto_https off
+	admin off
+}
+
+:80 {
+	root * /srv/zomba
+	encode zstd gzip
+	file_server
+
+	respond /__saude "ok" 200
+
+	# arquivos com resumo no nome nunca mudam; a página vem sempre nova para pegar a versão atual
+	@hashed path /assets/*
+	header @hashed Cache-Control "public, max-age=31536000, immutable"
+	@sfx path /sfx/*
+	header @sfx Cache-Control "public, max-age=86400"
+	@page path / /index.html
+	header @page Cache-Control "no-cache"
+}

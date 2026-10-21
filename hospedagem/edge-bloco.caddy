@@ -1,0 +1,21 @@
+# Bloco para o Caddy da frente (o de /root/saas/meucontroleml/deploy/proxy/Caddyfile, que já usa o snippet log_redacted).
+# Ele cuida do HTTPS e repassa para o contêiner zomba-web (hospedagem/docker-compose.yml).
+# O VPS só entrega arquivos: não roda partida, não guarda dado e não repassa tráfego de jogo.
+zomba.gabrielvidoretto.com.br {
+  import log_redacted
+  encode zstd gzip
+
+  header {
+    Strict-Transport-Security "max-age=31536000; includeSubDomains"
+    X-Content-Type-Options "nosniff"
+    Referrer-Policy "no-referrer"
+    X-Frame-Options "DENY"
+    Cross-Origin-Opener-Policy "same-origin"
+    Permissions-Policy "camera=(), microphone=(), geolocation=(), payment=()"
+    # wss: = relés públicos de Nostr para os amigos se encontrarem; https: = endereço das credenciais do TURN (se houver)
+    Content-Security-Policy "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; media-src 'self' data: blob:; font-src 'self' data:; connect-src 'self' wss: https:; worker-src 'self' blob:; object-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
+    -Server
+  }
+
+  reverse_proxy zomba-web:80
+}

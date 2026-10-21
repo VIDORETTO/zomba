@@ -41,7 +41,7 @@ Código: `src/client/p2p/` (`hostRoom.ts` é a sala, `link.ts` a ligação, `cli
 hospedagem/publicar.sh /srv/zomba      # constrói e copia só dist/ (2,6 MB; 0,4 MB comprimido)
 ```
 
-`hospedagem/Caddyfile.zomba` tem o trecho do Caddy para `zomba.gabrielvidoretto.com.br` (cabeçalhos de segurança e cache). O VPS não roda partida, não guarda dado e não repassa tráfego de jogo.
+`hospedagem/docker-compose.yml` sobe um contêiner que só entrega a pasta (`hospedagem/web/Caddyfile`), e `hospedagem/edge-bloco.caddy` é o bloco do Caddy da frente para `zomba.gabrielvidoretto.com.br` (HTTPS, cabeçalhos de segurança). O VPS não roda partida, não guarda dado e não repassa tráfego de jogo.
 
 ## O que já tem
 

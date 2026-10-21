@@ -1,7 +1,8 @@
 // Confere a versão de produção como ela vai para a internet: SÓ arquivos estáticos (nenhum servidor de jogo, de salas ou de placar).
 // Gera o pacote, serve a pasta com um servidor de arquivos simples, abre dois navegadores e faz um co-op de verdade
 // (encontro pelos relés públicos, ligação WebRTC entre as duas abas). Precisa de internet.
-// Uso: node tools/prod-check.mjs   (usa a pasta dist/ se já existir e estiver atual; senão rode npm run build antes)
+// Uso: node tools/prod-check.mjs            (serve a pasta dist/ localmente; rode npm run build antes)
+//      node tools/prod-check.mjs https://zomba.gabrielvidoretto.com.br   (confere o site publicado)
 import { chromium } from 'playwright-core';
 import { existsSync, readFileSync, statSync } from 'node:fs';
 import { createServer } from 'node:http';
@@ -9,8 +10,9 @@ import { extname, join, normalize } from 'node:path';
 import { homedir } from 'node:os';
 import { readdirSync } from 'node:fs';
 
+const REMOTE = process.argv[2]?.replace(/\/+$/, '');
 const DIST = new URL('../dist/', import.meta.url).pathname;
-if (!existsSync(join(DIST, 'index.html'))) throw new Error('rode npm run build antes');
+if (!REMOTE && !existsSync(join(DIST, 'index.html'))) throw new Error('rode npm run build antes');
 const MIME = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css', '.ogg': 'audio/ogg', '.png': 'image/png', '.json': 'application/json' };
 const requests = [];
 const srv = createServer((req, res) => {
@@ -20,9 +22,12 @@ const srv = createServer((req, res) => {
   if (!f.startsWith(DIST) || !existsSync(f) || statSync(f).isDirectory()) f = join(DIST, 'index.html');
   res.writeHead(200, { 'content-type': MIME[extname(f)] ?? 'application/octet-stream' });
   res.end(readFileSync(f));
-}).listen(0, '127.0.0.1');
-await new Promise((r) => srv.once('listening', r));
-const url = `http://127.0.0.1:${srv.address().port}`;
+});
+if (!REMOTE) {
+  srv.listen(0, '127.0.0.1');
+  await new Promise((r) => srv.once('listening', r));
+}
+const url = REMOTE ?? `http://127.0.0.1:${srv.address().port}`;
 
 let fail = 0;
 const check = (n, c, d = '') => { console.log(`${c ? 'ok  ' : 'FALHOU'} ${n}${d ? ` (${d})` : ''}`); if (!c) fail++; };
@@ -66,8 +71,8 @@ await Promise.all([a, b].map((p) => p.waitForSelector('#menu.hidden', { state: '
 await a.waitForTimeout(2500);
 check('a partida começou para os dois', true);
 await browser.close();
-srv.close();
-check('o servidor do jogo só recebeu pedidos de arquivos (nada de /api)', requests.every((r) => !r.startsWith('/api')), requests.filter((r) => r.startsWith('/api')).join(','));
+srv.close?.();
+if (!REMOTE) check('o servidor do jogo só recebeu pedidos de arquivos (nada de /api)', requests.every((r) => !r.startsWith('/api')), requests.filter((r) => r.startsWith('/api')).join(','));
 check('nenhum erro de script', errs.length === 0, errs.slice(0, 2).join(' | '));
 console.log(fail ? `${fail} falharam` : 'tudo certo');
 process.exit(fail ? 1 : 0);
