@@ -1020,6 +1020,10 @@ Pasta sugerida: `docs/trincheira/capturas/` (só capturas do nosso jogo).
 | B2 | pronto, falta aprovação das capturas | 2026-10-21 | `skyFx.ts`: nuvens que andam, 4 colunas de fumaça, sinalizadores, relâmpago de 0,15 s com trovão atrasado, clarão de artilharia no horizonte sincronizado com o estrondo (o sorteio saiu do `trSound`). Céu com faixa laranja e topo cinza-chumbo. Neve: o chão enche em 80 s (`snowGround`) e a névoa continua clareando rápido. `mapView.setSkyFlash` |
 | B9 | pronto | 2026-10-21 | Anel de progresso (shader, vermelho quando volta) e cordões de lâmpadas (20 por gerador, acendem em 1,5 s) |
 
+| C1 | pronto | 2026-10-21 | `staffRevive`: cilindro de 0,7 m (altura 1,4 m) até 25 m, sem parede; 4 elementos; conta para quem atirou; só o disparo normal. Evento `previve` ganhou `from` (o `by` fica `'cajado'`, como na especificação). 11 testes |
+| C2 | pronto, falta aprovação dos modelos | 2026-10-21 | `cano-longo` (+ Velha Senhora), `ferrolho`, `trincheira-smg`, `assalto-antigo`, `tripe`; sons pelo `pitch`; Tripé a 0,9 de velocidade e mira lenta. Dano por segundo dentro da faixa de preço (±20%) |
+| C3 | pronto | 2026-10-21 | `faisca`, `olho-frio`, `casca-grossa` só na Fonte (`MapDef.fizzExtra`). **Decisão nova:** a explosão do próprio jogador agora o fere na Trincheira (a Casca Grossa anula), porque antes não existia dano próprio |
+
 **Observações do S1**
 
 - `test-rota.mjs` tem 1 falha constante (FPS, por software) e 2 verificações de tempo do ônibus que oscilam. Medido nos dois lados (com e sem as mudanças do S1): igual, não é regressão.
@@ -1029,3 +1033,8 @@ Pasta sugerida: `docs/trincheira/capturas/` (só capturas do nosso jogo).
 
 - O orçamento de desempenho subiu com o conteúdo novo (B1, B2, B9): até +8% em chamadas e +12% em triângulos nos pontos que enxergam a Escavação, dentro da margem de 10% depois de trocar as lâmpadas esféricas por octaedros. Linha de base mantida.
 - `test-box.mjs` falhou uma vez em 3 execuções (tempo, por software); o mesmo vale para `test-rota.mjs` (ver S1).
+
+**Observações do S3**
+
+- As 3 bebidas e as 5 armas contam nas tabelas do README (4.10, 6.2 e 10).
+- O modelo do Tripé, do Ferrolho e dos outros é feito de caixas, como os demais; capturas em `capturas/`.

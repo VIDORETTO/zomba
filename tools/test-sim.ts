@@ -750,7 +750,7 @@ check('mapa tem 6 máquinas e 3 caixotes', map.interactables.filter((i) => i.kin
 // --- armas novas e projéteis ---
 {
   const bases = Object.keys(WEAPONS_).filter((id) => !id.endsWith('_pap') && !WEAPONS_[id].staff);
-  check('24 armas, todas com versão da Forja', bases.length === 24 && bases.every((id) => WEAPONS_[`${id}_pap`]?.upgraded), `${bases.length} armas`);
+  check('24 armas (+5 de 1918 da Trincheira), todas com versão da Forja', bases.length === 29 && bases.every((id) => WEAPONS_[`${id}_pap`]?.upgraded), `${bases.length} armas`);
   check('pesos da Caixa somam 100 e só têm armas que existem', BOX_POOL.reduce((a, [, w]) => a + w, 0) === 100 && BOX_POOL.every(([id]) => WEAPONS_[id]));
   check('rajadas e mira de fábrica', WEAPONS_.burstrifle.burst === 3 && WEAPONS_.burstpistol.burst === 3 && WEAPONS_.dmr.optic === 'red');
 
@@ -1242,6 +1242,85 @@ check('mapa tem 6 máquinas e 3 caixotes', map.interactables.filter((i) => i.kin
   // o mapa é montado igual sempre (servidor e navegador precisam da mesma colisão)
   const again = buildTrincheira();
   check('Trincheira: montagem determinística', again.blocks.length === tr.blocks.length && again.zombieSpawns.every((p, i) => p.x === tr.zombieSpawns[i].x && p.z === tr.zombieSpawns[i].z));
+}
+
+// --- C2: armas de 1918 da Trincheira ---
+{
+  const W = WEAPONS_;
+  const NOVAS = ['cano-longo', 'ferrolho', 'trincheira-smg', 'assalto-antigo', 'tripe'];
+  check('C2: as 5 armas de 1918 existem, com nomes próprios', NOVAS.every((id) => !!W[id]) && new Set(NOVAS.map((id) => W[id]?.name)).size === 5, NOVAS.filter((id) => !W[id]).join(' '));
+  check('C2: cada arma nova tem versão da Forja', NOVAS.every((id) => !!W[`${id}_pap`] && W[`${id}_pap`].upgraded), NOVAS.filter((id) => !W[`${id}_pap`]).join(' '));
+  const old = W['cano-longo'];
+  const vs = W['cano-longo_pap'];
+  check('C2: Pistola de Cano Longo: 10 tiros, semiautomática; a Forja a vira pistola automática de 40 tiros ("Velha Senhora")', old?.mag === 10 && !old.auto && vs?.auto === true && vs.mag === 40 && vs.name === 'Velha Senhora', `${old?.mag} ${vs?.mag} ${vs?.name}`);
+  check('C2: Fuzil de Ferrolho atravessa 2 zumbis; Metralhadora de Tripé tem 100 tiros e é mais lenta (−10%)', W.ferrolho?.pierce === 2 && W.tripe?.mag === 100 && W.tripe.moveMult === 0.9 && W.tripe.adsTime > 0.35);
+  const tr = getMap('trincheira');
+  const city = getMap('cidade');
+  check('C2: MapDef.startWeapon: a Trincheira começa com o cano-longo; a Cidade e a Rota com a pistola', tr.startWeapon === 'cano-longo' && city.startWeapon === undefined && getMap('rota').startWeapon === undefined);
+  const mkp = (m: ReturnType<typeof getMap>) => {
+    const s = new GameSim(m, true);
+    s.addPlayer('a', 'A', 0);
+    s.start();
+    return s.players.get('a')!;
+  };
+  check('C2: jogador novo da Trincheira tem o cano-longo e o da Cidade a pistola', mkp(tr).weapons.join() === 'cano-longo' && mkp(city).weapons.join() === 'pistol');
+  // as paredes vendem as armas da tabela, pelo preço da tabela, no lugar das antigas
+  const wall = (id: string) => tr.interactables.find((i) => i.id === `wall-${id}`);
+  check('C2: paredes da Trincheira: Ferrolho 500, Submetralhadora de Trincheira 1000, Fuzil de Assalto Antigo 1400', !!wall('ferrolho') && !!wall('trincheira-smg') && !!wall('assalto-antigo') && W.ferrolho.cost === 500 && W['trincheira-smg'].cost === 1000 && W['assalto-antigo'].cost === 1400);
+  check('C2: as armas antigas (carabina, submetralhadora e fuzil) saíram das paredes da Trincheira', !wall('carbine') && !wall('smg') && !wall('rifle'));
+  check('C2: a Cidade segue com as armas de sempre nas paredes', city.interactables.some((i) => i.id === 'wall-carbine') && !city.interactables.some((i) => i.id.startsWith('wall-ferrolho')));
+  // Caixa: o Tripe só sai na Trincheira
+  const roll = (m: ReturnType<typeof getMap>) => {
+    const s = new GameSim(m, true);
+    s.addPlayer('a', 'A', 0);
+    s.start();
+    const seen = new Set<string>();
+    const p = s.players.get('a')!;
+    for (let k = 0; k < 3000; k++) {
+      p.weapons = [m.startWeapon ?? 'pistol'];
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      seen.add((s as any).pickBoxWeapon(p));
+    }
+    return seen;
+  };
+  check('C2: a Caixa da Trincheira sorteia o Tripé; a da Cidade nunca', roll(tr).has('tripe') && !roll(city).has('tripe'));
+  // dano por segundo: cada arma nova fica entre as armas da mesma faixa de preço (±20%)
+  const dps = (d: (typeof W)[string]) => (d.damage * d.pellets * (d.burst ?? 1)) / d.fireDelay;
+  const faixa = (id: string, pool: string[]) => {
+    const v = pool.filter((x) => W[x]).map((x) => dps(W[x]));
+    const lo = Math.min(...v) * 0.8, hi = Math.max(...v) * 1.2;
+    return { d: dps(W[id]), lo, hi, ok: dps(W[id]) >= lo && dps(W[id]) <= hi };
+  };
+  const fx: [string, string[]][] = [
+    ['cano-longo', ['pistol', 'revolver', 'burstpistol']],
+    ['ferrolho', ['carbine', 'doublebarrel']],
+    ['trincheira-smg', ['smg', 'machinepistol', 'burstpistol', 'revolver']],
+    ['assalto-antigo', ['rifle', 'burstrifle', 'pump']],
+    ['tripe', ['lmg', 'sniper', 'autoshotgun']],
+  ];
+  for (const [id, pool] of fx) {
+    const r = faixa(id, pool);
+    check(`C2: dano por segundo de ${id} (${r.d.toFixed(0)}) na faixa de preço (${r.lo.toFixed(0)} a ${r.hi.toFixed(0)})`, r.ok);
+  }
+}
+
+// --- C3: as bebidas da Fonte da Sorte não existem na Cidade nem na Rota ---
+{
+  const NOVAS = ['faisca', 'olho-frio', 'casca-grossa'];
+  for (const id of ['cidade', 'rota']) {
+    const m = getMap(id);
+    const seen = new Set<string>();
+    for (let k = 0; k < 600; k++) {
+      const s = new GameSim(m, true);
+      s.addPlayer('a', 'A', 0);
+      s.start();
+      const a = s.players.get('a')!;
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      (s as any).applyPowerup('freeperk', a);
+      for (const p of a.perks) seen.add(p);
+    }
+    check(`C3: ${id} nunca sorteia as bebidas novas (Bebida Grátis, 600 sorteios)`, NOVAS.every((n) => !seen.has(n)) && seen.size === 6, [...seen].join(','));
+  }
 }
 
 console.log(`\n${passes} ok, ${fails} falharam`);

@@ -1,12 +1,12 @@
 // Teste no navegador (headless): armas de parede, troca de arma, tiro automático, granadas e faca.
-import { chromium } from 'playwright-core';
+import { launch } from './launch.mjs';
 const out = process.argv[2] ?? '.';
-const browser = await chromium.launch({ channel: 'chrome', headless: true, args: ['--ignore-gpu-blocklist', '--use-angle=d3d11'] });
+const browser = await launch();
 const page = await browser.newPage({ viewport: { width: 1280, height: 720 } });
 const errs = [];
 page.on('pageerror', (e) => errs.push(e.message));
 page.on('console', (m) => { if (m.type() === 'error') errs.push(m.text()); });
-await page.goto('http://localhost:5173/?autoplay');
+await page.goto('http://127.0.0.1:5173/?autoplay');
 await page.click('#btn-solo');
 await page.waitForFunction(() => window.__game, null, { timeout: 60000 });
 await page.waitForTimeout(1000);

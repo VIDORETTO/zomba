@@ -63,13 +63,13 @@ check('jogador passa pelo portão andando', p1.z < door.use[1] - 3, JSON.stringi
 await page.screenshot({ path: `${out}/tt3-trincheira-leste.png` });
 
 // arma de parede (Carabina) e bebida (Segundo Fôlego) no Posto
-const sign = await page.evaluate(() => window.__game.o.map.signs.find((s) => s.chalk === 'carbine').pos);
-await face('wall-carbine', [sign[0], sign[2]]);
+const sign = await page.evaluate(() => window.__game.o.map.signs.find((s) => s.chalk === 'ferrolho').pos);
+await face('wall-ferrolho', [sign[0], sign[2]]);
 await page.waitForTimeout(400);
 await press('KeyF');
 await page.waitForTimeout(600);
 const w = await page.evaluate(() => window.__game.me.weapons);
-check('compra a Carabina na tábua da parede', w.includes('carbine'), JSON.stringify(w));
+check('compra o Fuzil de Ferrolho na tábua da parede', w.includes('ferrolho'), JSON.stringify(w));
 await page.evaluate(() => window.__game.debugTr('gens'));
 const perk = await page.evaluate(() => window.__game.o.map.interactables.find((i) => i.id === 'perk-folego'));
 await face('perk-folego');

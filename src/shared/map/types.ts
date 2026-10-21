@@ -253,6 +253,12 @@ export interface MapDef {
   powerupPool?: import('../powerups').PowerupKind[];
   // armas que não saem na Caixa Misteriosa
   boxExclude?: string[];
+  // bebidas a mais que a Fonte da Sorte deste mapa pode dar (as máquinas fixas nunca as vendem)
+  fizzExtra?: import('../perks').PerkId[];
+  // arma com que o jogador começa e renasce (padrão: a pistola .45)
+  startWeapon?: string;
+  // armas a mais no sorteio da Caixa Misteriosa deste mapa: [id, peso]
+  boxExtra?: [string, number][];
   // a Forja só sobe com os 6 geradores ligados
   forgeNeedsGenerators?: boolean;
   // gerador (índice) que alimenta cada bebida fixa

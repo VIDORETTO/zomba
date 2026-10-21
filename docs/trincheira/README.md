@@ -145,10 +145,10 @@ O preto é **fora do mapa**: um campo de crateras que se vê mas onde não se en
 
 | Área (id em `layout.json`) | Libera com | Conteúdo principal |
 | --- | --- | --- |
-| `posto` Posto de Comando | início | G1, Segundo Fôlego, Fonte (G1), Caixa (início), Baú de Desafios, 2 pás, cérebro do Drone, bancada, Carabina e Escopeta de dois canos na parede, granadas |
-| `trinch-leste-*`, `casamata`, `casamata-norte`, `casamata-ponte`, `bunker`, `bunker-lajes` | portão **Casamata, 750** | G2, Caixa, Fonte, 3 peças de Gelo, Tábua de Pedra (Cripta), pegada J, Submetralhadora |
+| `posto` Posto de Comando | início | G1, Segundo Fôlego, Fonte (G1), Caixa (início), Baú de Desafios, 2 pás, cérebro do Drone, bancada, Fuzil de Ferrolho e Escopeta de dois canos na parede, granadas |
+| `trinch-leste-*`, `casamata`, `casamata-norte`, `casamata-ponte`, `bunker`, `bunker-lajes` | portão **Casamata, 750** | G2, Caixa, Fonte, 3 peças de Gelo, Tábua de Pedra (Cripta), pegada J, Submetralhadora de Trincheira |
 | `estacao`, `estacao-plat`, `estacao-rampa` | portão **Estação do Tanque, 750** | tanque estacionado, túnel do portal de Fogo, Revólver .44 |
-| `oficina-galpao`, `oficina-liga`, `oficina` | portões **Oficina, 1000** (3 portões, abrem juntos) | G3, Reflexo, Caixa, Fonte, pegada I, bancada, Fuzil de assalto |
+| `oficina-galpao`, `oficina-liga`, `oficina` | portões **Oficina, 1000** (3 portões, abrem juntos) | G3, Reflexo, Caixa, Fonte, pegada I, bancada, Fuzil de Assalto Antigo |
 | Terra de Ninguém: faixas de `mud` e `faixa` | **qualquer um** dos portões Casamata ou Estação | montes de terra, lápide, rota do tanque |
 | Escavação: `cunha`, `esc-*`, anel, pegadas A, C, E, F | livre a partir da lama | Forja (poço central), gramofone, discos, Mesa dos Cajados, plataforma norte do tanque, Fuzil de rajada |
 | `vala`, `vala-portao-leste` | portões **Vala Sul, 1000** (2 portões) | G4, Couraça, Caixa, Fonte, túnel do portal de Vento, peças de Raio, pegadas G e H, Escopeta de repetição |
@@ -288,10 +288,10 @@ Alguns pontos ficam **fora do piso**, no campo de crateras ao lado: lápides, do
 
 | Onde | Arma (id existente) | Preço |
 | --- | --- | --- |
-| Posto | `carbine`, `doublebarrel`, `grenade` | 500, 500, 250 |
-| Casamata | `smg` | 1000 |
+| Posto | `ferrolho` (era `carbine`), `doublebarrel`, `grenade` | 500, 500, 250 |
+| Casamata | `trincheira-smg` (era `smg`) | 1000 |
 | Estação | `revolver` | 1100 |
-| Oficina | `rifle` | 1400 |
+| Oficina | `assalto-antigo` (era `rifle`) | 1400 |
 | Escavação (parede da cunha) | `burstrifle` | 1200 |
 | Vala Sul | `pump` | 1500 |
 | Quartel Norte | `lmg` | 2500 |
@@ -299,7 +299,17 @@ Alguns pontos ficam **fora do piso**, no campo de crateras ao lado: lápides, do
 
 Cada caixa de munição (`ammoCrate`) segue o padrão atual.
 
-Como extra opcional, armas novas com cara de 1918 (fuzil de ferrolho, pistola de cano longo, metralhadora de tambor) podem entrar em `weapons.ts`. Mas use modelos e nomes próprios, nunca nomes reais de fabricante.
+**Armas de 1918 (feitas no polimento C2).** Nomes e modelos próprios, nunca de fabricante. Só existem na Trincheira (`MapDef.startWeapon` e `MapDef.boxExtra`); a Cidade e a Rota seguem como eram.
+
+| id | Nome | Papel | Onde |
+| --- | --- | --- | --- |
+| `cano-longo` | Pistola de Cano Longo | inicial, 10 tiros, semiautomática. Na Forja vira a **Velha Senhora** (automática, coronha, pente de 40) | mão inicial |
+| `ferrolho` | Fuzil de Ferrolho | um tiro forte (260), atravessa 2 zumbis, 5 tiros | parede do Posto, 500 |
+| `trincheira-smg` | Submetralhadora de Trincheira | automática, 32 tiros | parede da Casamata, 1000 |
+| `assalto-antigo` | Fuzil de Assalto Antigo | automático, 30 tiros, médio alcance | parede da Oficina, 1400 |
+| `tripe` | Metralhadora de Tripé | 100 tiros; mira lenta e anda −10% (`moveMult` 0,9) | Caixa Misteriosa |
+
+O som é o gravado de sempre, tocado mais devagar (`WeaponDef.pitch`).
 
 ---
 
@@ -378,6 +388,15 @@ Para cada sistema: regras, números, o que vai no snapshot e nos eventos, e o qu
   - Custa **1500**. Gira por 4 s e entrega uma bebida aleatória que o jogador **não tem**, entre as 6 existentes (inclusive Passo Firme e Mula, que **só saem aqui**). Se ele já estiver no limite de bebidas, nega antes de cobrar.
   - Depois de 4 a 6 usos, ela "foge": cai um raio de luz e ela vai para outro local cujo gerador esteja ligado. Funciona como a Caixa Misteriosa, inclusive o valor de 950 na Liquidação. Use a lógica de mudança da Caixa como modelo.
   - Os locais inativos mostram só um pedestal apagado, e o local ativo tem um feixe de luz branca.
+  - **Bebidas exclusivas da Fonte (C3).** Além das 6, ela entrega 3 que não existem em máquina fixa nem na Bebida Grátis (`MapDef.fizzExtra`; a Cidade e a Rota não as têm):
+
+    | id | Nome | Efeito |
+    | --- | --- | --- |
+    | `faisca` | Faísca | ao recarregar, choque de 3 m; dano de 200 (pente cheio) a 1200 (vazio); espera de 3 s entre choques. O navegador manda `{t:'reload', weapon, ammo}` |
+    | `olho-frio` | Olho Frio | +25% de dano na cabeça, dispersão −30%, e o tiro no peito alto (acima de 1,15 m dos pés) vale cabeça |
+    | `casca-grossa` | Casca Grossa | imune às **próprias** explosões; cair de mais de 1,5 m solta uma onda de 4 m (400 de dano por metro de queda). O navegador manda `{t:'land', h}` |
+
+    **Decisão:** antes, a explosão do próprio jogador nunca o feria. Na Trincheira ela agora fere (60 no centro a 12 na borda; `selfBlastMax` e `selfBlastMin`), como em Origins, e a Casca Grossa anula. O prêmio da missão dá as 9 bebidas.
 - O limite de bebidas continua sendo `MAX_PERKS` (4). O 4º desafio dá **+1 vaga** só para aquele jogador (6.15).
 
 ### 6.3 Caixa Misteriosa
@@ -909,6 +928,11 @@ Regras puras (contas, sorteios, ciclos) vão em `tools/test-sim.ts`.
 | `challenge` (abates, geradores, cabeça, rodada) | 115 / 3 / 50 / 15 |
 | `artilleryShells` / `artilleryRadius` / `artilleryDelay` | 6 / 6 / 2 |
 | `missaoKills` / `missaoRounds` / `missaoDefense` | 100 / 3 / 90 |
+| `staffReviveRange` / `staffReviveRadius` (cajado desperto reanima) | 25 / 0,7 |
+| `selfBlastMax` / `selfBlastMin` (explosão própria) | 60 / 12 |
+| `PERK_FX` novos: `faiscaRadius` / `faiscaCooldown` / `faiscaMinDamage` / `faiscaMaxDamage` | 3 / 3 / 200 / 1200 |
+| `PERK_FX` novos: `olhoHeadMult` / `olhoSpreadMult` / `olhoNeckY` | 1,25 / 0,7 / 1,15 |
+| `PERK_FX` novos: `cascaFall` / `cascaRadius` / `cascaDamage` | 1,5 / 4 / 400 por metro |
 
 Esses números são o ponto de partida. Ajuste jogando, mas registre a mudança aqui.
 
@@ -1002,3 +1026,9 @@ Veja `POLIMENTO.md`, seção 11, para o estado de cada ticket.
 - **Escavação:** `src/client/trincheira/escavacaoView.ts` (tudo só desenho). O vão do poço ficou aberto no construtor (a colisão vem dos blocos escondidos de sempre).
 - **Céu e clima:** `src/client/trincheira/skyFx.ts`. Relâmpago, artilharia ao longe e trovão agora nascem aqui (o `trSound` só toca). `MapDef.sky.warm` pinta a faixa quente do horizonte. `mapView.setSnow(k, ground)` separa névoa (rápida) de neve no chão (lenta).
 - **Geradores:** anel de progresso e cordões de lâmpadas.
+
+### Polimento S3: o que falta de Origins (2026-10-21)
+
+- **C1:** o disparo normal de cajado desperto levanta o aliado caído (`TrincheiraSystems.staffRevive`; evento `previve` com `by: 'cajado'` e `from`, o id de quem atirou). Ataque carregado não reanima.
+- **C2:** 5 armas de 1918 (tabela em 4.10), `MapDef.startWeapon`, `MapDef.boxExtra`, `WeaponDef.pitch` e `moveMult`.
+- **C3:** 3 bebidas exclusivas da Fonte (6.2), `BASE_PERKS` e `FIZZ_PERKS`, mensagens `reload` e `land`.

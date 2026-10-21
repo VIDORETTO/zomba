@@ -23,6 +23,11 @@ await page.waitForTimeout(4000);
   const intro = await G(() => [...document.querySelectorAll('.intro-line')].map((d) => d.textContent));
   check('título de entrada completo depois de 4 s', intro.length === 3 && intro[0] === 'TRINCHEIRA' && intro[1] === 'Norte da França, 1918' && /^.+, \d\d:\d\d$/.test(intro[2]), JSON.stringify(intro));
 }
+// C2: logo no começo, a mão é a Pistola de Cano Longo (e não a .45)
+{
+  const start = await G(() => ({ ids: window.__game.me.weapons, cur: window.__game.weapon.def.id, mag: window.__game.weapon.ammo }));
+  check('começa com a Pistola de Cano Longo (10 tiros) e não com a pistola .45', start.ids[0] === 'cano-longo' && start.cur === 'cano-longo' && start.mag === 10, JSON.stringify(start));
+}
 // sem zumbis nem dano: os testes controlam o que aparece
 await G(() => { const s = window.__game.transport.sim; s.toSpawn = 0; s.zombies.clear(); s.spawnZombie = () => undefined; const p = s.players.get('local'); p.health = p.maxHealth = 99999; window.__game.debugPoints(90000); });
 const at = (id) => G((id) => { const g = window.__game; const it = g.o.map.interactables.find((i) => i.id === id); g.debugView(it.use[0], it.use[1], 0, 0.05); return it.use; }, id);
@@ -137,6 +142,64 @@ await page.waitForTimeout(1500);
 check('tecla 4 arremessa a Granada de Artilharia', await sim((s) => s.tr.P(s.players.get('local')).artilharia === 2 || s.tr.strikes.length > 0));
 await page.waitForTimeout(3000);
 await page.screenshot({ path: `${out}/j7-artilharia.png` });
+
+// 11. C2: armas de 1918 (começa com a pistola de cano longo; modelos novos constroem e trocam de arma)
+{
+  await G(() => { const s = window.__game.transport.sim; s.tr.robot = null; s.zombies.clear(); window.__game.debugTr('tp:100,52'); });
+  const ids = ['ferrolho', 'trincheira-smg', 'assalto-antigo', 'tripe', 'cano-longo_pap', 'ferrolho_pap', 'trincheira-smg_pap', 'assalto-antigo_pap', 'tripe_pap'];
+  const errosAntes = errs.length;
+  for (const id of ids) {
+    await G((id) => { const g = window.__game; g.transport.sim.players.get('local').weapons = ['cano-longo', id]; g.debugView(100, 52, 0, 0.05); }, id);
+    await page.waitForTimeout(600);
+    await G((id) => window.__game.weapon.switchTo(id), id);
+    await page.waitForTimeout(900);
+    const r = await G(() => ({ cur: window.__game.weapon.def.id, name: window.__game.weapon.def.name, mag: window.__game.weapon.ammo, move: window.__game.pc.weaponMove }));
+    check(`${id}: o modelo constrói e a arma entra na mão`, r.cur === id && r.mag > 0, JSON.stringify(r));
+    if (id === 'tripe') check('Tripé: anda 10% mais devagar com ele na mão', Math.abs(r.move - 0.9) < 0.001, `${r.move}`);
+    if (['ferrolho', 'trincheira-smg', 'assalto-antigo', 'tripe', 'cano-longo_pap'].includes(id)) await page.screenshot({ path: `${out}/c2-${id}.png` });
+  }
+  check('nenhum erro ao construir os modelos novos', errs.length === errosAntes, errs.slice(errosAntes, errosAntes + 2).join(' | '));
+  const vs = await G(() => ({ auto: window.__game.o.map && true }));
+  void vs;
+  await G(() => { const g = window.__game; g.transport.sim.players.get('local').weapons = ['cano-longo']; });
+}
+
+// 12. C3: bebidas da Fonte (ícones na tela, Faísca ao recarregar de ponta a ponta, Casca Grossa ao cair)
+{
+  await G(() => { const g = window.__game; const s = g.transport.sim; s.zombies.clear(); s.tr.robot = null; s.players.get('local').weapons = ['cano-longo']; s.players.get('local').perks = ['faisca', 'olho-frio', 'casca-grossa']; g.debugView(30, 27, 0, 0); });
+  await page.waitForTimeout(800);
+  const ic = await G(() => [...document.querySelectorAll('.perk-icon')].map((e) => !!e.querySelector('svg')));
+  check('as 3 bebidas novas aparecem na tela com ícone próprio', ic.length === 3 && ic.every(Boolean), JSON.stringify(ic));
+  // Faísca: recarregar com o pente vazio fere o zumbi a 2 m
+  await G(() => {
+    const g = window.__game, s = g.transport.sim;
+    const p = s.players.get('local');
+    const z = s.makeZombie(0, p.x + 2, p.z, 9e5, 0, {});
+    z.speed = 0;
+    window.__zid = z.id;
+    const w = g.weapon; w.slots[w.cur].ammo = 0;
+  });
+  await page.waitForTimeout(300);
+  await press('KeyR');
+  await page.waitForTimeout(900);
+  const hp = await G(() => window.__game.transport.sim.zombies.get(window.__zid)?.hp);
+  check('Faísca: recarregar o pente vazio fere o zumbi ao lado (cliente → simulação)', hp !== undefined && hp < 9e5, `vida ${hp}`);
+  await page.screenshot({ path: `${out}/c3-faisca.png` });
+  // Casca Grossa: cair de 3 m solta a onda (a queda vem do controlador)
+  await G(() => {
+    const g = window.__game, s = g.transport.sim;
+    s.zombies.clear();
+    const p = s.players.get('local');
+    const z = s.makeZombie(0, p.x + 2.5, p.z, 9e5, 0, {});
+    z.speed = 0;
+    window.__zid = z.id;
+    g.pc.onLand(Math.sqrt(2 * 20 * 3));
+  });
+  await page.waitForTimeout(600);
+  const hp2 = await G(() => window.__game.transport.sim.zombies.get(window.__zid)?.hp);
+  check('Casca Grossa: queda de 3 m solta a onda e fere o zumbi a 2,5 m', hp2 !== undefined && hp2 < 9e5, `vida ${hp2}`);
+  await G(() => { const s = window.__game.transport.sim; s.zombies.clear(); s.players.get('local').perks = []; });
+}
 
 // 10. E1: pilha de avisos no topo (barra de chefe fixa; no máximo 2 avisos embaixo, por prioridade)
 {

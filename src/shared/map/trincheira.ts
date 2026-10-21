@@ -578,8 +578,8 @@ export function buildTrincheira(): MapDef {
   }
   // armas de parede (desenho a giz em tábuas) e caixotes de munição
   const WALL: [string, number, number][] = [
-    ['carbine', 96, 44], ['doublebarrel', 104, 40], ['grenade', 108, 60],
-    ['smg', 64, -9], ['revolver', 60, 34], ['rifle', 37, 3], ['burstrifle', 5, -31],
+    ['ferrolho', 96, 44], ['doublebarrel', 104, 40], ['grenade', 108, 60],
+    ['trincheira-smg', 64, -9], ['revolver', 60, 34], ['assalto-antigo', 37, 3], ['burstrifle', 5, -31],
     ['pump', -24, 50], ['lmg', 0, -76], ['sniper', -88, -8], ['knife', -91, 0],
   ];
   for (const [item, x, z] of WALL) chalkBoard(item, x, z);
@@ -1256,6 +1256,9 @@ export function buildTrincheira(): MapDef {
     hellRounds: false,
     powerupPool: [...DEFAULT_POOL, 'sangue'],
     boxExclude: ['wind', 'arc', 'vortex'],
+    startWeapon: 'cano-longo',
+    fizzExtra: ['faisca', 'olho-frio', 'casca-grossa'],
+    boxExtra: [['tripe', 6]],
     forgeNeedsGenerators: true,
     perkGen: PERK_GEN,
     fizzSpots,

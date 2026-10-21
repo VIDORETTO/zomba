@@ -231,6 +231,12 @@ export const TRINCHEIRA = {
   templarTakeTime: 8,
   templarReward: 500,
   panzerReward: 500,
+  // cajado desperto: o disparo normal que passa a staffReviveRadius m de um aliado caído, a até staffReviveRange m, o levanta
+  staffReviveRange: 25,
+  staffReviveRadius: 0.7,
+  // explosão que o próprio jogador causa (granada, lança-granadas...): dano perto e longe do centro (a Casca Grossa anula)
+  selfBlastMax: 60,
+  selfBlastMin: 12,
   // Blindado
   panzerFirst: 8,
   panzerGapMin: 3,

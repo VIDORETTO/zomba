@@ -247,6 +247,9 @@ export class Game {
     this.pc.onStep = () => this.audio.footstep(this.surface(), this.pc.sprinting ? 1.3 : 1);
     this.pc.onLand = (v) => {
       if (v > 4) this.audio.land();
+      // Casca Grossa: a altura da queda (v²/2g) vai para a simulação, que solta a onda de choque
+      const h = (v * v) / (2 * PLAYER.gravity);
+      if (h >= 1.2 && this.me?.perks.includes('casca-grossa')) this.transport.send({ t: 'land', h });
     };
 
     this.weapon = new WeaponView({
@@ -254,6 +257,9 @@ export class Game {
       throwGrenade: () => this.throwGrenade(),
       throwArtillery: () => this.throwArtillery(),
       knife: () => this.knife(),
+      reload: (ammo) => {
+        if (this.me?.perks.includes('faisca')) this.transport.send({ t: 'reload', weapon: this.weapon.def.id, ammo });
+      },
       sound: (s) => {
         if (s === 'dry') this.audio.dryFire();
         else if (s === 'magOut') this.audio.magOut();
@@ -264,7 +270,7 @@ export class Game {
         else if (s === 'switch') this.audio.weaponSwitch();
         else this.audio.knifeSwing();
       },
-    });
+    }, o.map.startWeapon);
 
     this.forgeView = new ForgeView(this.scene, o.map, this.fx, this.weapon.camoMats);
     if (o.map.bus) this.busView = new BusView(this.scene);
@@ -532,8 +538,11 @@ export class Game {
           }
           break;
         case 'previve':
-          if (e.pid === local) this.standUp();
-          else if (e.by === local) this.hud.notify(`Você reanimou ${this.nameOf(e.pid)}.`);
+          if (e.pid === local) {
+            this.standUp();
+            if (e.by === 'cajado') this.hud.notify('Um cajado desperto levantou você!');
+          }
+          else if (e.by === local || e.from === local) this.hud.notify(`Você reanimou ${this.nameOf(e.pid)}${e.by === 'cajado' ? ' com o cajado' : ''}.`);
           break;
         case 'pdead':
           if (e.pid === local) this.hud.notify('Você sangrou até a morte. Volta na próxima rodada.');
@@ -553,7 +562,7 @@ export class Game {
           else if (p && wd?.projectile === 'arc') this.audio.arcZap(p);
           else if (p && wd?.projectile === 'rocket') this.audio.rocketLaunch(p);
           else if (p && wd?.projectile === 'blade') this.audio.bladeLaunch(p);
-          else if (p) this.audio.gunshot(p, wd?.sound ?? wd?.cls ?? 'pistol');
+          else if (p) this.audio.gunshot(p, wd?.sound ?? wd?.cls ?? 'pistol', wd?.pitch);
           break;
         }
         case 'roundStart':
@@ -953,6 +962,8 @@ export class Game {
 
   private fire(spread: number, charged = false) {
     const def = this.weapon.def;
+    // Olho Frio: dispersão 30% menor
+    if (this.me?.perks.includes('olho-frio')) spread *= PERK_FX.olhoSpreadMult;
     const origin = this.camera.getWorldPosition(new THREE.Vector3());
     const fwd = this.camera.getWorldDirection(new THREE.Vector3());
     if (def.projectile) {
@@ -1036,7 +1047,7 @@ export class Game {
     }
     // o raio no meio da mira serve para acertar alvos de enigma e os olhos dos colossos (Trincheira)
     this.transport.send({ t: 'shoot', weapon: def.id, hits, ...(this.tr ? { ray: [origin.x, origin.y, origin.z, fwd.x, fwd.y, fwd.z] as [number, number, number, number, number, number] } : {}) });
-    this.audio.gunshot(undefined, def.sound ?? def.cls);
+    this.audio.gunshot(undefined, def.sound ?? def.cls, def.pitch);
     if (def.upgraded) this.audio.emberShot();
     const adsK = 1 - this.weapon.ads * 0.45;
     this.pc.pitch += (0.016 + Math.random() * 0.008) * def.recoil * adsK;
@@ -1818,6 +1829,7 @@ export class Game {
     this.weapon.mods.fire = perks.includes('gatilho') ? PERK_FX.gatilhoFireMult : 1;
     this.pc.mods.sprintSpeed = perks.includes('passo') ? PERK_FX.passoSpeedMult : 1;
     this.pc.mods.stamina = perks.includes('passo') ? PERK_FX.passoStaminaMult : 1;
+    this.pc.weaponMove = this.weapon.def.moveMult ?? 1;
     this.hud.setPerks(perks);
     for (const it of this.o.map.interactables) {
       if (it.kind !== 'perk') continue;

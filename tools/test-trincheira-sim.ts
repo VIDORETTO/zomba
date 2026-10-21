@@ -963,7 +963,7 @@ const aim = (s: GameSim, weapon: string, charged = false) => {
   check('F no poço começa a defesa de 90 s com 2 Blindados', tr(s).missao.defense === 1 && [...raw(s).zombies.values()].filter((z: { kind: number }) => z.kind === 7).length === 2);
   const evs = run(s, 91);
   check('depois de 90 s: tudo morre e a missão termina', has(evs, 'missao', (e) => e.e === 'missao' && e.phase === 'fim') && raw(s).zombies.size === 0 && tr(s).missionDone);
-  check('prêmio: todas as bebidas e cajados de volta às mãos', a.perks.length === 6 && a.weapons.some((w: string) => w.startsWith('cajado')));
+  check('prêmio: todas as bebidas e cajados de volta às mãos', a.perks.length === 9 && a.weapons.some((w: string) => w.startsWith('cajado')));
 }
 
 // --- missão real, sem debug('missao') (A6 e A1) ---
@@ -1084,7 +1084,7 @@ function missionToHarvest(players: number, plan: [number, El][]) {
   const mine = (i: number, el: El) => me(s, i).weapons.includes(`cajado-${el}-d`);
   check('missão real: quem pôs o cajado no pedestal o recebe de volta', mine(0, 'fogo') && mine(1, 'gelo') && mine(2, 'vento') && mine(3, 'raio'),
     [0, 1, 2, 3].map((i) => me(s, i).weapons.filter((w: string) => w.startsWith('cajado')).join('+') || '-').join(' | '));
-  check('missão real: prêmio das bebidas para todos', [0, 1, 2, 3].every((i) => me(s, i).perks.length === 6));
+  check('missão real: prêmio das bebidas para todos', [0, 1, 2, 3].every((i) => me(s, i).perks.length === 9));
 }
 {
   // o dono saiu: o cajado vai para o primeiro vivo sem cajado
@@ -1104,6 +1104,200 @@ function missionToHarvest(players: number, plan: [number, El][]) {
   (tr(s) as unknown as { finishMission(): void }).finishMission();
   const holds = (i: number) => me(s, i).weapons.filter((w: string) => w.startsWith('cajado'));
   check('missão real: dono morto, o cajado vai para o vivo sem cajado (um por jogador)', holds(0).join() === 'cajado-fogo-d' && tr(s).staffs[1].st === 'pedestal');
+}
+
+// --- C1: cajado desperto reanima aliado ---
+{
+  // arena de lama ao sul (sem postes), atirando para o leste, como nos outros testes dos cajados
+  // atira da altura dos olhos (1,5 m) mirando o corpo do aliado no chão, `dist` m adiante, `side` m para o lado
+  const shootAt = (s: GameSim, weapon: string, ox: number, oz: number, dist = 10, side = 0) => {
+    s.tick(1);
+    ev0(s);
+    s.handle('p0', { t: 'launch', weapon, x: ox, y: 1.5, z: oz, dx: dist, dy: 0.4 - 1.5, dz: side, charged: false });
+    return s.drainEvents();
+  };
+  const setup = (weapon: string, dist: number, ax = AX, az = AZ) => {
+    const s = mk(2);
+    quiet(s);
+    const a = me(s, 0), b = me(s, 1);
+    a.weapons = ['pistol', weapon];
+    goto(s, ax, az, 0);
+    goto(s, ax + dist, az, 1);
+    b.life = 'downed';
+    b.health = 0;
+    b.bleed = 20;
+    b.revive = 0.3;
+    return { s, a, b };
+  };
+  {
+    const { s, a, b } = setup('cajado-fogo-d', 10);
+    const ev = shootAt(s, 'cajado-fogo-d', AX, AZ);
+    check('cajado desperto reanima aliado caído a 10 m', b.life === 'alive' && b.health === b.maxHealth && has(ev, 'previve', (e) => e.e === 'previve' && e.pid === 'p1' && e.by === 'cajado'));
+    check('reanimação pelo cajado conta para quem atirou', a.revives === 1 && has(ev, 'previve', (e) => e.e === 'previve' && e.from === 'p0'));
+  }
+  for (const el of ['gelo', 'vento', 'raio']) {
+    const { s, b } = setup(`cajado-${el}-d`, 8);
+    shootAt(s, `cajado-${el}-d`, AX, AZ);
+    check(`cajado desperto de ${el} também reanima`, b.life === 'alive');
+  }
+  {
+    const { s, a, b } = setup('cajado-fogo', 10);
+    shootAt(s, 'cajado-fogo', AX, AZ);
+    check('cajado comum (não desperto) não reanima', b.life === 'downed' && a.revives === 0);
+  }
+  {
+    const { s, b } = setup('cajado-fogo-d', 30);
+    shootAt(s, 'cajado-fogo-d', AX, AZ, 30);
+    check('longe demais (30 m) não reanima', b.life === 'downed');
+  }
+  {
+    // o poço da Escavação (bloco sólido) entre o atirador e o aliado
+    const [rx, rz] = D.ring.c;
+    const { s, b } = setup('cajado-fogo-d', 12, rx - 6, rz);
+    shootAt(s, 'cajado-fogo-d', rx - 6, rz, 12);
+    check('parede no meio não reanima', b.life === 'downed');
+  }
+  {
+    const { s, b } = setup('cajado-fogo-d', 10);
+    goto(s, AX + 10, AZ + 3, 1);
+    shootAt(s, 'cajado-fogo-d', AX, AZ, 10, 0);
+    check('mira longe do aliado (3 m ao lado) não reanima', b.life === 'downed');
+  }
+  {
+    // ataque carregado não é o "disparo normal": não reanima
+    const { s, b } = setup('cajado-fogo-d', 10);
+    s.tick(1);
+    s.handle('p0', { t: 'launch', weapon: 'cajado-fogo-d', x: AX, y: 1.5, z: AZ, dx: 1, dy: 0, dz: 0, charged: true });
+    check('ataque carregado não reanima (só o disparo normal)', b.life === 'downed');
+  }
+  {
+    // solo: sem aliado, nada muda (o disparo segue normal)
+    const s = mk(1);
+    quiet(s);
+    me(s).weapons = ['pistol', 'cajado-fogo-d'];
+    goto(s, AX, AZ);
+    const ev = shootAt(s, 'cajado-fogo-d', AX, AZ, 10);
+    check('solo: cajado desperto dispara normalmente, sem reanimar', has(ev, 'shot') && !has(ev, 'previve'));
+  }
+}
+
+// --- C3: bebidas exclusivas da Fonte da Sorte (Faísca, Olho Frio, Casca Grossa) ---
+{
+  const NOVAS = ['faisca', 'olho-frio', 'casca-grossa'];
+  // a Fonte pode dar as 3 novas (e a máquina fixa nunca)
+  const seen = new Set<string>();
+  for (let k = 0; k < 400; k++) {
+    const s = mk();
+    quiet(s);
+    const a = me(s);
+    a.points = 99999;
+    tr(s).debug('gens', undefined, a);
+    const f = tr(s).fizz;
+    goIt(s, ids.fizz(f.loc));
+    use(s, ids.fizz(f.loc));
+    run(s, 4.2);
+    for (const p of a.perks) seen.add(p);
+  }
+  check('Fonte: pode dar as 3 bebidas novas', NOVAS.every((n) => seen.has(n)), [...seen].join(','));
+  check('máquinas fixas (kind perk) só vendem as 6 bebidas de sempre', map.interactables.filter((i) => i.kind === 'perk').every((i) => !NOVAS.includes(i.perk ?? '')));
+  // Faísca: ao recarregar, choque em volta; o dano cresce com o pente mais vazio; recarga do efeito em 3 s
+  {
+    const s = mk();
+    quiet(s);
+    const a = me(s);
+    a.perks = ['faisca'];
+    goto(s, AX, AZ);
+    const z2 = zombie(s, AX + 2, AZ, 9e5);
+    const z4 = zombie(s, AX + 4, AZ, 9e5);
+    z2.speed = z4.speed = 0;
+    s.handle('p0', { t: 'reload', weapon: 'cano-longo', ammo: 0 });
+    check('Faísca: recarregar com o pente vazio fere zumbis a 2 m e não a 4 m', z2.hp < 9e5 && z4.hp === 9e5, `${(9e5 - z2.hp).toFixed(0)} em 2 m, ${(9e5 - z4.hp).toFixed(0)} em 4 m`);
+    const vazio = 9e5 - z2.hp;
+    z2.hp = 9e5;
+    s.handle('p0', { t: 'reload', weapon: 'cano-longo', ammo: 0 });
+    check('Faísca: só dispara de novo depois de 3 s', z2.hp === 9e5);
+    run(s, 3.1);
+    s.handle('p0', { t: 'reload', weapon: 'cano-longo', ammo: 9 });
+    const quase = 9e5 - z2.hp;
+    check('Faísca: com o pente quase cheio o choque é bem mais fraco que com o pente vazio', quase > 0 && quase < vazio * 0.5, `${quase.toFixed(0)} contra ${vazio.toFixed(0)}`);
+    // sem a bebida, nada acontece
+    const s2 = mk();
+    quiet(s2);
+    goto(s2, AX, AZ);
+    const zz = zombie(s2, AX + 2, AZ, 9e5);
+    zz.speed = 0;
+    s2.handle('p0', { t: 'reload', weapon: 'cano-longo', ammo: 0 });
+    check('Faísca: sem a bebida, recarregar não fere ninguém', zz.hp === 9e5);
+  }
+  // Olho Frio: +25% de dano na cabeça e o peito alto também vale cabeça
+  {
+    const tiro = (perks: string[], part: 'head' | 'body') => {
+      const s = mk();
+      quiet(s);
+      const a = me(s);
+      a.perks = perks;
+      a.weapons = ['cano-longo'];
+      goto(s, AX, AZ);
+      const z = zombie(s, AX + 10, AZ, 9e5);
+      z.speed = 0;
+      s.handle('p0', { t: 'shoot', weapon: 'cano-longo', hits: [{ zid: z.id, part }] });
+      return 9e5 - z.hp;
+    };
+    const sem = tiro([], 'head'), com = tiro(['olho-frio'], 'head');
+    check('Olho Frio: +25% de dano na cabeça', Math.abs(com / sem - 1.25) < 0.02, `${sem.toFixed(0)} → ${com.toFixed(0)}`);
+    check('Olho Frio: o dano no corpo não muda', Math.abs(tiro(['olho-frio'], 'body') - tiro([], 'body')) < 1);
+    // peito alto (raio passa a 1,3 m do chão, na altura do pescoço) conta como cabeça
+    const alto = (perks: string[]) => {
+      const s = mk();
+      quiet(s);
+      const a = me(s);
+      a.perks = perks;
+      a.weapons = ['cano-longo'];
+      goto(s, AX, AZ);
+      const z = zombie(s, AX + 10, AZ, 9e5);
+      z.speed = 0;
+      s.handle('p0', { t: 'shoot', weapon: 'cano-longo', hits: [{ zid: z.id, part: 'body' }], ray: [AX, 1.5, AZ, 10, -0.2, 0] });
+      return 9e5 - z.hp;
+    };
+    check('Olho Frio: tiro no peito alto (pescoço) vira cabeça', alto(['olho-frio']) > alto([]) * 2.5, `${alto([]).toFixed(0)} → ${alto(['olho-frio']).toFixed(0)}`);
+  }
+  // Casca Grossa: a própria granada não fere; a queda de 2 m solta uma onda de 4 m
+  {
+    const boom = (perks: string[]) => {
+      const s = mk();
+      quiet(s);
+      const a = me(s);
+      a.perks = perks;
+      goto(s, AX, AZ);
+      raw(s).explode({ id: 99, kind: 'grenade', weapon: '', traveled: 0, stuck: false, stuckT: 0, pid: 'p0', x: AX + 1, y: 1, z: AZ, vx: 0, vy: 0, vz: 0, t: 0 });
+      return a.health;
+    };
+    check('Casca Grossa: a própria granada fere quem não tem a bebida', boom([]) < 100);
+    check('Casca Grossa: a própria granada não fere quem tem a bebida', boom(['casca-grossa']) === 100);
+    const queda = (perks: string[], h: number) => {
+      const s = mk();
+      quiet(s);
+      const a = me(s);
+      a.perks = perks;
+      goto(s, AX, AZ);
+      const perto = zombie(s, AX + 3, AZ, 9e5), longe = zombie(s, AX + 6, AZ, 9e5);
+      perto.speed = longe.speed = 0;
+      s.handle('p0', { t: 'land', h });
+      return { perto: 9e5 - perto.hp, longe: 9e5 - longe.hp };
+    };
+    const q2 = queda(['casca-grossa'], 2);
+    check('Casca Grossa: queda de 2 m fere zumbis a 3 m e não a 6 m', q2.perto > 0 && q2.longe === 0, JSON.stringify(q2));
+    check('Casca Grossa: queda de 1 m (menos de 1,5 m) não solta onda', queda(['casca-grossa'], 1).perto === 0);
+    check('Casca Grossa: sem a bebida a queda não fere ninguém', queda([], 3).perto === 0);
+  }
+  // o prêmio da missão dá todas as bebidas (as 9)
+  {
+    const s = mk(1, 3);
+    quiet(s);
+    const a = me(s);
+    tr(s).finishMission();
+    check('prêmio da missão dá as 9 bebidas', a.perks.length === 9 && NOVAS.every((n) => a.perks.includes(n)), `${a.perks.length}`);
+  }
 }
 
 // --- Escavação (B1): a decoração é só desenho, nada fecha o caminho ---

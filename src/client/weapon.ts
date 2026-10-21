@@ -31,6 +31,8 @@ export interface WeaponCallbacks {
   // Granada de Artilharia (chamado no instante do arremesso; opcional: sem ele nada é lançado)
   throwArtillery?(): void;
   sound(s: WeaponSound): void;
+  // a recarga começou com `ammo` tiros no pente (a Faísca usa)
+  reload?(ammo: number): void;
 }
 
 type State = 'idle' | 'reload' | 'knife' | 'raise' | 'action' | 'switch';
@@ -194,7 +196,7 @@ export class WeaponView {
   private readonly grenadeHand = new THREE.Group();
   private readonly bottleMat = new THREE.MeshStandardMaterial({ color: 0xb8352b, roughness: 0.25, metalness: 0.1, emissive: new THREE.Color(0xb8352b), emissiveIntensity: 0.35 });
 
-  constructor(private readonly cb: WeaponCallbacks) {
+  constructor(private readonly cb: WeaponCallbacks, private readonly startId = 'pistol') {
     const hemi = new THREE.HemisphereLight(0xffd6b4, 0x4a3426, 2.6);
     const key = new THREE.DirectionalLight(0xffb070, 3.2);
     key.position.set(-1, 2, 1.5);
@@ -314,7 +316,7 @@ export class WeaponView {
       this.root.add(h);
     }
 
-    this.setInventory(['pistol']);
+    this.setInventory([this.startId]);
   }
 
   // Punho de Ferro: luva de aço rebitada com ponteiras nos nós dos dedos (o punho aponta para -Z)
@@ -386,7 +388,7 @@ export class WeaponView {
       let s = keep.get(id);
       if (!s) {
         const def = WEAPONS[id] ?? WEAPONS.pistol;
-        const model = buildGun(baseId(def.id), def.upgraded ? this.camoMats : this.mats);
+        const model = buildGun(def.id, def.upgraded ? this.camoMats : this.mats);
         model.group.visible = false;
         this.root.add(model.group);
         s = { def, ammo: def.mag, reserve: def.reserve, model, optic: null };
@@ -510,7 +512,7 @@ export class WeaponView {
 
   // Volta ao começo (renascer): só a pistola, cheia.
   reset() {
-    this.setInventory(['pistol']);
+    this.setInventory([this.startId]);
     this.slot.ammo = this.def.mag;
     this.slot.reserve = this.def.reserve;
     this.setState('raise');
@@ -616,6 +618,7 @@ export class WeaponView {
     this.reloadScale = this.mods.reload;
     this.reloadLen *= this.reloadScale;
     this.setState('reload');
+    this.cb.reload?.(this.ammo);
   }
 
   // sai da recarga no meio (tiro na escopeta de repetição): a mão volta suave

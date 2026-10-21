@@ -212,7 +212,10 @@ export type GameEvent =
   | { e: 'points'; pid: string; delta: number }
   | { e: 'phurt'; pid: string; dmg: number; fromX: number; fromZ: number; lava: boolean }
   | { e: 'pdown'; pid: string }
-  | { e: 'previve'; pid: string; by: string }
+  // by: id de quem reanimou, ou 'cajado' (disparo do cajado desperto); from: quem atirou (só no caso do cajado)
+  | { e: 'previve'; pid: string; by: string; from?: string }
+  // choque da Faísca e onda da Casca Grossa (só efeito visual e som)
+  | { e: 'bebida'; perk: 'faisca' | 'casca-grossa'; pid: string; x: number; z: number; r: number }
   | { e: 'pdead'; pid: string }
   | { e: 'prespawn'; pid: string; x: number; z: number }
   | { e: 'shot'; pid: string; weapon: string }
@@ -310,6 +313,9 @@ export type PlayerInput =
   // ray = origem e direção do tiro (para acertar alvos de enigma e olhos dos colossos)
   | { t: 'shoot'; weapon: string; hits: { zid: number; part: HitPart }[]; ray?: [number, number, number, number, number, number] }
   | { t: 'knife'; zid: number | null }
+  // recarga começou com `ammo` tiros no pente (Faísca) / acabou de cair `h` metros (Casca Grossa)
+  | { t: 'reload'; weapon: string; ammo: number }
+  | { t: 'land'; h: number }
   | { t: 'revive'; target: string | null }
   | { t: 'interact'; id: string; weapon: string }
   | { t: 'repair'; entry: number | null }

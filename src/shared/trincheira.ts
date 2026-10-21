@@ -6,7 +6,7 @@ import { zombieHealth } from './rounds';
 import { colossusFeet, colossusPose, EYE_RADIUS, SOLE_RADIUS, type FootRect } from './colossus';
 import type { Interactable, MapDef, TrincheiraData } from './map/types';
 import { NavGrid } from './navgrid';
-import { MAX_PERKS, PERKS, SOLO_SELF_REVIVES, type PerkId } from './perks';
+import { BASE_PERKS, MAX_PERKS, PERK_FX, SOLO_SELF_REVIVES, type PerkId } from './perks';
 import { DEFAULT_POOL, type PowerupKind } from './powerups';
 import type { Element, GameEvent, NetPlayer, StaffState, TrGen, TrRobot, TrStaff, TrincheiraSnap, Weather } from './protocol';
 import { ELEMENT_LIST, MOUND_ODDS, SET_PARTS, ids } from './trincheira-info';
@@ -37,6 +37,8 @@ export interface TrHost {
   giveWeapon(p: SimPlayer, w: string, held: string): void;
   damageZombie(z: SimZombie, dmg: number, p: SimPlayer, part: 'head' | 'body' | 'limb', knife: boolean, blast?: boolean): void;
   damagePlayer(p: SimPlayer, dmg: number, fromX: number, fromZ: number, lava: boolean): void;
+  // levanta um jogador caído com a vida cheia; a reanimação conta para `by`
+  revivePlayer(p: SimPlayer, by: SimPlayer): void;
   // tira o zumbi do jogo sem pontos nem item (esmagado, queimado, morto pela missão)
   killSilently(z: SimZombie, fx?: { fling?: [number, number, number]; sucked?: boolean; shock?: boolean }): void;
   // cria um zumbi de um tipo (kind) num ponto; extra = não conta para o total da rodada
@@ -247,6 +249,44 @@ export class TrincheiraSystems {
     this.h.emit(e);
   }
 
+  // bebidas que a Fonte da Sorte pode dar neste mapa: as 6 de sempre mais as exclusivas dela
+  fizzPool(): PerkId[] {
+    return [...BASE_PERKS, ...(this.h.map.fizzExtra ?? [])];
+  }
+
+  // Faísca: ao recarregar, um choque em volta; o dano cresce quanto mais vazio estava o pente; espera de 3 s entre choques
+  private faiscaReady = new Map<string, number>();
+  onReload(p: SimPlayer, weaponId: string, ammo: number) {
+    if (!p.perks.includes('faisca')) return;
+    const def = WEAPONS[weaponId];
+    if (!def || !p.weapons.includes(def.id)) return;
+    const now = this.h.time();
+    if (now < (this.faiscaReady.get(p.id) ?? 0)) return;
+    this.faiscaReady.set(p.id, now + PERK_FX.faiscaCooldown);
+    const empty = 1 - Math.max(0, Math.min(def.mag, ammo)) / def.mag;
+    const dmg = PERK_FX.faiscaMinDamage + (PERK_FX.faiscaMaxDamage - PERK_FX.faiscaMinDamage) * empty;
+    this.emit({ e: 'bebida', perk: 'faisca', pid: p.id, x: r3(p.x), z: r3(p.z), r: PERK_FX.faiscaRadius });
+    this.h.setWeapon('faisca');
+    for (const z of [...this.h.zombies.values()]) {
+      if (dist(z.x, z.z, p.x, p.z) > PERK_FX.faiscaRadius || Math.abs(z.y - p.y) > 2.5) continue;
+      this.h.damageZombie(z, dmg, p, 'body', false, true);
+    }
+    this.h.setWeapon(null);
+  }
+
+  // Casca Grossa: cair de mais de 1,5 m solta uma onda de choque de 4 m (mais forte quanto maior a queda)
+  onLand(p: SimPlayer, h: number) {
+    if (!p.perks.includes('casca-grossa') || h < PERK_FX.cascaFall) return;
+    const fall = Math.min(h, 12);
+    this.emit({ e: 'bebida', perk: 'casca-grossa', pid: p.id, x: r3(p.x), z: r3(p.z), r: PERK_FX.cascaRadius });
+    this.h.setWeapon('casca-grossa');
+    for (const z of [...this.h.zombies.values()]) {
+      if (dist(z.x, z.z, p.x, p.z) > PERK_FX.cascaRadius || Math.abs(z.y - p.y) > 2.5) continue;
+      this.h.damageZombie(z, PERK_FX.cascaDamage * fall, p, 'body', false, true);
+    }
+    this.h.setWeapon(null);
+  }
+
   perkLimit(p: SimPlayer) {
     return MAX_PERKS + (this.P(p).extraPerk ? 1 : 0);
   }
@@ -426,7 +466,7 @@ export class TrincheiraSystems {
       deny('limite');
       return true;
     }
-    const missing = (Object.keys(PERKS) as PerkId[]).filter((k) => !p.perks.includes(k) && !(k === 'folego' && this.h.solo && p.selfRevives >= SOLO_SELF_REVIVES));
+    const missing = this.fizzPool().filter((k) => !p.perks.includes(k) && !(k === 'folego' && this.h.solo && p.selfRevives >= SOLO_SELF_REVIVES));
     if (!missing.length) {
       deny('possui');
       return true;
@@ -1928,6 +1968,7 @@ export class TrincheiraSystems {
     const d = def;
     this.h.emit({ e: 'shot', pid: p.id, weapon: d.id });
     this.rayShot(p, d.id, ox, oy, oz, dx, dy, dz, d.range);
+    if (d.awake && !charged) this.staffRevive(p, ox, oy, oz, dx, dy, dz);
     const round = this.h.round();
     const scale = Math.max(1, zombieHealth(round) / 800);
     const big = charged && !!d.awake;
@@ -1976,6 +2017,26 @@ export class TrincheiraSystems {
     }
     this.h.setWeapon(null);
     void scale;
+  }
+
+  // disparo normal de cajado desperto: o raio que passa a 0,7 m (cilindro de 1,4 m de altura) de um aliado caído,
+  // a até 25 m e sem parede no meio, o levanta
+  private staffRevive(p: SimPlayer, ox: number, oy: number, oz: number, dx: number, dy: number, dz: number) {
+    const hl = Math.hypot(dx, dz);
+    if (hl < 1e-4) return;
+    for (const q of this.h.players.values()) {
+      if (q.id === p.id || q.life !== 'downed') continue;
+      const hx = q.x - ox, hz = q.z - oz;
+      // ponto do raio mais perto do eixo do aliado (em planta) e a distância até o eixo
+      const t = (hx * dx + hz * dz) / (hl * hl);
+      if (t < 0 || t > T.staffReviveRange) continue;
+      if (Math.abs(hx * dz - hz * dx) / hl > T.staffReviveRadius) continue;
+      const y = oy + dy * t;
+      if (y < q.y - 0.2 || y > q.y + 1.2) continue;
+      if (this.h.world.raycast(ox, oy, oz, dx, dy, dz, Math.max(0, t - 0.5))) continue;
+      this.h.revivePlayer(q, p);
+      this.emit({ e: 'previve', pid: q.id, by: 'cajado', from: p.id });
+    }
   }
 
   private addArea(kind: AreaFx['kind'], x: number, z: number, vx: number, vz: number, r: number, dur: number, pid: string, weapon: string) {
@@ -2203,7 +2264,7 @@ export class TrincheiraSystems {
     this.emit({ e: 'missao', step: 6, phase: 'fim', text: 'A canção da escavação termina. A terra se cala.' });
     for (const p of this.h.players.values()) {
       if (p.life === 'dead') continue;
-      for (const k of Object.keys(PERKS) as PerkId[]) if (!p.perks.includes(k)) this.h.grantPerk(p, k);
+      for (const k of this.fizzPool()) if (!p.perks.includes(k)) this.h.grantPerk(p, k);
     }
     this.handBackStaffs();
   }

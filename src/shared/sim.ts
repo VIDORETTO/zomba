@@ -11,7 +11,7 @@ import type {
   BoxState, ForgeState, GameEvent, NetPlayer, NetZombie, PlayerInput, ProjectileKind, RoundState, Snapshot, ZombieAnim, ZombieKind,
 } from './protocol';
 import { angleLerp, clamp } from './rng';
-import { MAX_PERKS, PERKS, PERK_FX, SELF_REVIVE_TIME, SOLO_SELF_REVIVES, perkPrice, type PerkId } from './perks';
+import { BASE_PERKS, MAX_PERKS, PERK_FX, SELF_REVIVE_TIME, SOLO_SELF_REVIVES, perkPrice, type PerkId } from './perks';
 import { DEFAULT_POOL, POWERUP, POWERUPS, type PowerupKind } from './powerups';
 import { BANK, MAX_START_ROUND, startPoints } from './progress';
 import { BOX, BOX_POOL, FORGE, GRENADE, KNIFE, PROJECTILES, SIGHTS, WEAPONS, WONDER, ammoPrice, baseId, damageFor, sightFits, upgradeId, wallAmmoPrice, type HitPart, type WeaponDef } from './weapons';
@@ -268,6 +268,7 @@ export class GameSim {
       giveWeapon: (p, w, held) => self.giveWeapon(p, w, held),
       damageZombie: (z, dmg, p, part, knife, blast) => self.damageZombie(z, dmg, p, part, knife, blast),
       damagePlayer: (p, dmg, fx, fz, lava) => self.damagePlayer(p, dmg, fx, fz, lava),
+      revivePlayer: (p, by) => self.revivePlayer(p, by),
       killSilently: (z, fx) => self.killSilently(z, fx),
       makeZombie: (kind, x, z, hp, speed, extra) => self.makeZombie(kind, x, z, hp, speed, extra),
       spawnZombie: (at) => self.spawnZombie(at) ?? null,
@@ -318,7 +319,7 @@ export class GameSim {
       life: 'alive', health: PLAYER.maxHealth, points: startPoints(this.firstRound), level, earned: 0,
       kills: 0, headshots: 0, downs: 0, revives: 0, bleed: 0, revive: 0,
       maxHealth: PLAYER.maxHealth, perks: [], selfRevives: 0,
-      weapons: ['pistol'], grenades: GRENADE.start, heavyKnife: false, sights: {},
+      weapons: [this.world.map.startWeapon ?? 'pistol'], grenades: GRENADE.start, heavyKnife: false, sights: {},
       lastHurt: -99, lavaTimer: 0, reviveTarget: null, knifeReady: 0, selfReviveT: 0,
       repairEntry: null, repairT: 0, repairPts: 0, lastLaunch: -99,
       bank: Math.max(0, Math.min(BANK.limit, Math.floor(Number(bank) || 0))),
@@ -385,14 +386,27 @@ export class GameSim {
           if (d > def.range + 3) continue;
           const mult = p.perks.includes('gatilho') ? PERK_FX.gatilhoDamageMult : 1;
           const zx = z.x, zy = z.y, zz = z.z;
+          // Olho Frio: o peito alto (pescoço) vale cabeça; a cabeça leva +25%
+          let part = h.part;
+          const eye = p.perks.includes('olho-frio');
+          if (eye && part === 'body' && Array.isArray(msg.ray) && msg.ray.length === 6 && msg.ray.every(Number.isFinite)) {
+            const [ox, oy, oz, rx, ry, rz] = msg.ray;
+            const hl = Math.hypot(rx, rz);
+            if (hl > 1e-4) {
+              const t = ((z.x - ox) * rx + (z.z - oz) * rz) / (hl * hl);
+              const yAt = oy + ry * t;
+              if (t > 0 && yAt >= z.y + PERK_FX.olhoNeckY && yAt <= z.y + 2.3) part = 'head';
+            }
+          }
+          const headK = eye && part === 'head' ? PERK_FX.olhoHeadMult : 1;
           // Carrasco: com capacete a cabeça vale como corpo; sem ele, o triplo. Blindado: o visor inteiro faz a cabeça valer como corpo; quebrado, o dobro
-          const dmg = isBoss(z) && h.part === 'head'
+          const dmg = isBoss(z) && part === 'head'
             ? damageFor(def, 'body', d) * (z.boss!.armor ? 1 : BOSS.headMult)
-            : isPanzer(z) && h.part === 'head'
+            : isPanzer(z) && part === 'head'
               ? damageFor(def, 'body', d) * (z.panzer!.visor ? 1 : 2)
-              : damageFor(def, h.part, d);
+              : damageFor(def, part, d);
           this.curWeapon = def.id;
-          this.damageZombie(z, dmg * mult, p, h.part, false);
+          this.damageZombie(z, dmg * mult * headK, p, part, false);
           this.curWeapon = null;
           if (def.splash) {
             this.emit({ e: 'boom', x: r3(zx), y: r3(zy + 1.1), z: r3(zz), kind: 'fire' });
@@ -431,6 +445,12 @@ export class GameSim {
         this.curWeapon = null;
         break;
       }
+      case 'reload':
+        if (p.life === 'alive' && typeof msg.weapon === 'string' && Number.isFinite(msg.ammo)) this.tr?.onReload(p, msg.weapon, msg.ammo);
+        break;
+      case 'land':
+        if (p.life === 'alive' && Number.isFinite(msg.h)) this.tr?.onLand(p, msg.h);
+        break;
       case 'revive':
         p.reviveTarget = p.life === 'alive' ? msg.target : null;
         break;
@@ -751,7 +771,7 @@ export class GameSim {
     for (const o of this.players.values()) for (const w of o.weapons) taken.add(baseId(w));
     if (this.forge.weapon) taken.add(baseId(this.forge.weapon));
     const excl = this.world.map.boxExclude ?? [];
-    const pool = BOX_POOL.filter(([w]) => !excl.includes(w) && !p.weapons.includes(w) && !p.weapons.includes(upgradeId(w)) && !(WEAPONS[w].unique && taken.has(w)));
+    const pool = [...BOX_POOL, ...(this.world.map.boxExtra ?? [])].filter(([w]) => !excl.includes(w) && !p.weapons.includes(w) && !p.weapons.includes(upgradeId(w)) && !(WEAPONS[w].unique && taken.has(w)));
     const total = pool.reduce((a, [, wt]) => a + wt, 0);
     let r = Math.random() * total;
     for (const [w, wt] of pool) {
@@ -863,7 +883,7 @@ export class GameSim {
         break;
       case 'freeperk': {
         // uma bebida que o jogador ainda não tem; com todas, vira pontos
-        const missing = (Object.keys(PERKS) as PerkId[]).filter((k) => !p.perks.includes(k) && !(k === 'folego' && this.solo && p.selfRevives >= SOLO_SELF_REVIVES));
+        const missing = BASE_PERKS.filter((k) => !p.perks.includes(k) && !(k === 'folego' && this.solo && p.selfRevives >= SOLO_SELF_REVIVES));
         if (p.life !== 'alive' || !missing.length) {
           this.addPoints(p, BOSS.reward);
           break;
@@ -1019,6 +1039,16 @@ export class GameSim {
     return zb;
   }
 
+  // jogador caído volta com a vida cheia; a reanimação conta para quem o levantou
+  private revivePlayer(p: SimPlayer, by: SimPlayer) {
+    p.life = 'alive';
+    p.health = p.maxHealth;
+    p.revive = 0;
+    p.reviveTarget = null;
+    p.lastHurt = this.time;
+    by.revives++;
+  }
+
   private damagePlayer(p: SimPlayer, dmg: number, fromX: number, fromZ: number, lava: boolean) {
     if (p.life !== 'alive') return;
     // Trincheira: o Escudo de costas e a invulnerabilidade da saída da cabine
@@ -1092,7 +1122,7 @@ export class GameSim {
       this.clearPerks(p);
       Object.assign(p, {
         life: 'alive', health: PLAYER.maxHealth, x, y: 0, z, bleed: 0, revive: 0,
-        weapons: ['pistol'], grenades: GRENADE.start, heavyKnife: false, sights: {},
+        weapons: [this.world.map.startWeapon ?? 'pistol'], grenades: GRENADE.start, heavyKnife: false, sights: {},
       });
       this.emit({ e: 'prespawn', pid: p.id, x, z });
     }
@@ -1543,6 +1573,11 @@ export class GameSim {
     this.emit({ e: 'boom', x: r3(g.x), y: r3(g.y), z: r3(g.z), kind: g.kind });
     const owner = this.players.get(g.pid);
     const mult = owner?.perks.includes('gatilho') ? PERK_FX.gatilhoDamageMult : 1;
+    // Trincheira: a explosão que o próprio jogador causa também o fere (a Casca Grossa anula)
+    if (this.tr && owner && owner.life === 'alive' && !owner.perks.includes('casca-grossa')) {
+      const od = Math.hypot(owner.x - g.x, owner.y + 1 - g.y, owner.z - g.z);
+      if (od < radius) this.damagePlayer(owner, TRINCHEIRA.selfBlastMax + (TRINCHEIRA.selfBlastMin - TRINCHEIRA.selfBlastMax) * (od / radius), g.x, g.z, false);
+    }
     for (const z of [...this.zombies.values()]) {
       const d = Math.hypot(z.x - g.x, z.y + (isDog(z) ? 0.5 : 1) - g.y, z.z - g.z);
       if (d > radius) continue;
@@ -2044,7 +2079,7 @@ export class GameSim {
       if (o.life === 'dead') continue;
       this.addPoints(o, BISPO.reward);
       if (o.life !== 'alive') continue;
-      for (const k of Object.keys(PERKS) as PerkId[]) {
+      for (const k of BASE_PERKS) {
         if (o.perks.includes(k) || (k === 'folego' && this.solo && o.selfRevives >= SOLO_SELF_REVIVES)) continue;
         this.grantPerk(o, k);
       }
@@ -2399,11 +2434,7 @@ export class GameSim {
             reviving = true;
             p.revive += dt / (REVIVE_TIME * (o.perks.includes('folego') ? PERK_FX.folegoReviveMult : 1));
             if (p.revive >= 1) {
-              p.life = 'alive';
-              p.health = p.maxHealth;
-              p.revive = 0;
-              p.lastHurt = this.time;
-              o.revives++;
+              this.revivePlayer(p, o);
               o.reviveTarget = null;
               this.emit({ e: 'previve', pid: p.id, by: o.id });
             }

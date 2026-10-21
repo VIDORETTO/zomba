@@ -741,15 +741,25 @@ export function chalkTexture(item: string, label: string): THREE.Texture {
       rect(cx - 6, 70, 22, 46);
       shape([[cx + 70, 50], [cx + 155, 54], [cx + 155, 84], [cx + 70, 70]]);
       break;
+    case 'ferrolho':
+      // fuzil de ferrolho: cano comprido, caixa pequena, alavanca do ferrolho e coronha inteira
+      rect(cx - 175, 54, 135, 9);
+      rect(cx - 40, 46, 80, 24);
+      shape([[cx + 40, 44], [cx + 60, 38], [cx + 62, 48]]);
+      shape([[cx + 40, 50], [cx + 162, 60], [cx + 162, 94], [cx + 40, 72]]);
+      rect(cx - 10, 70, 22, 18);
+      break;
     case 'carbine':
     case 'rifle':
+    case 'assalto-antigo':
       rect(cx - 160, 52, 120, 10);
       rect(cx - 40, 44, 110, 26);
       shape([[cx + 70, 48], [cx + 160, 58], [cx + 160, 92], [cx + 70, 72]]);
-      if (item === 'rifle') shape([[cx - 20, 70], [cx + 4, 70], [cx - 2, 118], [cx - 30, 112]]);
+      if (item === 'rifle' || item === 'assalto-antigo') shape([[cx - 20, 70], [cx + 4, 70], [cx - 2, 118], [cx - 30, 112]]);
       else rect(cx - 10, 70, 22, 30);
       break;
     case 'smg':
+    case 'trincheira-smg':
       rect(cx - 110, 54, 40, 10);
       rect(cx - 70, 44, 130, 28);
       rect(cx - 40, 72, 20, 46);

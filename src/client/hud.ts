@@ -19,6 +19,12 @@ const PERK_SVG: Record<PerkId, string> = {
   passo: '<ellipse cx="11" cy="15" rx="4.2" ry="6"/><circle cx="8.5" cy="5.5" r="1.6"/><circle cx="12" cy="4.2" r="1.7"/><circle cx="15.3" cy="5.5" r="1.5"/><circle cx="17.4" cy="8.4" r="1.3"/>',
   // ferradura
   mula: '<path d="M5 4h4v8a3 3 0 0 0 6 0V4h4v8a7 7 0 0 1-14 0z"/><path d="M5 4h4v2.5H5zm10 0h4v2.5h-4z" fill="rgba(0,0,0,.45)"/>',
+  // faísca: raio com ponto de fagulha
+  faisca: '<path d="M14 2 6 13h5l-1.5 9L18 10h-5.2z"/><circle cx="18.5" cy="4.5" r="1.6"/><circle cx="5" cy="20" r="1.3"/>',
+  // olho com mira
+  'olho-frio': '<path d="M12 5C6.5 5 2.8 9.2 1.5 12c1.3 2.8 5 7 10.5 7s9.2-4.2 10.5-7C21.2 9.2 17.5 5 12 5zm0 11a4 4 0 1 1 0-8 4 4 0 0 1 0 8z"/><circle cx="12" cy="12" r="1.8" fill="rgba(0,0,0,.55)"/>',
+  // casca de tartaruga (hexágonos)
+  'casca-grossa': '<path d="M12 3 20 7.5v9L12 21 4 16.5v-9z"/><path d="M12 8 15.5 10v4L12 16 8.5 14v-4z" fill="rgba(0,0,0,.4)"/>',
 };
 
 function el<K extends keyof HTMLElementTagNameMap>(tag: K, cls: string, parent?: HTMLElement, html?: string) {

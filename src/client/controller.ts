@@ -26,6 +26,8 @@ export class PlayerController {
   stamina = PLAYER.sprintTime;
   // multiplicadores das bebidas (Passo Firme)
   mods = { sprintSpeed: 1, stamina: 1 };
+  // arma pesada na mão (Metralhadora de Tripé: 0,9): anda e corre mais devagar
+  weaponMove = 1;
   private sprintLock = 0;
   // corrente do Carrasco: arrastado até perto dele
   private pullTo: { x: number; z: number; stop: number; t: number } | null = null;
@@ -172,6 +174,7 @@ export class PlayerController {
     if (f.ads && !this.sprinting) speed = Math.min(speed, PLAYER.adsSpeed);
     if (fwd < 0) speed *= 0.85;
     if (down) speed = PLAYER.crawlSpeed;
+    speed *= this.weaponMove;
     // lama da Terra de Ninguém: 30% mais devagar
     if (this.inMud) speed *= TRINCHEIRA.mudMult;
 

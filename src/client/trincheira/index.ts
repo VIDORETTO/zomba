@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { MAX_PERKS, PERKS } from '../../shared/perks';
+import { BASE_PERKS, MAX_PERKS } from '../../shared/perks';
 import { TRINCHEIRA } from '../../shared/constants';
 import { colossusFeet, colossusPose } from '../../shared/colossus';
 import type { Interactable, MapDef } from '../../shared/map/types';
@@ -334,6 +334,29 @@ export class TrincheiraClient {
         }
         break;
       }
+      case 'bebida': {
+        // choque da Faísca (azul) e onda da Casca Grossa (laranja, com poeira e tremor)
+        const hex = e.perk === 'faisca' ? 0x3ad8ff : 0xe0703a;
+        this.fx.ring(e.x, 0.1, e.z, 0.5, e.r, hex, 0.5);
+        this.fx.burst(e.x, 0.8, e.z, e.perk === 'faisca' ? 28 : 36, e.perk === 'faisca' ? 6 : 5, hex, 0.6, 0.25, { up: 1 });
+        if (e.perk === 'casca-grossa') {
+          this.fx.dust(e.x, 0.2, e.z, 24, 5, 0x6a5a48, 1.6);
+          if (e.pid === local) this.c.quake(0.5);
+        }
+        this.snd.play(e.perk === 'faisca' ? 'alvo-ok' : 'pisada-colosso', new THREE.Vector3(e.x, 1, e.z), e.perk === 'faisca' ? 0.8 : 0.5);
+        break;
+      }
+      case 'previve':
+        // reanimado por um cajado desperto: coluna de luz e brilho dourado no aliado
+        if (e.by === 'cajado') {
+          const p = ctx?.playerPos?.(e.pid);
+          if (p) {
+            this.fx.burst(p.x, 0.6, p.z, 36, 5, 0xffe6a0, 1, 0.3, { up: 2.5 });
+            this.fx.ring(p.x, 0, p.z, 0.6, 5, 0xffd890, 0.9);
+            this.snd.play('cajado-desperto', p, 0.7);
+          }
+        }
+        break;
       case 'cabine':
         if (e.pid === local) this.c.notify(`Você entrou na <b>cabine</b> de ${COLOSSI[e.robot].name}: ${e.prize}`);
         break;
@@ -425,7 +448,7 @@ export class TrincheiraClient {
         const limit = MAX_PERKS + (me.extraPerk ? 1 : 0);
         if (me.perks.length >= limit) return { text: `Limite de ${limit} bebidas`, can: false, price: 0 };
         const price = snap.effects.firesale > 0 ? 950 : TRINCHEIRA.fizzCost;
-        const count = Object.keys(PERKS).length - me.perks.length;
+        const count = BASE_PERKS.length + (this.c.map.fizzExtra?.length ?? 0) - me.perks.length;
         return { text: `Pressione ${K} para girar a <b>Fonte da Sorte</b> <span class="price">${price}</span><small>Uma bebida ao acaso entre as ${count} que você não tem</small>`, can: true, price };
       }
       case 'tank':

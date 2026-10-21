@@ -955,9 +955,156 @@ function plain(color: number) {
   return new THREE.MeshStandardMaterial({ color, roughness: 0.6 });
 }
 
+
+// ---------- armas de 1918 (madeira escura e metal com cara de usado) ----------
+
+// Pistola de Cano Longo: cano comprido e fino, ferrolho que corre, cabo de madeira riscado
+function canoLongo(m: GunMats, vovo = false): GunModel {
+  const g = new THREE.Group();
+  const slide = new THREE.Group();
+  g.add(slide);
+  box(slide, 0.03, 0.034, 0.17, 0, 0, 0.02, m.steel);
+  box(slide, 0.012, 0.012, 0.012, 0, 0.022, 0.1, m.dark);
+  box(slide, 0.0075, 0.01, 0.01, 0, 0.022, -0.05, m.dark);
+  // cano longo e fino saindo da frente da armação
+  box(g, 0.014, 0.014, 0.2, 0, 0.006, -0.19, m.steel);
+  box(g, 0.006, 0.014, 0.008, 0, 0.02, -0.285, m.dark);
+  box(g, 0.026, 0.024, 0.16, 0, -0.026, -0.01, m.dark);
+  box(g, 0.024, 0.005, 0.045, 0, -0.05, -0.033, m.dark);
+  const grip = new THREE.Group();
+  grip.position.set(0, -0.03, 0.06);
+  grip.rotation.x = -0.28;
+  g.add(grip);
+  box(grip, 0.031, 0.112, 0.048, 0, -0.055, 0, m.wood);
+  for (let i = 0; i < 4; i++) box(grip, 0.033, 0.004, 0.05, 0, -0.03 - i * 0.02, 0, m.dark);
+  const mag = box(grip, 0.022, vovo ? 0.2 : 0.1, 0.034, 0, vovo ? -0.11 : -0.06, 0, m.black);
+  const stock: THREE.Object3D[] = [];
+  if (vovo) {
+    // "Velha Senhora": coronha de ombro encaixada atrás do cabo e pente longo de 40
+    stock.push(box(g, 0.04, 0.09, 0.3, 0, -0.045, 0.27, m.wood, 0.12));
+    box(g, 0.02, 0.02, 0.1, 0, -0.02, 0.1, m.dark);
+  }
+  if (withArms) {
+    box(grip, 0.048, 0.075, 0.07, 0.003, -0.06, 0.012, m.glove);
+    limb(g, V(0.005, -0.1, 0.1), V(0.09, -0.24, 0.42), 0.07, m.sleeve);
+  }
+  return finish({
+    group: g, moving: slide, moveDist: 0.035, mag, stock, style: 'mag',
+    left: supportHand(g, V(-0.02, -0.09, 0.06), m),
+    charge: V(-0.03, 0.006, 0.07), eject: V(0.02, 0.02, 0),
+    muzzle: V(0, 0.006, -0.3), sightY: 0.032,
+    hip: V(0.12, -0.112, -0.45), adsZ: -0.37,
+  });
+}
+
+// Fuzil de Ferrolho: coronha e guarda-mão de madeira, cano longo, alavanca do ferrolho para a direita, tiro a tiro
+function ferrolho(m: GunMats): GunModel {
+  const g = new THREE.Group();
+  box(g, 0.045, 0.055, 0.28, 0, 0, 0, m.dark);
+  box(g, 0.05, 0.05, 0.5, 0, -0.03, -0.27, m.wood);
+  box(g, 0.017, 0.017, 0.46, 0, 0.012, -0.62, m.steel);
+  box(g, 0.006, 0.03, 0.012, 0, 0.034, -0.86, m.dark);
+  box(g, 0.01, 0.014, 0.018, 0, 0.04, -0.1, m.dark);
+  box(g, 0.012, 0.022, 0.012, 0, 0.036, 0.1, m.dark);
+  const mag = box(g, 0.03, 0.05, 0.08, 0, -0.05, -0.03, m.dark);
+  const stock = box(g, 0.05, 0.1, 0.36, 0, -0.07, 0.3, m.wood, 0.22);
+  const bolt = new THREE.Group();
+  bolt.position.set(0.028, 0.012, 0.05);
+  g.add(bolt);
+  box(bolt, 0.012, 0.012, 0.08, 0, 0, 0, m.steel);
+  box(bolt, 0.04, 0.008, 0.008, 0.022, -0.012, 0.03, m.steel);
+  box(bolt, 0.016, 0.016, 0.016, 0.044, -0.016, 0.03, m.black);
+  return finish({
+    group: g, moving: bolt, moveDist: 0.09, cycle: true, mag, stock: [stock], style: 'mag',
+    left: arms(g, V(0, -0.085, 0.14), V(0, -0.06, -0.34), m),
+    charge: V(0.07, 0.0, 0.05), eject: V(0.035, 0.02, 0.03),
+    muzzle: V(0, 0.012, -0.87), sightY: 0.046,
+    hip: V(0.13, -0.14, -0.4), adsZ: -0.38,
+  });
+}
+
+// Submetralhadora de Trincheira: camisa do cano furada, pente reto de 32 pelo lado, coronha de madeira
+function trincheiraSmg(m: GunMats): GunModel {
+  const g = new THREE.Group();
+  box(g, 0.045, 0.058, 0.26, 0, 0, -0.04, m.dark);
+  const jacket = box(g, 0.036, 0.036, 0.2, 0, 0.004, -0.26, m.steel);
+  void jacket;
+  for (let i = 0; i < 5; i++) box(g, 0.038, 0.01, 0.01, 0, 0.012, -0.2 - i * 0.035, m.black);
+  box(g, 0.006, 0.028, 0.006, 0, 0.04, -0.34, m.dark);
+  box(g, 0.012, 0.022, 0.012, 0, 0.04, 0.07, m.dark);
+  // pente reto saindo pela esquerda (a mão não atrapalha)
+  const mag = box(g, 0.02, 0.03, 0.17, -0.052, 0.0, -0.06, m.black);
+  const stock = box(g, 0.04, 0.08, 0.26, 0, -0.04, 0.24, m.wood, 0.1);
+  box(g, 0.034, 0.08, 0.04, 0, -0.07, 0.07, m.wood, -0.25);
+  box(g, 0.044, 0.04, 0.12, 0, -0.04, -0.2, m.wood);
+  const bolt = box(g, 0.012, 0.014, 0.05, 0.026, 0.016, -0.1, m.steel);
+  return finish({
+    group: g, moving: bolt, moveDist: 0.04, mag, stock: [stock], style: 'mag',
+    left: arms(g, V(0, -0.09, 0.07), V(0, -0.04, -0.2), m),
+    charge: V(0.04, 0.02, -0.1), eject: V(0.03, 0.02, -0.08),
+    muzzle: V(0, 0.004, -0.38), sightY: 0.05,
+    hip: V(0.12, -0.125, -0.38), adsZ: -0.4,
+  });
+}
+
+// Fuzil de Assalto Antigo: tubo de gás em cima, guarda-mão e coronha de madeira, pente curvo
+function assaltoAntigo(m: GunMats): GunModel {
+  const g = new THREE.Group();
+  box(g, 0.05, 0.065, 0.3, 0, 0, -0.02, m.dark);
+  box(g, 0.054, 0.05, 0.26, 0, -0.012, -0.3, m.wood);
+  box(g, 0.02, 0.02, 0.4, 0, 0.012, -0.55, m.steel);
+  box(g, 0.014, 0.014, 0.3, 0, 0.032, -0.4, m.steel);
+  box(g, 0.006, 0.034, 0.008, 0, 0.044, -0.72, m.dark);
+  box(g, 0.022, 0.014, 0.02, 0, 0.04, -0.12, m.dark);
+  const mag = new THREE.Group();
+  mag.position.set(0, -0.09, -0.08);
+  g.add(mag);
+  box(mag, 0.032, 0.1, 0.06, 0, 0, 0, m.black, 0.1);
+  box(mag, 0.032, 0.08, 0.06, 0, -0.085, 0.04, m.black, 0.4);
+  const stock = box(g, 0.045, 0.095, 0.3, 0, -0.06, 0.28, m.wood, 0.22);
+  box(g, 0.034, 0.09, 0.045, 0, -0.08, 0.08, m.wood, -0.3);
+  const bolt = box(g, 0.012, 0.02, 0.04, 0.03, 0.015, -0.05, m.steel);
+  return finish({
+    group: g, moving: bolt, moveDist: 0.06, mag, stock: [stock], style: 'mag',
+    left: arms(g, V(0, -0.1, 0.09), V(0, -0.045, -0.3), m),
+    charge: V(0.04, 0.025, -0.05), eject: V(0.03, 0.02, -0.07),
+    muzzle: V(0, 0.012, -0.76), sightY: 0.048,
+    hip: V(0.13, -0.135, -0.38), adsZ: -0.44,
+  });
+}
+
+// Metralhadora de Tripé: camisa de refrigeração grossa e furada, tripé dobrado sob o cano, caixa de fita ao lado
+function tripe(m: GunMats): GunModel {
+  const g = new THREE.Group();
+  box(g, 0.065, 0.085, 0.38, 0, 0, -0.02, m.dark);
+  box(g, 0.058, 0.058, 0.4, 0, 0.012, -0.42, m.steel);
+  for (let i = 0; i < 6; i++) box(g, 0.06, 0.012, 0.014, 0, 0.026, -0.27 - i * 0.06, m.black);
+  box(g, 0.02, 0.02, 0.1, 0, 0.012, -0.68, m.steel);
+  box(g, 0.006, 0.032, 0.008, 0, 0.05, -0.74, m.dark);
+  box(g, 0.022, 0.012, 0.02, 0, 0.055, -0.08, m.dark);
+  const mag = box(g, 0.09, 0.12, 0.14, -0.075, -0.02, -0.04, m.dark);
+  box(g, 0.04, 0.012, 0.1, -0.03, 0.02, -0.04, m.steel);
+  const stock = box(g, 0.05, 0.09, 0.26, 0, -0.055, 0.28, m.wood, 0.18);
+  box(g, 0.034, 0.1, 0.045, 0, -0.085, 0.1, m.wood, -0.3);
+  // tripé dobrado: três pernas finas sob o cano
+  box(g, 0.012, 0.012, 0.3, 0, -0.045, -0.44, m.steel);
+  box(g, 0.01, 0.18, 0.01, -0.03, -0.1, -0.56, m.dark, -0.35);
+  box(g, 0.01, 0.18, 0.01, 0.03, -0.1, -0.56, m.dark, -0.35);
+  const bolt = box(g, 0.014, 0.02, 0.05, 0.04, 0.02, -0.06, m.steel);
+  return finish({
+    group: g, moving: bolt, moveDist: 0.05, mag, stock: [stock], style: 'mag',
+    left: arms(g, V(0, -0.11, 0.11), V(0, -0.05, -0.32), m),
+    charge: V(0.05, 0.03, -0.06), eject: V(0.04, -0.02, -0.06),
+    muzzle: V(0, 0.012, -0.76), sightY: 0.06,
+    hip: V(0.14, -0.15, -0.42), adsZ: -0.46,
+  });
+}
+
 const BUILDERS: Record<string, (m: GunMats) => GunModel> = {
   pistol, carbine, doublebarrel, smg, rifle, pump, lmg, sniper, dualpistol, autoshotgun, launcher, crossbow, raygun,
   burstrifle, revolver, burstpistol, machinepistol, dmr, rocket, blade, drum, wind, arc, vortex,
+  'cano-longo': (m) => canoLongo(m), 'cano-longo_pap': (m) => canoLongo(m, true), ferrolho, 'trincheira-smg': trincheiraSmg,
+  'assalto-antigo': assaltoAntigo, tripe,
   'cajado-fogo': (m) => staff(m, 'fogo', false), 'cajado-fogo-d': (m) => staff(m, 'fogo', true),
   'cajado-gelo': (m) => staff(m, 'gelo', false), 'cajado-gelo-d': (m) => staff(m, 'gelo', true),
   'cajado-vento': (m) => staff(m, 'vento', false), 'cajado-vento-d': (m) => staff(m, 'vento', true),
@@ -967,7 +1114,8 @@ const BUILDERS: Record<string, (m: GunMats) => GunModel> = {
 // Monta a arma; sem mãos quando ela aparece solta no mundo.
 export function buildGun(id: string, m: GunMats, hands = true): GunModel {
   withArms = hands;
-  const g = (BUILDERS[id] ?? pistol)(m);
+  // a versão da Forja usa o modelo da arma base, salvo se tiver um próprio (a "Velha Senhora")
+  const g = (BUILDERS[id] ?? BUILDERS[id.replace(/_pap$/, '')] ?? pistol)(m);
   withArms = true;
   return g;
 }

@@ -248,11 +248,12 @@ export class AudioEngine {
   // Tiro em camadas: o estalo gravado de perto e o eco gravado de longe por cima do corpo e do soco
   // grave sintetizados (o estalo gravado dura poucos milissegundos; o corpo dá o peso do tiro).
   // Sem as gravações, o tiro é todo sintetizado.
-  gunshot(pos?: THREE.Vector3, cls: GunSound = 'pistol') {
+  // pitch: armas de época soam mais graves (o mesmo som gravado, tocado mais devagar)
+  gunshot(pos?: THREE.Vector3, cls: GunSound = 'pistol', pitch = 1) {
     const t = this.now;
     const vol = pos ? 0.8 : 1;
     const dst = pos ? this.out(pos, 6) : this.sfx;
-    const rate = R(0.96, 1.04);
+    const rate = R(0.96, 1.04) * pitch;
     const synth = cls === 'sniper' ? 'magnum' : cls;
     if (this.sample(`gun-${cls}`, dst, vol, rate)) {
       if (t - (this.tailT.get(cls) ?? -1) > 0.11) {

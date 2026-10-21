@@ -46,6 +46,10 @@ export interface WeaponDef {
   optic?: SightKind;
   // timbre do tiro, quando difere da família
   sound?: 'magnum' | 'sniper';
+  // altura do som do tiro (1 = normal; armas de época soam mais graves)
+  pitch?: number;
+  // velocidade de andar com a arma na mão (1 = normal; o Tripé é pesado)
+  moveMult?: number;
   // quantos zumbis um tiro atravessa (fuzil de precisão)
   pierce?: number;
   // luneta: ao mirar, mostra a tela da luneta e aproxima mais
@@ -199,6 +203,32 @@ export const WEAPONS: Record<string, WeaponDef> = {
     damage: 4000, fireDelay: 1.0, auto: false, mag: 1, reserve: 6,
     reloadTime: 2.2, reloadEmptyTime: 2.2, range: 60, falloffStart: 60, minDamageMult: 1, adsTime: 0.3, recoil: 2,
   },
+  // ---------- armas de 1918 (só na Trincheira) ----------
+  'cano-longo': {
+    ...base, id: 'cano-longo', name: 'Pistola de Cano Longo', source: 'start', cls: 'pistol', cost: 0, pitch: 0.88,
+    damage: 55, fireDelay: 0.14, auto: false, mag: 10, reserve: 90,
+    reloadTime: 1.6, reloadEmptyTime: 1.95, range: 85, falloffStart: 24, minDamageMult: 0.6, adsTime: 0.16, recoil: 1.1,
+  },
+  ferrolho: {
+    ...base, id: 'ferrolho', name: 'Fuzil de Ferrolho', source: 'wall', cls: 'rifle', cost: 500, pitch: 0.82, pierce: 2,
+    damage: 260, fireDelay: 0.45, auto: false, mag: 5, reserve: 55,
+    reloadTime: 2.8, reloadEmptyTime: 3.2, range: 110, falloffStart: 60, minDamageMult: 0.75, adsTime: 0.22, recoil: 2.2,
+  },
+  'trincheira-smg': {
+    ...base, id: 'trincheira-smg', name: 'Submetralhadora de Trincheira', source: 'wall', cls: 'smg', cost: 1000, pitch: 0.9,
+    damage: 40, headMult: 2.5, fireDelay: 0.068, auto: true, mag: 32, reserve: 160,
+    reloadTime: 2.2, reloadEmptyTime: 2.5, range: 50, falloffStart: 14, minDamageMult: 0.5, adsTime: 0.17, recoil: 0.45,
+  },
+  'assalto-antigo': {
+    ...base, id: 'assalto-antigo', name: 'Fuzil de Assalto Antigo', source: 'wall', cls: 'rifle', cost: 1400, pitch: 0.9,
+    damage: 66, fireDelay: 0.1, auto: true, mag: 30, reserve: 150,
+    reloadTime: 2.5, reloadEmptyTime: 2.9, range: 90, falloffStart: 34, minDamageMult: 0.6, recoil: 0.65,
+  },
+  tripe: {
+    ...base, id: 'tripe', name: 'Metralhadora de Tripé', source: 'box', cls: 'rifle', cost: 0, pitch: 0.75, moveMult: 0.9,
+    damage: 85, fireDelay: 0.1, auto: true, mag: 100, reserve: 300,
+    reloadTime: 4.6, reloadEmptyTime: 5.0, range: 100, falloffStart: 40, minDamageMult: 0.6, adsTime: 0.45, recoil: 0.6,
+  },
   // ---------- cajados elementais da Trincheira (únicos; só se montam na Mesa dos Cajados) ----------
   'cajado-fogo': {
     ...base, id: 'cajado-fogo', name: 'Cajado de Fogo', source: 'wonder', cls: 'shotgun', cost: 0, projectile: 'fogo', unique: true,
@@ -254,6 +284,12 @@ const UPGRADES: Record<string, { name: string; mod: (d: WeaponDef) => Partial<We
   wind: { name: 'Furacão', mod: (d) => ({ range: d.range * 1.4, falloffStart: d.range * 1.4 }) },
   arc: { name: 'Tempestade de Ferro', mod: () => ({ chain: 16 }) },
   vortex: { name: 'Singularidade', mod: () => ({ vortex: { radius: 10.5, time: 8 }, mag: 2 }) },
+  // armas de 1918: a pistola vira a "Velha Senhora" (automática, de coronha e pente de 40)
+  'cano-longo': { name: 'Velha Senhora', mod: () => ({ auto: true, mag: 40, fireDelay: 0.09 }) },
+  ferrolho: { name: 'Ferrolho Rúnico', mod: () => ({ pierce: 4 }) },
+  'trincheira-smg': { name: 'Tempestade de Aço', mod: () => ({ mag: 64 }) },
+  'assalto-antigo': { name: 'Veterano de Ferro', mod: () => ({ mag: 50 }) },
+  tripe: { name: 'Trovão de Tripé', mod: () => ({ mag: 160 }) },
 };
 
 export const upgradeId = (id: string) => `${id}_pap`;
