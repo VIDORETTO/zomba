@@ -201,6 +201,140 @@ await page.screenshot({ path: `${out}/j7-artilharia.png` });
   await G(() => { const s = window.__game.transport.sim; s.zombies.clear(); s.players.get('local').perks = []; });
 }
 
+// 13. D1: vinhetas próprias das rodadas na Trincheira
+{
+  const r = await G(() => {
+    const g = window.__game, a = g.audio;
+    const calls = [];
+    const ts = a.trSound.bind(a), rs = a.roundStart.bind(a), re = a.roundEnd.bind(a);
+    a.trSound = (n, p, v) => { calls.push(['tr', n]); ts(n, p, v); };
+    a.roundStart = () => { calls.push(['padrao', 'inicio']); rs(); };
+    a.roundEnd = () => { calls.push(['padrao', 'fim']); re(); };
+    g.onEvents([{ e: 'roundStart', round: 4, hell: false }]);
+    g.onEvents([{ e: 'roundEnd', round: 4, hell: false }]);
+    g.onEvents([{ e: 'roundStart', round: 8, hell: false, boss: true }]);
+    return calls.filter(([, n]) => /vinheta|inicio|fim/.test(n));
+  });
+  check('Trincheira: o começo e o fim da rodada tocam as vinhetas da Trincheira (e não as de sempre)', JSON.stringify(r.slice(0, 2)) === JSON.stringify([['tr', 'vinheta-inicio'], ['tr', 'vinheta-fim']]) && !r.some(([k]) => k === 'padrao'), JSON.stringify(r));
+  check('Trincheira: a rodada do Blindado tem um começo mais pesado', r[2] && r[2][1] === 'vinheta-blindado', JSON.stringify(r[2]));
+}
+
+// 14. D3: gerador ligado tem motor contínuo e baixo (até 25 m); desligado, silêncio; atacado, o motor falha
+{
+  await G(() => { const g = window.__game, s = g.transport.sim; s.zombies.clear(); s.tr.robot = null; g.debugTr('gens'); const d = g.o.map.trincheira.gens[0]; g.debugView(d.x + 6, d.z, Math.PI / 2, 0); });
+  await page.waitForTimeout(1500);
+  const loops = () => G(() => window.__game.audio.tr.activeLoops());
+  const perto = await loops();
+  check('Gerador ligado: perto do G1 existe uma fonte de som em laço', perto.includes('gen0') && !perto.includes('gen5'), JSON.stringify(perto));
+  await G(() => { const g = window.__game, d = g.o.map.trincheira.gens[0]; g.debugView(d.x + 60, d.z, Math.PI / 2, 0); });
+  await page.waitForTimeout(1800);
+  check('Gerador ligado: a 60 m não se ouve (sem laço)', !(await loops()).includes('gen0'), JSON.stringify(await loops()));
+  await G(() => { const g = window.__game, d = g.o.map.trincheira.gens[0]; g.debugView(d.x + 6, d.z, Math.PI / 2, 0); g.transport.sim.tr.gens[0].on = false; });
+  await page.waitForTimeout(2500);
+  check('Gerador desligado: o laço some (silêncio)', !(await loops()).includes('gen0'), JSON.stringify(await loops()));
+  await G(() => { const g = window.__game, s = g.transport.sim; g.debugTr('gens'); g.debugTr('cruzados'); const i = s.tr.gens.findIndex((x) => x.attacked); const d = g.o.map.trincheira.gens[i]; window.__gi = i; g.debugView(d.x + 6, d.z, Math.PI / 2, 0); });
+  await page.waitForTimeout(1800);
+  const modo = await G(() => window.__game.audio.tr.loopMode(`gen${window.__gi}`));
+  check('Gerador atacado pelos Cruzados: o motor falha (modo de falha)', modo === 'falha', `gerador ${await G(() => window.__gi)}: ${modo}`);
+  await G(() => { const s = window.__game.transport.sim; for (const z of [...s.zombies.values()]) s.killSilently?.(z); s.zombies.clear(); });
+}
+
+// 15. E3: dicas de primeira vez (uma vez só, lembradas, com opção para desligar e sem quebrar sem armazenamento)
+{
+  const perto = (kind) => G((kind) => {
+    const g = window.__game;
+    const it = g.o.map.interactables.find((i) => i.kind === kind);
+    g.debugView(it.use[0], it.use[1] + 1.6, 0, 0);
+    return it.id;
+  }, kind);
+  const tipsNaTela = () => G(() => [...document.querySelectorAll('.note .tip')].map((e) => e.textContent));
+  await G(() => { const g = window.__game; g.transport.sim.zombies.clear(); g.tips.reset(); g.tips.enabled = true; g.debugView(103, 70, 0, 0); });
+  await page.waitForTimeout(700);
+  await perto('generator');
+  await page.waitForTimeout(900);
+  const a = await tipsNaTela();
+  check('Dicas: perto do gerador aparece uma dica de 1 linha', a.length === 1 && /gerador/.test(a[0]), JSON.stringify(a));
+  await G(() => window.__game.debugView(103, 80, 0, 0));
+  await page.waitForTimeout(700);
+  await perto('generator');
+  await page.waitForTimeout(900);
+  check('Dicas: a mesma dica não aparece de novo ao voltar', (await G(() => window.__game.tips.log.filter((x) => x === 'generator').length)) === 1);
+  // depois de recarregar (uma instância nova lê o que ficou guardado), não aparece mais
+  const recarga = await G(() => { const T = window.__game.tips.constructor; const novo = new T(); return novo.take('generator'); });
+  check('Dicas: depois de recarregar a página a dica do gerador não aparece', recarga === false);
+  // a opção desligada: nunca aparece
+  await G(() => { const g = window.__game; document.querySelectorAll('.note').forEach((e) => e.remove()); g.tips.reset(); g.tips.enabled = false; g.debugView(103, 80, 0, 0); });
+  await page.waitForTimeout(500);
+  await perto('shovel');
+  await page.waitForTimeout(900);
+  check('Dicas: com a opção "Dicas" desligada nunca aparece', (await G(() => window.__game.tips.log.length)) === 0 && (await tipsNaTela()).length === 0);
+  // sem armazenamento do navegador: o jogo não quebra
+  const semMemoria = await G(() => {
+    const get = Storage.prototype.getItem, set = Storage.prototype.setItem;
+    Storage.prototype.getItem = () => { throw new Error('bloqueado'); };
+    Storage.prototype.setItem = () => { throw new Error('bloqueado'); };
+    try {
+      const T = window.__game.tips.constructor;
+      const t = new T();
+      return [t.take('bench'), t.take('bench')];
+    } catch (e) {
+      return String(e);
+    } finally {
+      Storage.prototype.getItem = get;
+      Storage.prototype.setItem = set;
+    }
+  });
+  check('Dicas: com a memória do navegador bloqueada o jogo não quebra (dica uma vez na partida)', JSON.stringify(semMemoria) === '[true,false]', JSON.stringify(semMemoria));
+  // a opção aparece em Controles (menu de pausa) e desliga as dicas
+  await G(() => { window.__game.showPause(); });
+  await page.waitForTimeout(500);
+  await G(() => document.querySelector('[data-tab="controles"]').click());
+  await page.waitForTimeout(300);
+  const tem = await G(() => !!document.querySelector('.gm-body input[data-opt="tips"]'));
+  check('Dicas: a opção "Dicas" aparece em Controles', tem);
+  await G(() => { const g = window.__game; g.tips.enabled = true; document.querySelector('.gm-body input[data-opt="tips"]').click(); });
+  check('Dicas: desmarcar a opção desliga as dicas e guarda nas configurações', (await G(() => window.__game.tips.enabled === false && window.__game.settings.tips === false)));
+  await G(() => { window.__game.resume(); });
+  await page.waitForTimeout(400);
+  await G(() => { const g = window.__game; g.tips.reset(); g.tips.enabled = true; });
+}
+
+// 16. E2: mapa (planta) no menu de pausa da Trincheira; ícone do gerador acompanha o estado
+{
+  const cor = () => G(() => {
+    const c = document.querySelector('#pause-map');
+    if (!c) return null;
+    const [x, y] = JSON.parse(c.dataset.gens)[0];
+    const d = c.getContext('2d').getImageData(x + 4, y - 1, 3, 3).data; // ao lado do número, dentro do círculo
+    return [d[16], d[17], d[18]];
+  });
+  await G(() => { const g = window.__game, s = g.transport.sim; s.zombies.clear(); s.tr.gens.forEach((x) => { x.on = false; x.capturing = false; x.attacked = false; x.progress = 0; }); });
+  await page.waitForTimeout(600);
+  await G(() => window.__game.showPause());
+  await page.waitForTimeout(500);
+  await G(() => document.querySelector('[data-tab="jogo"]').click());
+  await page.waitForTimeout(700);
+  const tem = await G(() => !!document.querySelector('#pause-map'));
+  check('Pausa: a Trincheira mostra a planta no menu', tem);
+  const gris = await cor();
+  check('Pausa: o ícone do G1 desligado é cinza', gris && Math.abs(gris[0] - gris[2]) < 40 && gris[2] < 200, JSON.stringify(gris));
+  await page.screenshot({ path: `${out}/e2-pausa-mapa.png` });
+  await G(() => window.__game.resume());
+  await page.waitForTimeout(500);
+  await G(() => { window.__game.transport.sim.tr.gens[0].on = true; });
+  await page.waitForTimeout(700);
+  await G(() => window.__game.showPause());
+  await page.waitForTimeout(500);
+  await G(() => document.querySelector('[data-tab="jogo"]').click());
+  await page.waitForTimeout(700);
+  const ciano = await cor();
+  check('Pausa: com o G1 ligado o ícone dele é ciano', ciano && ciano[2] > 180 && ciano[1] > 160 && ciano[0] < 150, JSON.stringify(ciano));
+  const mark = await G(() => ({ eu: !!document.querySelector('#pause-map').dataset.eu, fonte: !!document.querySelector('#pause-map').dataset.fonte }));
+  check('Pausa: a planta marca onde você está e a Fonte da Sorte', mark.eu && mark.fonte, JSON.stringify(mark));
+  await G(() => window.__game.resume());
+  await page.waitForTimeout(400);
+}
+
 // 10. E1: pilha de avisos no topo (barra de chefe fixa; no máximo 2 avisos embaixo, por prioridade)
 {
   await G(() => { const s = window.__game.transport.sim; s.tr.robot = null; s.toSpawn = 0; s.zombies.clear(); window.__game.debugTr('tp:100,52'); });

@@ -1127,7 +1127,7 @@ export class GameSim {
       this.emit({ e: 'prespawn', pid: p.id, x, z });
     }
     this.tr?.roundStarted(this.round);
-    this.emit({ e: 'roundStart', round: this.round, hell: this.hell });
+    this.emit({ e: 'roundStart', round: this.round, hell: this.hell, ...(this.tr?.isPanzerRound(this.round) ? { boss: true } : {}) });
   }
 
   private spawnDelay(): number {

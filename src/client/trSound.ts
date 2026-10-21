@@ -12,7 +12,7 @@ export type TrSound =
   | 'blindado-salto' | 'cruzado-grito' | 'portal-musica' | 'portal-abre' | 'teleporte' | 'cristal' | 'cajado-monta'
   | 'cajado-desperto' | 'alvo-ok' | 'alvo-erro' | 'tabua' | 'desafio' | 'artilharia-lanca' | 'artilharia-apito' | 'artilharia-bomba'
   | 'sangue-morto' | 'missao-passo' | 'missao-fim' | 'fogo-bola' | 'fogo-pilar' | 'gelo-raio' | 'gelo-quebra' | 'nevasca'
-  | 'redemoinho' | 'raio-bola' | 'trovao' | 'artilharia-longe';
+  | 'redemoinho' | 'raio-bola' | 'trovao' | 'artilharia-longe' | 'vinheta-inicio' | 'vinheta-fim' | 'vinheta-blindado' | 'passo-distante' | 'rangido-colosso';
 
 export const TR_SOUNDS: TrSound[] = [
   'gerador-liga', 'gerador-perde', 'gerador-captura', 'alarme', 'forja-sobe', 'fonte-gira', 'fonte-bebida', 'fonte-foge',
@@ -21,7 +21,7 @@ export const TR_SOUNDS: TrSound[] = [
   'blindado-salto', 'cruzado-grito', 'portal-musica', 'portal-abre', 'teleporte', 'cristal', 'cajado-monta',
   'cajado-desperto', 'alvo-ok', 'alvo-erro', 'tabua', 'desafio', 'artilharia-lanca', 'artilharia-apito', 'artilharia-bomba',
   'sangue-morto', 'missao-passo', 'missao-fim', 'fogo-bola', 'fogo-pilar', 'gelo-raio', 'gelo-quebra', 'nevasca',
-  'redemoinho', 'raio-bola', 'trovao', 'artilharia-longe',
+  'redemoinho', 'raio-bola', 'trovao', 'artilharia-longe', 'vinheta-inicio', 'vinheta-fim', 'vinheta-blindado', 'passo-distante', 'rangido-colosso',
 ];
 
 export interface AudioKit {
@@ -53,7 +53,7 @@ const TRIM: Partial<Record<TrSound, number>> = {
   'tanque-chamado': 0.6, 'pisada-colosso': 0.25, 'passo-colosso': 0.4, 'blindado-chega': 0.4, 'blindado-fogo': 0.5,
   'blindado-garra': 0.4, 'blindado-salto': 0.55, 'cruzado-grito': 0.5, 'portal-musica': 0.7, 'portal-abre': 0.55,
   teleporte: 0.6, cristal: 0.65, 'cajado-monta': 0.9, 'artilharia-lanca': 0.85, 'artilharia-bomba': 0.55,
-  trovao: 0.85, 'artilharia-longe': 0.85, 'tanque-fogo': 0.85,
+  trovao: 0.85, 'artilharia-longe': 0.85, 'tanque-fogo': 0.85, 'vinheta-inicio': 0.9, 'vinheta-fim': 0.9, 'vinheta-blindado': 0.85,
 };
 
 export class TrAudio {
@@ -62,6 +62,8 @@ export class TrAudio {
   private weather: Weather4 = 'limpo';
   private ambient = false;
   private drumT = 8;
+  // motores dos geradores: um laço por gerador por perto (e ligado)
+  private readonly genLoops = new Map<number, { panner: PannerNode; gain: GainNode; lp: BiquadFilterNode; o1: OscillatorNode; o2: OscillatorNode; mode: 'liga' | 'falha'; t0: number }>();
   // sons parecidos não empilham (gelo-raio chega 10 vezes por segundo)
   private readonly lastT = new Map<string, number>();
 
@@ -116,6 +118,95 @@ export class TrAudio {
     k.env(g, t, vol, attack, dur);
     if (cutoff) o.connect(k.filter('lowpass', cutoff, 0.8)).connect(g);
     else o.connect(g);
+  }
+
+
+  // coral grave: vozes (dentes de serra filtrados em faixa de vogal) que entram devagar e se sustentam
+  private choir(dst: AudioNode, t: number, freqs: number[], dur: number, vol: number) {
+    const { k } = this;
+    for (const f of freqs) {
+      for (const det of [-0.006, 0.006]) {
+        const o = k.osc('sawtooth', f * (1 + det), t, dur + 0.5);
+        const bp = k.filter('bandpass', 520 + (f % 7) * 40, 1.6);
+        const g = k.gain(0, dst);
+        k.env(g, t, vol / freqs.length, dur * 0.45, dur * 0.7);
+        o.connect(bp).connect(g);
+      }
+    }
+  }
+
+  // metal ao longe: dente de serra com filtro que abre devagar, e eco baixo
+  private brass(dst: AudioNode, t: number, f: number, dur: number, vol: number) {
+    const { k } = this;
+    const o = k.osc('sawtooth', f, t, dur);
+    const lp = k.filter('lowpass', 300, 0.9);
+    lp.frequency.setValueAtTime(260, t);
+    lp.frequency.linearRampToValueAtTime(1100, t + dur * 0.35);
+    lp.frequency.linearRampToValueAtTime(380, t + dur);
+    const g = k.gain(0, dst);
+    k.env(g, t, vol, dur * 0.3, dur * 0.85);
+    o.connect(lp).connect(g);
+  }
+
+
+  // Motor do gerador: ronco grave e posicional, só até 25 m de distância; `mode` null = desligado (silêncio).
+  // Atacado pelos Cruzados ('falha'), o motor engasga: o volume corta e volta.
+  genLoop(i: number, pos: THREE.Vector3, mode: 'liga' | 'falha' | null) {
+    const { k } = this;
+    const dist = pos.distanceTo(k.listener);
+    const active = mode !== null && dist < 25;
+    let l = this.genLoops.get(i);
+    const t = k.now();
+    if (!active) {
+      if (l) {
+        l.gain.gain.setTargetAtTime(0, t, 0.25);
+        const dead = l;
+        this.genLoops.delete(i);
+        setTimeout(() => {
+          try { dead.o1.stop(); dead.o2.stop(); dead.panner.disconnect(); } catch { /* já parado */ }
+        }, 1500);
+      }
+      return;
+    }
+    if (!l) {
+      const panner = k.out(new THREE.Vector3(pos.x, 1.5, pos.z), 6) as PannerNode;
+      const gain = k.gain(0, panner);
+      const lp = k.filter('lowpass', 240, 0.9);
+      lp.connect(gain);
+      const o1 = k.ctx.createOscillator();
+      o1.type = 'sawtooth';
+      o1.frequency.value = 46 + (i % 3) * 3;
+      const o2 = k.ctx.createOscillator();
+      o2.type = 'square';
+      o2.frequency.value = 69 + (i % 3) * 4;
+      const g2 = k.gain(0.3, lp);
+      o1.connect(lp);
+      o2.connect(g2);
+      o1.start();
+      o2.start();
+      l = { panner, gain, lp, o1, o2, mode: mode!, t0: t };
+      this.genLoops.set(i, l);
+    }
+    l.mode = mode!;
+    // volume cai com a distância (0 aos 25 m); na falha, cortes irregulares e o tom oscila
+    const near = 1 - dist / 25;
+    let v = 0.14 * near * near;
+    if (mode === 'falha') {
+      const s = Math.sin(t * 9) + Math.sin(t * 23.7) + Math.sin(t * 3.3);
+      if (s > 1.2) v *= 0.08;
+      l.o1.frequency.setTargetAtTime(38 + 10 * Math.sin(t * 5), t, 0.05);
+    } else {
+      l.o1.frequency.setTargetAtTime(46 + (i % 3) * 3, t, 0.2);
+    }
+    l.gain.gain.setTargetAtTime(v, t, 0.06);
+  }
+
+  // para os testes: motores de gerador tocando agora (gen0, gen3...) e o modo de um deles
+  activeLoops(): string[] {
+    return [...this.genLoops.keys()].map((i) => `gen${i}`);
+  }
+  loopMode(name: string): string | null {
+    return this.genLoops.get(Number(name.replace('gen', '')))?.mode ?? null;
   }
 
   // pancada metálica: parciais inarmônicas
@@ -667,6 +758,62 @@ export class TrAudio {
         k.env(g, t, 0.35, 0.1, 3.8);
         o.connect(bp).connect(g);
         for (let i = 0; i < 12; i++) k.click(R(3000, 6500), 5, 0.05, 0.25, i * 0.3 + R(0, 0.2), pos);
+        break;
+      }
+      case 'vinheta-inicio': {
+        // tambor de guerra (4 batidas que apertam), coral grave que sobe e dois metais distantes
+        const d = k.music;
+        [0, 0.6, 1.15, 1.6].forEach((dt, i) => {
+          this.thump(d, t + dt, 105, 48, 0.5, 0.75 - i * 0.04, 'sine');
+          this.hiss(d, t + dt, 'lowpass', 600, 120, 0.22, 0.28, 0.004);
+        });
+        this.thump(d, t + 2.1, 90, 34, 1.6, 0.95);
+        this.choir(d, t + 0.9, [98, 146.8, 196, 247], 4.2, 0.2);
+        this.pad([49, 73.4], t + 0.4, 5, 0.06, 500);
+        this.brass(this.dest(undefined, 6, k.music), t + 2.2, 196, 2.4, 0.07);
+        this.brass(this.dest(undefined, 6, k.music), t + 3.0, 246.9, 2.2, 0.06);
+        break;
+      }
+      case 'vinheta-fim': {
+        // dois tambores lentos, coral que cai para o acorde grave e o sino de uma igreja distante
+        const d = k.music;
+        [0, 0.9].forEach((dt) => this.thump(d, t + dt, 95, 40, 0.8, 0.4));
+        this.choir(d, t + 0.4, [87.3, 130.8, 174.6, 207.7], 4.6, 0.1);
+        this.pad([43.65, 65.4], t + 0.6, 5.5, 0.035, 450);
+        this.bell(392, t + 1.6, 0.09, 3.4);
+        this.bell(293.7, t + 3.1, 0.07, 3.6);
+        break;
+      }
+      case 'vinheta-blindado': {
+        // começo mais pesado: tambor duplo, estrondo, marteladas de aço e metais descendo
+        const d = k.music;
+        [0, 0.38, 0.76, 1.14, 1.52].forEach((dt, i) => this.thump(d, t + dt, 120 - i * 6, 42, 0.5, 0.78));
+        this.boom(t + 1.9, 0.8);
+        this.clang(d, t + 0.2, 180, 0.4, 1.3);
+        this.clang(d, t + 0.95, 150, 0.4, 1.3);
+        this.choir(d, t + 0.6, [65.4, 98, 130.8, 164.8], 4.6, 0.19);
+        this.pad([41.2, 61.7], t + 0.3, 5.5, 0.08, 420);
+        this.brass(d, t + 1.8, 220, 2.6, 0.085);
+        this.brass(d, t + 2.5, 174.6, 2.4, 0.085);
+        this.brass(d, t + 3.2, 146.8, 2.4, 0.085);
+        break;
+      }
+      case 'passo-distante': {
+        // pisada de um colosso longe: só o grave, abafado, com um eco que demora
+        const d = wrap(200, k.sfx);
+        const lp = k.filter('lowpass', 150, 0.7);
+        lp.connect(d);
+        this.thump(lp, t, 58, 24, 1.1, 0.9);
+        this.thump(lp, t + 0.7, 46, 22, 1.0, 0.25);
+        this.hiss(lp, t, 'lowpass', 220, 60, 0.9, 0.3, 0.02);
+        break;
+      }
+      case 'rangido-colosso': {
+        // aço rangendo: tom que desliza com trepidação e ruído fino
+        const d = wrap(30);
+        this.tone(d, t, 'sawtooth', 220, 150, 1.1, 0.12, 0.05, 700);
+        this.tone(d, t + 0.1, 'square', 331, 210, 0.9, 0.06, 0.05, 500);
+        this.hiss(d, t, 'bandpass', 1400, 600, 1.0, 0.1, 0.1, 3);
         break;
       }
       case 'trovao': {

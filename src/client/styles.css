@@ -735,3 +735,6 @@ details.adv[open] { display: flex; flex-direction: column; gap: 6px; }
   background: conic-gradient(rgba(255, 230, 140, 0.95) var(--f, 0deg), rgba(255, 255, 255, 0.12) 0);
   -webkit-mask: radial-gradient(circle, transparent 17px, #000 18px, #000 21px, transparent 22px); mask: radial-gradient(circle, transparent 17px, #000 18px, #000 21px, transparent 22px); }
 .charge-ring.full { filter: drop-shadow(0 0 6px rgba(255, 220, 120, 0.9)); }
+
+/* planta da Trincheira no menu de pausa */
+.pause-map { display: block; width: 100%; max-width: 540px; height: auto; margin: 12px auto 0; border: 1px solid var(--line); background: #14110f; image-rendering: auto; }

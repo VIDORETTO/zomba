@@ -106,6 +106,11 @@ export class AudioEngine {
     this.tr.stopAmbient();
   }
 
+  // motor do gerador i (posicional, até 25 m); mode null = silêncio
+  trGenLoop(i: number, pos: THREE.Vector3, mode: 'liga' | 'falha' | null) {
+    this.tr.genLoop(i, pos, mode);
+  }
+
   // chamado a cada quadro pelo jogo (artilharia distante periódica)
   trUpdate(dt: number) {
     this.tr.update(dt);

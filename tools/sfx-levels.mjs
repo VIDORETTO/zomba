@@ -1,9 +1,9 @@
 // Mede o volume (RMS geral e o maior RMS em janelas de ~40 ms, o "soco" do som) de cada som gravado comparado com o sintetizado que ele substitui.
 // Uso: node tools/sfx-levels.mjs
-import { chromium } from 'playwright-core';
-const browser = await chromium.launch({ channel: 'chrome', headless: true, args: ['--ignore-gpu-blocklist', '--use-angle=d3d11', '--autoplay-policy=no-user-gesture-required'] });
+import { launch } from './launch.mjs';
+const browser = await launch();
 const page = await browser.newPage({ viewport: { width: 1280, height: 720 } });
-await page.goto('http://localhost:5173/?autoplay');
+await page.goto('http://127.0.0.1:5173/?autoplay');
 await page.waitForLoadState('networkidle');
 await page.click('#btn-solo');
 await (await page.waitForFunction(() => window.__game, null, { timeout: 90000 })).dispose();
@@ -47,7 +47,14 @@ const cases = [
   ['zumbi rosnando (corre)', 'a.groans = 0; a.zombieGroan(p, 2)'],
   ['zumbi ataca', 'a.zombieAttack(p)'],
   ['zumbi morre', 'a.zombieDeath(p)'],
+  // D1: as vinhetas da Trincheira ficam na mesma faixa das de sempre (a diferença de volume tem de ser menor que 4 dB)
+  ['vinheta começo (sempre)', 'a.roundStart()'],
+  ['vinheta começo (Trincheira)', "a.trSound('vinheta-inicio')"],
+  ['vinheta começo Blindado', "a.trSound('vinheta-blindado')"],
+  ['vinheta fim (sempre)', 'a.roundEnd()'],
+  ['vinheta fim (Trincheira)', "a.trSound('vinheta-fim')"],
 ];
+const medidas = {};
 for (const [name, code] of cases) {
   const res = await page.evaluate(async (code) => {
     const a = window.__game.audio;
@@ -62,6 +69,16 @@ for (const [name, code] of cases) {
     for (const [k, v] of saved) a.samples.set(k, v);
     return { rec, syn };
   }, code);
+  medidas[name] = res.rec;
   console.log(`${name.padEnd(22)} gravado rms ${res.rec.rms} curto ${res.rec.short} | sintetizado rms ${res.syn.rms} curto ${res.syn.short} | dif curto ${(res.rec.short - res.syn.short).toFixed(1)} dB`);
 }
+const pares = [['vinheta começo (Trincheira)', 'vinheta começo (sempre)'], ['vinheta começo Blindado', 'vinheta começo (sempre)'], ['vinheta fim (Trincheira)', 'vinheta fim (sempre)']];
+let falhou = 0;
+for (const [a, b] of pares) {
+  const d = medidas[a].rms - medidas[b].rms;
+  const ok = Math.abs(d) <= 4 && medidas[a].peak < -1;
+  if (!ok) falhou++;
+  console.log(`${ok ? 'ok  ' : 'FALHOU'} ${a} na faixa de ${b} (${d.toFixed(1)} dB de diferença, pico ${medidas[a].peak} dB)`);
+}
 await browser.close();
+process.exit(falhou ? 1 : 0);

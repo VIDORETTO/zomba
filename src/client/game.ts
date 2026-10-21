@@ -41,6 +41,8 @@ import { FogBanks, FoliageView } from './foliageView';
 import { Decals } from './decals';
 import { actionKey, loadKeys } from './keys';
 import { controlsEditor, isListening } from './controlsUi';
+import { drawPlanta, plantaSize } from './pauseMap';
+import { Tips, TIP_TEXT } from './tips';
 import { gradePass } from './grade';
 import { freeScene } from './free';
 import { standingIn } from '../shared/busBody';
@@ -56,6 +58,8 @@ export interface Settings {
   music: number;
   brightness: number;
   invertY: boolean;
+  // dicas de primeira vez na Trincheira (padrão: ligadas)
+  tips?: boolean;
   // teclas trocadas pelo jogador (ver keys.ts)
   keys?: Partial<Record<string, string[]>>;
 }
@@ -174,6 +178,9 @@ export class Game {
   private readonly transport: Transport;
   private readonly audio: AudioEngine;
   private readonly settings: Settings;
+  // dicas de primeira vez (Trincheira)
+  readonly tips = new Tips();
+  private tipT = 0;
   private me: NetPlayer | null = null;
   private spawned = false;
   private raf = 0;
@@ -209,6 +216,7 @@ export class Game {
     this.transport = o.transport;
     this.audio = o.audio;
     this.settings = { ...o.settings };
+    this.tips.enabled = this.settings.tips !== false;
     this.world = new World(o.map);
 
     this.q = QUALITY[initialLevel(this.settings.quality, o.gpu)];
@@ -570,13 +578,17 @@ export class Game {
           if (e.hell) {
             this.audio.hellStart();
             this.hud.showBanner('RODADA INFERNAL');
+          } else if (this.tr) {
+            // Trincheira: tambor de guerra, coral grave e metais distantes (a do Blindado é mais pesada)
+            this.audio.trSound(e.boss ? 'vinheta-blindado' : 'vinheta-inicio');
           } else {
             this.audio.roundStart();
           }
           break;
         case 'roundEnd':
           this.hud.roundEnded();
-          this.audio.roundEnd();
+          if (this.tr) this.audio.trSound('vinheta-fim');
+          else this.audio.roundEnd();
           if (e.hell) this.audio.hellEnd();
           break;
         case 'boss': {
@@ -1308,6 +1320,7 @@ export class Game {
     const trSnap = this.buffer.latest?.s;
     if (this.tr && trSnap) {
       this.tr.update(sample, trSnap, dt, this.t, this.me, this.camera);
+      this.updateTips(dt, trSnap.tr?.mounds ?? []);
       this.shake = Math.max(this.shake, this.tr.quake);
       this.tr.quake = 0;
       this.pc.setTank(this.tr.tankPose());
@@ -1432,6 +1445,28 @@ export class Game {
     this.audio.setListener(this.camera.position, fwd);
     const hp = this.me?.health ?? PLAYER.maxHealth;
     this.audio.heartbeat(dt, life === 'alive' && hp < 45 ? 1 - hp / 45 : 0);
+  }
+
+  // Dicas de primeira vez da Trincheira: perto (menos de 3,5 m) de uma pá, gerador, tanque, peça, bancada ou monte de terra
+  private updateTips(dt: number, mounds: number[]) {
+    if (!this.tips.enabled) return;
+    this.tipT -= dt;
+    if (this.tipT > 0) return;
+    this.tipT = 0.3;
+    const p = this.pc.pos;
+    const near = (x: number, z: number) => Math.hypot(x - p.x, z - p.z) < 3.5;
+    const show = (kind: string) => {
+      if (this.tips.take(kind)) this.hud.notify(`<span class="tip">Dica: ${TIP_TEXT[kind]}</span>`);
+    };
+    for (const it of this.o.map.interactables) {
+      const kind = it.kind === 'tank' ? 'tank' : it.kind;
+      if ((kind === 'shovel' || kind === 'generator' || kind === 'tank' || kind === 'part' || kind === 'bench') && near(it.use[0], it.use[1])) {
+        show(kind);
+        return;
+      }
+    }
+    const T = this.o.map.trincheira;
+    if (T && mounds.some((i) => T.mounds[i] && near(T.mounds[i][0], T.mounds[i][1]))) show('mound');
   }
 
   // Só em desenvolvimento (?autoplay, solo): atalhos da Trincheira para os testes automáticos.
@@ -2000,7 +2035,10 @@ export class Game {
     void this.resume();
   };
 
+  private mapTimer = 0;
+
   private closePauseKeys() {
+    clearInterval(this.mapTimer);
     window.removeEventListener('keydown', this.onPauseKey);
     this.stopKeysEditor?.();
     this.stopKeysEditor = null;
@@ -2036,6 +2074,7 @@ export class Game {
   }
 
   private renderPauseTab(body: HTMLElement) {
+    clearInterval(this.mapTimer);
     this.stopKeysEditor?.();
     this.stopKeysEditor = null;
     body.innerHTML = '';
@@ -2050,6 +2089,27 @@ export class Game {
           <button class="btn ghost" data-act="exit">${solo ? 'Sair para o menu' : 'Sair da partida'}</button>
         </div>
         <p class="gm-confirm muted"></p>`;
+      // Trincheira: a planta do mapa, redesenhada a cada meio segundo enquanto o menu está aberto
+      if (this.o.map.trincheira) {
+        const { w, h } = plantaSize(this.o.map);
+        const cv = document.createElement('canvas');
+        cv.id = 'pause-map';
+        cv.className = 'pause-map';
+        cv.width = w;
+        cv.height = h;
+        body.append(cv);
+        const draw = () => {
+          const snap = this.buffer.latest?.s;
+          if (!snap) return;
+          drawPlanta(cv, this.o.map, {
+            snap,
+            eu: { x: this.pc.pos.x, z: this.pc.pos.z, yaw: this.pc.yaw },
+            aliados: this.players.positions().map((p) => ({ x: p.x, z: p.z, name: p.id })),
+          });
+        };
+        draw();
+        this.mapTimer = window.setInterval(draw, 500);
+      }
       const confirm = body.querySelector<HTMLElement>('.gm-confirm')!;
       // reiniciar e sair perdem a partida: pedem um segundo clique
       const twice = (btn: HTMLButtonElement, msg: string, go: () => void) => {
@@ -2106,6 +2166,15 @@ export class Game {
       this.saveSettings();
     });
     body.append(inv);
+    const tip = document.createElement('label');
+    tip.className = 'check';
+    tip.innerHTML = `<input type="checkbox" data-opt="tips" ${this.settings.tips !== false ? 'checked' : ''}> Dicas de primeira vez (uma linha perto de pás, geradores, tanque e bancadas)`;
+    tip.querySelector('input')!.addEventListener('change', (e) => {
+      this.settings.tips = (e.target as HTMLInputElement).checked;
+      this.tips.enabled = this.settings.tips;
+      this.saveSettings();
+    });
+    body.append(tip);
     const keysBox = document.createElement('div');
     keysBox.className = 'keys-box';
     body.append(keysBox);

@@ -1039,3 +1039,8 @@ Veja `POLIMENTO.md`, seção 11, para o estado de cada ticket.
 - **Mapa:** `MaterialId` ganhou `rotWood`, `crackConcrete` e `brickDirty`; `Block.shade`; `TrincheiraData.wallMix`.
 - **Blindado:** peças nomeadas `blindado-*`; as placas caem com a vida do chefão.
 - **Colossos:** `ColossusView.farInfo()` e `fullVisible()` ajudam os testes.
+
+### Polimento S5: som e conforto (2026-10-21)
+
+- **Som:** `vinheta-*`, `passo-distante`, `rangido-colosso` em `trSound.ts`; motor do gerador (`genLoop`).
+- **Telas:** planta na pausa (`pauseMap.ts`), dicas (`tips.ts`), pilha de avisos (S1).

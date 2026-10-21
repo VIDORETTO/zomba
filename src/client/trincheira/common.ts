@@ -5,6 +5,7 @@ import type { Element } from '../../shared/protocol';
 // Som da Trincheira: o dono do áudio cria estes métodos no AudioEngine; aqui só chamamos (se faltar, não faz nada).
 export interface TrAudio {
   trSound(name: string, pos?: THREE.Vector3, vol?: number): void;
+  trGenLoop(i: number, pos: THREE.Vector3, mode: 'liga' | 'falha' | null): void;
   setWeather(w: 'limpo' | 'chuva' | 'neve'): void;
 }
 
@@ -18,6 +19,13 @@ export class Snd {
       this.a.trSound?.(name, pos, vol);
     } catch {
       // sem som: segue só com a imagem
+    }
+  }
+  genLoop(i: number, pos: THREE.Vector3, mode: 'liga' | 'falha' | null) {
+    try {
+      this.a.trGenLoop?.(i, pos, mode);
+    } catch {
+      // sem som
     }
   }
   weather(w: 'limpo' | 'chuva' | 'neve') {

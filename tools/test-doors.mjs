@@ -73,6 +73,29 @@ await page.waitForTimeout(1500);
 const ws = await page.evaluate(() => window.__game.me.weapons);
 check('comprou a Metralhadora leve', ws.includes('lmg'), ws.join(','));
 await page.screenshot({ path: `${out}/d6-armazem.png` });
+// D1: na Cidade as vinhetas de rodada são as de sempre (nada da Trincheira)
+{
+  const r = await page.evaluate(() => {
+    const g = window.__game, a = g.audio;
+    const calls = [];
+    const ts = a.trSound.bind(a), rs = a.roundStart.bind(a), re = a.roundEnd.bind(a);
+    a.trSound = (n, p, v) => { calls.push(['tr', n]); ts(n, p, v); };
+    a.roundStart = () => { calls.push(['padrao', 'inicio']); rs(); };
+    a.roundEnd = () => { calls.push(['padrao', 'fim']); re(); };
+    g.onEvents([{ e: 'roundStart', round: 4, hell: false }]);
+    g.onEvents([{ e: 'roundEnd', round: 4, hell: false }]);
+    return calls;
+  });
+  check('Cidade: o começo e o fim da rodada tocam as vinhetas de sempre', JSON.stringify(r) === JSON.stringify([['padrao', 'inicio'], ['padrao', 'fim']]), JSON.stringify(r));
+}
+// E2: na Cidade o menu de pausa não tem a planta da Trincheira
+{
+  await page.evaluate(() => window.__game.showPause());
+  await page.waitForTimeout(600);
+  const tem = await page.evaluate(() => !!document.querySelector('#pause-map'));
+  check('Cidade: o menu de pausa não mostra a planta da Trincheira', !tem);
+  await page.evaluate(() => window.__game.resume());
+}
 check('sem erros na página', errs.length === 0, errs.slice(0, 3).join(' | '));
 console.log(`\n${ok} ok, ${bad} falharam`);
 await browser.close();

@@ -95,6 +95,7 @@ function show(id: string) {
   stopKeys?.();
   stopKeys = null;
   if (id === 'panel-controls') {
+    ($('opt-tips') as HTMLInputElement).checked = settings.tips !== false;
     stopKeys = controlsEditor($('controls-editor'), loadKeys(settings.keys), (keys) => {
       settings.keys = keys;
       save('zomba.settings', settings);
@@ -331,6 +332,10 @@ $('btn-coop').addEventListener('click', () => {
   show('panel-coop');
 });
 $('btn-controls').addEventListener('click', () => show('panel-controls'));
+$('opt-tips').addEventListener('change', (e) => {
+  settings.tips = (e.target as HTMLInputElement).checked;
+  save('zomba.settings', settings);
+});
 $('btn-board').addEventListener('click', () => {
   show('panel-board');
   renderBoard();

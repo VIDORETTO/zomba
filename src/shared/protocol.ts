@@ -220,7 +220,8 @@ export type GameEvent =
   | { e: 'prespawn'; pid: string; x: number; z: number }
   | { e: 'shot'; pid: string; weapon: string }
   | { e: 'knife'; pid: string }
-  | { e: 'roundStart'; round: number; hell: boolean }
+  // boss: a rodada tem Blindado (Trincheira)
+  | { e: 'roundStart'; round: number; hell: boolean; boss?: boolean }
   | { e: 'roundEnd'; round: number; hell: boolean }
   // Carrasco: chegou, perdeu o capacete, golpe no chão, corrente, investida, bateu na parede, morreu
   | { e: 'boss'; phase: 'spawn' | 'armor' | 'slam' | 'chain' | 'charge' | 'wall' | 'death'; zid: number; x: number; z: number; pid?: string }

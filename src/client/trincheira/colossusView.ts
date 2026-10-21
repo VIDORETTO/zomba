@@ -134,8 +134,10 @@ class ColossusFar {
         x = sil.from.x + (entry.x - sil.from.x) * k;
         z = sil.from.y + (entry.z - sil.from.y) * k;
         yaw = Math.atan2(entry.x - sil.from.x, entry.z - sil.from.y);
+        const before = sil.phase;
         sil.phase += dt * 3.4;
         this.put(sil, x, z, yaw, t);
+        this.stepSound(sil, before, x, z);
         sil.root.visible = true;
         continue;
       } else if (!robot && sil.id === next) show = false;
@@ -147,9 +149,11 @@ class ColossusFar {
       }
       // laço: anda em círculo em volta do mapa
       sil.ang += (LOOP.speed / LOOP.r[ORDER.indexOf(sil.id)]) * dt;
+      const before = sil.phase;
       sil.phase += dt * LOOP.speed * 0.5;
       [x, z, yaw] = this.loopPos(sil);
       this.put(sil, x, z, yaw, t);
+      this.stepSound(sil, before, x, z);
       sil.root.visible = true;
     }
     // fumaça devagar e olho aceso
@@ -165,6 +169,16 @@ class ColossusFar {
         }
       }
     }
+  }
+
+  // a cada passo (a perna que balança cruza o meio): pisada grave e abafada, mais baixa com a distância
+  private stepSound(sil: Sil, before: number, x: number, z: number) {
+    if (Math.sign(Math.sin(before)) === Math.sign(Math.sin(sil.phase))) return;
+    const me = this.c.me();
+    const dist = me ? Math.hypot(me.x - x, me.z - z) : 300;
+    // volume: 0,18 perto do alcance e cai com a distância (nunca passa de 0,2)
+    const vol = Math.max(0.02, Math.min(0.18, 0.2 * (1 - dist / 560)));
+    if (dist < 520) this.c.snd.play('passo-distante', new THREE.Vector3(x, 1, z), vol);
   }
 
   private put(sil: Sil, x: number, z: number, yaw: number, t: number) {
@@ -203,6 +217,7 @@ export class ColossusView {
   private lastRobot: TrRobot | null = null;
   private hipY = BODY_HEIGHT - EYE_LOCAL_Y;
   private smokeT = 0;
+  private creakT = 0;
   private readonly feetCache = new Map<string, FootRect[]>();
   private readonly v3 = new THREE.Vector3();
   private readonly v4 = new THREE.Vector3();
@@ -463,6 +478,15 @@ export class ColossusView {
     const em = r.eye.material as THREE.MeshBasicMaterial;
     em.color.set(COLOSSI[id].eyeHex).multiplyScalar(vul ? 3 + Math.sin(t * 8) * 1.2 : 2.2);
     (r.eyeGlow.material as THREE.SpriteMaterial).opacity = vul ? 1 : 0.8;
+    // rangido de aço quando o colosso em cena passa a menos de 40 m de quem joga
+    {
+      const me = this.c.me();
+      this.creakT -= dt;
+      if (me && this.creakT <= 0 && Math.hypot(me.x - p.x, me.z - p.z) < 40 && sub !== 'fica') {
+        this.creakT = 2.2 + Math.random() * 1.2;
+        this.c.snd.play('rangido-colosso', new THREE.Vector3(p.x, 6, p.z), 0.7);
+      }
+    }
     // fumaça das chaminés
     this.smokeT -= dt;
     if (this.smokeT <= 0) {

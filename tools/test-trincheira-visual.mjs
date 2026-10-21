@@ -406,6 +406,20 @@ await existem('Lama: poças, crateras com água e tábuas jogadas existem na cen
   await G(() => { const t = window.__game.tr; for (let i = 0; i < 100; i++) t.colossus.update(window.__game.buffer.latest.s.tr, 0.1, 100 + i * 0.1); });
   const p1 = await G(() => window.__game.tr.colossus.farInfo().filter((x) => x.visible).map((x) => [x.x, x.z]));
   check('Colossos ao longe: as silhuetas caminham (posição muda em 10 s)', p0.some((a, i) => Math.hypot(a[0] - p1[i][0], a[1] - p1[i][1]) > 5), JSON.stringify([p0[0], p1[0]]));
+  // D2: passos graves e abafados das silhuetas, mais baixos com a distância (a ~240 m: volume abaixo de 0,2)
+  {
+    const r = await G(() => {
+      const t = window.__game.tr;
+      const toques = [];
+      const play = t.snd.play.bind(t.snd);
+      t.snd.play = (n, p, v) => { toques.push([n, v ?? 1]); play(n, p, v); };
+      for (let i = 0; i < 100; i++) t.colossus.update(window.__game.buffer.latest.s.tr, 0.1, 300 + i * 0.1);
+      t.snd.play = play;
+      return toques.filter(([n]) => n === 'passo-distante');
+    });
+    check('Colossos ao longe (som): ao menos 1 passo em 10 s, bem baixo (volume menor que 0,2)', r.length >= 1 && r.every(([, v]) => v < 0.2), JSON.stringify(r.slice(0, 3)));
+  }
+
   // passagem: o colosso que entra sai do laço e vira o modelo completo
   const proximo = f0.find((x) => !x.visible)?.id ?? 'atlas';
   await G((id) => window.__game.debugTr('colosso', id), proximo);

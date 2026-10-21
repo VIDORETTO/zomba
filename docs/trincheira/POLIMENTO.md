@@ -1016,6 +1016,9 @@ Pasta sugerida: `docs/trincheira/capturas/` (só capturas do nosso jogo).
 | A6 | pronto | 2026-10-21 | Missão de ponta a ponta sem `debug('missao')` (só `itens` e `gens`), cerca de 6 s |
 | A8 | pronto | 2026-10-21 | `TRINCHEIRA.panzerReward = 500`; tabela da seção 10 do README atualizada |
 | F3 | pronto, falta o FPS do Firefox | 2026-10-21 | Contador real de chamadas e triângulos (`game.perf`, tecla F3), linha de base e teste dentro de +10% |
+| D1 | pronto, falta aprovar de ouvido | 2026-10-21 | Vinhetas `vinheta-inicio`, `vinheta-fim` e `vinheta-blindado` (tambor, coral grave, metais distantes). `roundStart` ganhou `boss?`. `tools/sfx-levels.mjs` confere que ficam a menos de 4 dB das de sempre |
+| D2 | pronto | 2026-10-21 | Silhuetas dão um passo grave (`passo-distante`, volume 0,02 a 0,18 pela distância); o colosso em cena a menos de 40 m range (`rangido-colosso`) |
+| D3 | pronto | 2026-10-21 | `TrAudio.genLoop`: motor posicional até 25 m; 'falha' (cortes) quando atacado; some ao desligar |
 | E1 | pronto | 2026-10-21 | `TrHud.setAlerts`: no máximo 2 avisos abaixo da barra do chefe, por prioridade, o resto vira "+N" |
 
 | B1 | pronto, falta aprovação das capturas | 2026-10-21 | `escavacaoView.ts`: poço em degraus (3 degraus), 2 andaimes, guindaste com corda e balde, 2 lonas com mesa e lampião, runas que pulsam (3 círculos), 4 anéis de pedra parados (C6), pedestais com laje e runa acesa. `ForjaView`: brasa na boca e runas na coluna. Removida a tampa preta do poço no construtor. Tudo sem colisão; geometria juntada por material |
@@ -1042,6 +1045,14 @@ Pasta sugerida: `docs/trincheira/capturas/` (só capturas do nosso jogo).
 
 - O orçamento de desempenho subiu com o conteúdo novo (B1, B2, B9): até +8% em chamadas e +12% em triângulos nos pontos que enxergam a Escavação, dentro da margem de 10% depois de trocar as lâmpadas esféricas por octaedros. Linha de base mantida.
 - `test-box.mjs` falhou uma vez em 3 execuções (tempo, por software); o mesmo vale para `test-rota.mjs` (ver S1).
+
+| E2 | pronto | 2026-10-21 | `pauseMap.ts`: planta com áreas abertas/fechadas, geradores (cinza, ciano, vermelho), Fonte, Caixa, tanque, portais, Câmara, você e aliados; só na Trincheira; redesenha a cada 0,5 s |
+| E3 | pronto | 2026-10-21 | `tips.ts`: 6 dicas de 1 linha, uma vez cada, guardadas em `localStorage` (falha sem quebrar); opção "Dicas" no menu e na pausa |
+
+**Observações do S5**
+
+- O som das vinhetas é sintetizado; a aprovação "de ouvido" do D1 é do usuário.
+- A opção "Dicas" fica em `Settings.tips` (padrão ligada).
 
 **Observações do S4**
 

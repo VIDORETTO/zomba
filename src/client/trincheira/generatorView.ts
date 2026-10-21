@@ -180,6 +180,8 @@ export class GeneratorView {
         v.wall.scale.set(g.r, 0.2 + s.progress * 3.2, g.r);
         (v.wall.material as THREE.MeshBasicMaterial).opacity = 0.2 + 0.1 * Math.sin(t * 9);
       }
+      // motor do gerador: ronco contínuo enquanto liga (só se ouve de perto); falha quando os Cruzados o atacam
+      this.c.snd.genLoop(i, new THREE.Vector3(g.x, 1.5, g.z), s.on ? (s.attacked ? 'falha' : 'liga') : null);
       // gerador sendo atacado: anel vermelho piscando
       const am = v.alert.material as THREE.MeshBasicMaterial;
       am.opacity = s.attacked ? 0.35 + 0.45 * (0.5 + 0.5 * Math.sin(t * 10)) : 0;
