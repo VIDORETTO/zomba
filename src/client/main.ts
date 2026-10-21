@@ -7,6 +7,9 @@ import { EXPOSURE, Game, type Settings } from './game';
 import { controlsEditor } from './controlsUi';
 import { loadKeys } from './keys';
 import { LocalTransport, NetClient, defaultServerUrl, type Transport } from './net';
+import { downloadProgress, importProgress } from './backup';
+import { P2PClient } from './p2p/client';
+import { CODE_LENGTH, CODE_RE, cleanCode } from './p2p/codes';
 import { QUALITY, detectGpu, initialLevel } from './quality';
 import { MenuScene } from './menuScene';
 import { buildTextures, type TexSet } from './textures';
@@ -62,7 +65,12 @@ $('app').appendChild(renderer.domElement);
 let tex: TexSet | null = null;
 let audio: AudioEngine | null = null;
 let game: Game | null = null;
-let net: NetClient | null = null;
+// co-op: por padrão sem servidor (P2PClient); com ?servidor=ws://... usa o servidor de salas antigo (rede local)
+type Coop = NetClient | P2PClient;
+let net: Coop | null = null;
+const LEGACY_SERVER = new URLSearchParams(location.search).get('servidor');
+// placar online só existe se o jogo for construído com um servidor de placar (VITE_PLACAR_URL); sem ele, tudo fica no navegador
+const ONLINE_BOARD = !!LEGACY_SERVER || !!(import.meta.env as Record<string, string | undefined>).VITE_PLACAR_URL;
 let menuBg: MenuScene | null = null;
 let menuBgTimer = 0;
 
@@ -173,6 +181,10 @@ coopName.addEventListener('input', () => {
   nameInput.value = coopName.value;
   playerName();
 });
+// sem servidor de placar nem de salas: esconde o que dependeria dele
+if (!ONLINE_BOARD) document.querySelector('#board-tabs [data-tab="online"]')?.classList.add('hidden');
+if (!LEGACY_SERVER) $('server-adv').classList.add('hidden');
+$<HTMLInputElement>('in-code').maxLength = LEGACY_SERVER ? 4 : CODE_LENGTH;
 const serverInput = $<HTMLInputElement>('in-server');
 serverInput.value = prefs.server || defaultServerUrl();
 
@@ -332,6 +344,24 @@ $('btn-coop').addEventListener('click', () => {
   show('panel-coop');
 });
 $('btn-controls').addEventListener('click', () => show('panel-controls'));
+$('btn-save-progress').addEventListener('click', () => {
+  downloadProgress();
+  $('progress-msg').textContent = 'Arquivo salvo na pasta de downloads.';
+});
+$('btn-load-progress').addEventListener('click', () => $('file-progress').click());
+$<HTMLInputElement>('file-progress').addEventListener('change', async (e) => {
+  const input = e.target as HTMLInputElement;
+  const file = input.files?.[0];
+  input.value = '';
+  if (!file) return;
+  const r = importProgress(await file.text());
+  if (typeof r === 'string') {
+    $('progress-msg').textContent = r;
+    return;
+  }
+  $('progress-msg').textContent = 'Progresso carregado. Recarregando…';
+  setTimeout(() => location.reload(), 600);
+});
 $('opt-tips').addEventListener('change', (e) => {
   settings.tips = (e.target as HTMLInputElement).checked;
   save('zomba.settings', settings);
@@ -480,16 +510,23 @@ function renderBoard() {
 }
 document.querySelectorAll('[data-back]').forEach((b) => b.addEventListener('click', () => show('panel-main')));
 
-async function connect(): Promise<NetClient | null> {
+async function connect(): Promise<Coop | null> {
   if (net) return net;
   const url = serverInput.value.trim();
-  prefs.server = url === defaultServerUrl() ? '' : url;
-  save('zomba.prefs', prefs);
-  $('coop-msg').textContent = 'Conectando…';
+  if (LEGACY_SERVER) {
+    prefs.server = url === defaultServerUrl() ? '' : url;
+    save('zomba.prefs', prefs);
+  }
+  $('coop-msg').textContent = LEGACY_SERVER ? 'Conectando…' : '';
   try {
-    const c = await NetClient.connect(url);
+    const c = LEGACY_SERVER ? await NetClient.connect(url) : await P2PClient.connect();
     net = c;
     c.onLobby = renderLobby;
+    if (c instanceof P2PClient) {
+      c.onRoute = (r) => {
+        $('lobby-route').textContent = r === 'direta' ? 'Ligação direta com o anfitrião.' : r === 'retransmitida' ? 'Ligação por retransmissão (a rede de um dos dois não aceita ligação direta): pode ter um pouco mais de atraso.' : '';
+      };
+    }
     c.onError = (m) => {
       $('coop-msg').textContent = m;
       $('lobby-msg').textContent = m;
@@ -505,13 +542,13 @@ async function connect(): Promise<NetClient | null> {
       else if (loading) lostWhileLoading = true;
       else {
         show('panel-coop');
-        $('coop-msg').textContent = 'Desconectado do servidor.';
+        $('coop-msg').textContent = LEGACY_SERVER ? 'Desconectado do servidor.' : 'A ligação com o anfitrião caiu.';
       }
     };
     $('coop-msg').textContent = '';
     return c;
   } catch (e) {
-    $('coop-msg').textContent = `${(e as Error).message} Verifique se o servidor está ligado.`;
+    $('coop-msg').textContent = `${(e as Error).message}${LEGACY_SERVER ? ' Verifique se o servidor está ligado.' : ''}`;
     return null;
   }
 }
@@ -520,7 +557,8 @@ async function connect(): Promise<NetClient | null> {
 // O link é o endereço do servidor com #sala=CÓDIGO: quem abre já cai na tela de entrar nessa sala.
 
 function inviteLink(code: string) {
-  const base = net?.publicUrl || location.origin;
+  // sem servidor, o link é o endereço em que o jogo está aberto: o código da sala vai depois do #
+  const base = net?.publicUrl || `${location.origin}${location.pathname}`;
   return `${base.replace(/\/+$/, '')}/#sala=${code}`;
 }
 
@@ -539,21 +577,34 @@ function showInvite(code: string | null) {
   $('coop-msg').textContent = '';
 }
 
-// lê o convite do endereço e limpa (atualizar a página depois não tenta entrar de novo)
-{
-  const m = /(?:^|[#&?])sala=([A-Za-z]{4})(?![A-Za-z])/.exec(location.hash + '&' + location.search.slice(1));
+// lê o convite do endereço e limpa (atualizar a página depois não tenta entrar de novo). Também vale quando o link é colado
+// no endereço de uma aba que já está com o jogo aberto (só o # muda, a página não recarrega).
+function readInvite() {
+  const m = new RegExp(`(?:^|[#&?])sala=([A-Za-z0-9]{${LEGACY_SERVER ? 4 : CODE_LENGTH}})(?![A-Za-z0-9])`).exec(location.hash + '&' + location.search.slice(1));
   // o iniciador do servidor abre o jogo de quem hospeda direto no co-op
   const host = location.hash === '#criar';
   if (m || host) history.replaceState(null, '', location.pathname);
-  if (m) showInvite(m[1].toUpperCase());
-  else if (host) show('panel-coop');
+  // no meio de uma partida o convite não faz nada (e não deve tirar o jogador dela)
+  if (game || loading) return;
+  if (m) {
+    exitLobbyForInvite();
+    showInvite(m[1].toUpperCase());
+  } else if (host) show('panel-coop');
 }
+// quem estava no lobby de outra sala e cola um convite novo sai da sala antiga
+function exitLobbyForInvite() {
+  net?.close();
+  net = null;
+}
+readInvite();
+window.addEventListener('hashchange', readInvite);
 
 $('btn-invite-join').addEventListener('click', async () => {
   if (!invitedCode) return;
   ensureAudio();
   const code = invitedCode;
   const c = await connect();
+  if (c instanceof P2PClient) $('coop-msg').textContent = 'Procurando a sala…';
   c?.join(code, playerName(), playerLevel(), getAccount()?.token, bankBalance(playerName()));
 });
 
@@ -586,10 +637,13 @@ function renderLobby(code: string, hostId: string, players: LobbyPlayer[], start
   $('lobby-code').textContent = code;
   const link = inviteLink(code);
   $<HTMLInputElement>('lobby-link').value = link;
-  $('lobby-invite-note').textContent = /^https?:\/\/(localhost|127\.)/.test(link)
-    ? 'Esse link só abre neste computador. Para jogar pela internet, ligue o servidor com "Iniciar servidor" (pasta servidor).'
-    : 'Mande o link para seus amigos: quem abrir já cai nesta sala.';
   const isHost = net?.localId === hostId;
+  const p2p = net instanceof P2PClient;
+  $('lobby-invite-note').textContent = /^https?:\/\/(localhost|127\.)/.test(link)
+    ? 'Esse link só abre neste computador (endereço de teste). Pela internet, use o endereço oficial do jogo.'
+    : p2p && isHost
+      ? 'Mande o link para seus amigos: quem abrir já cai nesta sala. A partida roda no seu computador: mantenha esta aba aberta.'
+      : 'Mande o link para seus amigos: quem abrir já cai nesta sala.';
   const ul = $('lobby-players');
   ul.innerHTML = '';
   for (const p of [...players].sort((a, b) => a.slot - b.slot)) {
@@ -623,12 +677,13 @@ $('btn-create').addEventListener('click', async () => {
   c?.create(playerName(), playerLevel(), prefs.startRound, prefs.mapId, getAccount()?.token, bankBalance(playerName()));
 });
 $('btn-join').addEventListener('click', async () => {
-  const code = $<HTMLInputElement>('in-code').value.trim().toUpperCase();
-  if (code.length !== 4) {
-    $('coop-msg').textContent = 'O código da sala tem 4 letras.';
+  const code = LEGACY_SERVER ? $<HTMLInputElement>('in-code').value.trim().toUpperCase() : cleanCode($<HTMLInputElement>('in-code').value);
+  if (LEGACY_SERVER ? code.length !== 4 : !CODE_RE.test(code)) {
+    $('coop-msg').textContent = LEGACY_SERVER ? 'O código da sala tem 4 letras.' : `O código da sala tem ${CODE_LENGTH} letras ou números.`;
     return;
   }
   const c = await connect();
+  if (c instanceof P2PClient) $('coop-msg').textContent = 'Procurando a sala…';
   c?.join(code, playerName(), playerLevel(), getAccount()?.token, bankBalance(playerName()));
 });
 $('btn-start').addEventListener('click', () => net?.start());

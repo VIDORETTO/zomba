@@ -2325,7 +2325,7 @@ export class Game {
     const ov = this.hud.showOverlay(`
       <div class="panel gameover">
         <h1>CONEXÃO PERDIDA</h1>
-        <p class="survived">O servidor encerrou a partida ou ficou fora do ar.</p>
+        <p class="survived">${'p2p' in this.transport ? 'O anfitrião saiu ou a conexão com ele caiu. Quem cria a sala roda a partida no próprio computador.' : 'O servidor encerrou a partida ou ficou fora do ar.'}</p>
         <button class="btn primary" data-act="exit">Voltar ao menu</button>
       </div>`);
     ov.querySelector('[data-act="exit"]')!.addEventListener('click', () => this.o.onExit());

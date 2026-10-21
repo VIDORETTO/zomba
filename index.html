@@ -45,7 +45,7 @@
           <nav class="menu-list">
             <button id="btn-solo" class="mbtn primary">Jogar solo<small>Você contra a horda</small></button>
             <button id="btn-coop" class="mbtn">Co-op online<small>Até 4 jogadores</small></button>
-            <button id="btn-board" class="mbtn">Placar<small>Recordes, jogadores e placar online</small></button>
+            <button id="btn-board" class="mbtn">Placar<small>Recordes e jogadores</small></button>
             <button id="btn-controls" class="mbtn">Controles</button>
           </nav>
         </div>
@@ -56,7 +56,7 @@
           <button id="btn-invite-join" class="btn primary hidden">Entrar na sala</button>
           <button id="btn-create" class="btn primary">Criar sala</button>
           <div class="row">
-            <input id="in-code" placeholder="CÓDIGO" maxlength="4" autocomplete="off" />
+            <input id="in-code" placeholder="CÓDIGO" maxlength="6" autocomplete="off" />
             <button id="btn-join" class="btn">Entrar</button>
           </div>
           <p id="coop-msg" class="msg"></p>
@@ -75,6 +75,7 @@
             <button id="btn-copy-invite" class="btn">Copiar convite</button>
           </div>
           <p class="muted" id="lobby-invite-note">Mande o link para seus amigos: quem abrir já cai nesta sala.</p>
+          <p class="muted" id="lobby-route"></p>
           <ul id="lobby-players"></ul>
           <div class="field">Mapa
             <div class="mapsel" id="lobby-map"></div>
@@ -115,6 +116,14 @@
           <h3 class="panel-title">Controles</h3>
           <label class="check"><input type="checkbox" id="opt-tips" checked> Dicas de primeira vez (uma linha perto de pás, geradores, tanque e bancadas)</label>
           <div id="controls-editor" class="keys-box"></div>
+          <h3 class="panel-title">Seu progresso</h3>
+          <p class="muted">Nível, banco e recordes ficam só neste navegador. Salve um arquivo para não perder se limpar os dados do navegador, ou para levar a outro computador.</p>
+          <div class="row">
+            <button id="btn-save-progress" class="btn">Salvar progresso</button>
+            <button id="btn-load-progress" class="btn">Carregar progresso</button>
+            <input id="file-progress" type="file" accept="application/json,.json" class="hidden" />
+          </div>
+          <p id="progress-msg" class="msg"></p>
           <p class="muted">Sensibilidade, mouse invertido, brilho e volumes ficam no menu do jogo (Esc durante a partida).</p>
           <button class="btn ghost" data-back>Voltar</button>
         </div>

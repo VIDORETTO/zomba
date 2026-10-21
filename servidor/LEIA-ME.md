@@ -1,3 +1,5 @@
+> **Atenção:** o co-op normal do jogo agora **não usa servidor** (a partida roda no navegador de quem cria a sala; ver o `README.md` da raiz). Este servidor é a opção antiga, para rede local ou para quem quiser hospedar as salas e o placar online: abra o jogo com `?servidor=ws://endereço:3001` para usá-lo.
+
 # Servidor do Zomba
 
 Formas de jogar com os amigos pela internet. Todas entregam o jogo e o co-op pelo mesmo link: os amigos só abrem o link no navegador, sem instalar nada.
@@ -82,7 +84,7 @@ O código do servidor mesmo fica em `src/server/` (ele usa as mesmas regras do j
 ## Testes
 
 - `node tools/test-guard.mjs <endereço>`: proteções (limite de conexões, chute de códigos, tirar da sala). Para rodar local: suba um servidor com `PORT=3012 HOST=127.0.0.1 ZOMBA_PROXY=cloudflare ZOMBA_DATA=<pasta> node --import tsx src/server/main.ts`.
-- `node tools/test-invite.mjs <pasta> [endereço do anfitrião]`: convite pelo link no navegador, tirar da sala e iniciar a partida (com o iniciador ligado, passe `http://localhost:<porta>` e o convite sai pelo túnel).
+- `node tools/test-p2p.mjs <pasta>`: o convite e a sala do co-op sem servidor (o teste do servidor antigo por convite saiu; os testes do servidor estão em `test-guard.mjs`, `test-trincheira-coop.mjs` e `test-coop-board.mjs`).
 - `node tools/probe-tunnel.mjs <link>`: confere um servidor pelo link público.
 - `node tools/ping-server.mjs <link>`: mede o atraso até o servidor.
 - `node tools/upnp-probe.mjs [porta]`: diz se o modo direto funciona na sua internet (roteador com UPnP, dois roteadores, CGNAT) e se uma porta está aberta. Não abre nada.

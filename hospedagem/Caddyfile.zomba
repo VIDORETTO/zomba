@@ -1,0 +1,25 @@
+# Trecho do Caddy que entrega o jogo (arquivos estáticos). Troque /srv/zomba pela pasta onde está o dist/.
+# O VPS só faz isto: não roda partida, não guarda dados e não repassa tráfego de jogo.
+zomba.gabrielvidoretto.com.br {
+	root * /srv/zomba
+	encode zstd gzip
+	file_server
+
+	header {
+		-Server
+		X-Content-Type-Options nosniff
+		Referrer-Policy no-referrer
+		X-Frame-Options DENY
+		Permissions-Policy "camera=(), microphone=(), geolocation=(), payment=()"
+		# wss: = relés públicos de Nostr usados para os amigos se encontrarem; https: = endereço das credenciais do TURN
+		Content-Security-Policy "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; media-src 'self' data: blob:; font-src 'self' data:; connect-src 'self' wss: https:; worker-src 'self' blob:; object-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
+	}
+
+	# arquivos com resumo no nome nunca mudam; a página vem sempre nova para pegar a versão atual
+	@hashed path /assets/*
+	header @hashed Cache-Control "public, max-age=31536000, immutable"
+	@sfx path /sfx/*
+	header @sfx Cache-Control "public, max-age=86400"
+	@page path / /index.html
+	header @page Cache-Control "no-cache"
+}

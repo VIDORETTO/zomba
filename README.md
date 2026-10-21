@@ -11,55 +11,37 @@ Precisa do [Node.js](https://nodejs.org) 20 ou mais novo.
 
 ```bash
 npm install      # só na primeira vez
-npm run dev      # sobe o jogo e o servidor do co-op
+npm run dev      # sobe o jogo (e o servidor antigo de salas, que só vale com ?servidor=)
 ```
 
 Abra **http://localhost:5173** no Chrome, Edge ou Firefox e clique em **Solo**.
 
-## Co-op
+## Co-op (sem servidor)
 
-**Para jogar com amigos pela internet**, o jeito fácil: dê dois cliques em **`servidor/Iniciar servidor.bat`** (ou `npm run servidor`). Ele prepara o jogo, liga o servidor e abre um túnel seguro da Cloudflare (sem conta, sem abrir portas no roteador, sem mostrar seu IP). Aparece um link e o jogo abre no seu navegador: clique em **Criar sala → Copiar convite** e mande para os amigos. Quem abrir o convite cai direto na sala, sem instalar nada.
+O co-op **não usa servidor de jogo**. Quem cria a sala vira o **anfitrião**: a partida roda no navegador dele e os amigos se ligam direto no navegador do anfitrião (WebRTC, de navegador para navegador). O endereço do jogo só entrega os arquivos.
 
-Ao ligar, ele pergunta o modo: **Cloudflare** (padrão, funciona em qualquer internet), **Direto** (sem Cloudflare: você é o servidor, com o menor atraso; o roteador precisa deixar a porta aberta e o iniciador tenta abrir sozinho pelo UPnP) ou **só rede local**. Para um link fixo e ligado o tempo todo, há um instalador de um comando para VPS.
+1. O anfitrião clica em **Co-op online → Criar sala → Copiar convite** e manda o link (`https://zomba.gabrielvidoretto.com.br/#sala=ABC234`).
+2. Quem abrir o link cai direto na sala, sem instalar nada. Também dá para digitar o código de 6 letras e números.
+3. O anfitrião escolhe o mapa e a rodada inicial e inicia. Até 4 jogadores.
 
-Passo a passo de ligar, criar a sala, jogar e desligar: [`servidor/TUTORIAL.md`](servidor/TUTORIAL.md). Detalhes técnicos e segurança: [`servidor/LEIA-ME.md`](servidor/LEIA-ME.md).
+O que vale saber:
 
-No lobby, o anfitrião vê o link do convite e pode **tirar** alguém da sala.
+- **O anfitrião precisa manter a aba aberta.** Se ele sair, a partida acaba para todos (o jogo avisa). A partida segue rodando se ele trocar de aba (o relógio dela fica num Worker, que o navegador não freia).
+- **Quem hospeda gasta o computador e a internet dele**: cerca de 25 a 35 KB/s de envio para cada amigo. O PC precisa aguentar o jogo e a partida juntos.
+- **Como os navegadores se encontram:** por relés públicos e gratuitos de Nostr (`wss`). O código da sala embaralha a troca de endereços, então nem os relés enxergam o IP de ninguém. Os IPs só são vistos entre quem está na sala (isso é inerente ao WebRTC).
+- **Conexão difícil (celular, CGNAT, roteador fechado):** para essas duplas é preciso um TURN, que repassa os dados cifrados. Veja `hospedagem/turn-cloudflare/LEIA-ME.md` (grátis na Cloudflare, 5 minutos). Sem ele o jogo usa só STUN: a maioria conecta, e quem não conectar vê "Não encontrei essa sala…". IPv6, quando a operadora dá, conecta direto até atrás de CGNAT.
+- O anfitrião é o servidor da partida: ele pode trapacear, então **partidas de co-op não vão para nenhum placar online**. O progresso (nível, banco, recordes) fica só no navegador de cada um; **Controles → Salvar/Carregar progresso** guarda em arquivo.
+- O servidor antigo (salas e placar online em Node, pasta `src/server/` e `servidor/`) continua no repositório para rede local: abra o jogo com `?servidor=ws://endereço:3001` para usá-lo no lugar do co-op sem servidor.
 
-Em desenvolvimento (`npm run dev`), na mesma rede: quem hospeda clica em **Co-op online → Criar sala**, e os amigos abrem o jogo pelo endereço `Network` do terminal (por exemplo `http://192.168.1.110:5173`) e entram pelo convite ou pelo código de 4 letras.
+Código: `src/client/p2p/` (`hostRoom.ts` é a sala, `link.ts` a ligação, `client.ts` o que o jogo usa, `config.ts` STUN/TURN, `wire.ts` o formato das mensagens: o estado do jogo vai comprimido, por um canal que aceita perder pacotes).
 
-Versão "de produção" sem túnel (um único servidor entrega o jogo e o co-op na porta 3001):
+## Colocar no ar (o VPS só entrega arquivos)
 
 ```bash
-npm run build
-npm run server   # depois abra http://localhost:3001
+hospedagem/publicar.sh /srv/zomba      # constrói e copia só dist/ (2,6 MB; 0,4 MB comprimido)
 ```
 
-## Placar online
-
-No menu, **Placar → Online**: digite nome e senha para entrar (se o nome for novo, a conta é criada). Com a conta conectada, cada partida solo é enviada no fim do jogo, e as de co-op o próprio servidor registra (aparecem com ✓, conferidas). O placar mostra a melhor partida de cada jogador por modo (solo/co-op), mapa e rodada inicial.
-
-O placar mora no mesmo servidor do co-op, no arquivo `data/placar.json` (ou na pasta indicada pela variável `ZOMBA_DATA`). As senhas não são guardadas, só um resumo delas (scrypt). Partidas impossíveis (rápidas demais, abates demais) são recusadas. Para o placar valer para todo mundo o tempo todo, use o servidor fixo numa VPS (ver `servidor/LEIA-ME.md`).
-
-## Controles
-
-Teclas padrão. Todas podem ser trocadas em **Controles**, no menu principal ou no menu de jogo (Esc); setas também andam.
-
-| Tecla | Ação |
-| --- | --- |
-| W A S D | Andar |
-| Shift | Correr (fôlego limitado) |
-| Espaço | Pular |
-| C / Ctrl | Agachar (alternar / segurar) |
-| Botão esquerdo | Atirar |
-| Botão direito | Mirar |
-| R | Recarregar |
-| 1 / 2 / 3 ou roda do mouse | Trocar de arma |
-| G | Granada |
-| V ou E | Faca |
-| F | Comprar / abrir / usar (caixa, máquinas, paredes, velas, Forja) |
-| F (segurar) | Reanimar aliado caído ou consertar barricada |
-| Esc | Menu de jogo: continuar, reiniciar, sair; vídeo (qualidade, campo de visão, brilho), áudio (volume geral e da música) e controles (sensibilidade, mouse invertido, troca de teclas) |
+`hospedagem/Caddyfile.zomba` tem o trecho do Caddy para `zomba.gabrielvidoretto.com.br` (cabeçalhos de segurança e cache). O VPS não roda partida, não guarda dado e não repassa tráfego de jogo.
 
 ## O que já tem
 
@@ -132,7 +114,7 @@ A especificação completa (planta, regras e as 9 fases) está em [`docs/trinche
 
 ## Próximos passos
 
-O planejamento completo está no documento de planejamento do projeto. As Fases 1, 2 e 3 estão prontas. O servidor para jogar com amigos pela internet está pronto (pasta `servidor/`). O terceiro mapa, Trincheira, segue as fases de `docs/trincheira/README.md`.
+O planejamento completo está no documento de planejamento do projeto. As Fases 1, 2 e 3 estão prontas. O co-op pela internet funciona sem servidor (ver "Co-op" acima). O terceiro mapa, Trincheira, segue as fases de `docs/trincheira/README.md`.
 
 ## Estrutura
 
@@ -149,13 +131,16 @@ src/client/   o que o jogador vê e ouve
   zombies.ts    zumbis na tela e suas animações
   audio.ts      sons sintetizados e gravações (public/sfx)
   menuScene.ts  fundo do menu: o mapa em 3D com a câmera passando devagar
-src/server/   servidor das salas do co-op (guard.ts: proteções)
-servidor/     ligar o servidor em um clique (túnel) ou numa VPS (Docker + HTTPS)
+src/client/p2p/ co-op sem servidor (sala no navegador do anfitrião, ligação WebRTC)
+src/server/   servidor antigo de salas e placar (só rede local, com ?servidor=; guard.ts: proteções)
+servidor/     ligar o servidor antigo em um clique (túnel) ou numa VPS (Docker + HTTPS)
+hospedagem/   publicar só os arquivos do jogo (Caddy) e o TURN gratuito da Cloudflare
 tools/        testes automáticos com capturas de tela (usam o Chrome instalado)
 ```
 
 ## Testes
 
+- Co-op sem servidor: `npx tsx tools/test-hostroom.ts` (sala e formato das mensagens, sem rede); no navegador, com `npm run dev` rodando e internet: `node tools/test-p2p.mjs <pasta>` (4 jogadores de verdade pelos relés; `RELAY=1` força tudo por um TURN local), `node tools/test-backup.mjs <pasta>` (salvar e carregar progresso) e, depois de `npm run build`, `node tools/prod-check.mjs` (pacote de produção servido só como arquivos, com co-op de verdade)
 - Regras (sem navegador): `npx tsx tools/test-sim.ts` e `npx tsx tools/test-board.ts` (placar online); co-op registrado no placar: `node tools/test-coop-board.mjs` (sobe um servidor de teste separado, leva uns 2 minutos)
 - No navegador, sem janela (com `npm run dev` rodando): `node tools/<teste>.mjs <pasta-de-capturas>`, com `test-buy`, `test-barricade`, `test-doors`, `test-weapons`, `test-box`, `test-powerups`, `test-forge`, `test-progress`, `test-reload`, `test-sights`, `test-hell`, `test-boss`, `test-rota`, `test-wonder`, `test-bispo`, `test-online`, `test-menu` (menu 3D, carregamento e jogar de novo), `test-pause` (menu de jogo com Esc, opções e troca de teclas), `test-sfx` (sons gravados; aceita `firefox`), `test-trincheira` (mapa Trincheira), `coop` e `firefox-sim` (os dois aceitam `rota` ou `trincheira` como segundo argumento). Para revisar animações: `tools/reload.mjs` (capturas da recarga em câmera lenta) `tools/dog-shot.mjs` e `tools/boss-shot.mjs` (Cão Infernal e Carrasco de perto) e `tools/sheet.mjs` (junta capturas numa folha), `tools/probe-hits.mjs` (dano e marcador de acerto de cada arma), `tools/guns-shot.mjs` (armas na mão) e `tools/forge-fx.mjs` (efeitos da Forja) e `tools/rota-tour.mjs` (fotos de cada parada do Rota), `tools/trincheira-tour.mjs <pasta> [aberto]` (fotos de cada área da Trincheira), `npx tsx tools/trincheira-navpng.ts` (grade dos zumbis da Trincheira numa imagem), `tools/rota-look.mjs` (estrada, mata, milharal e um item visto de longe), `tools/polish-look.mjs <pasta> [mapa]` (menu, HUD em combate, zumbi de perto, caixa, máquina, pausa e fim de jogo), `tools/town-tour.mjs` (fotos de dentro de cada prédio da Cidade), `tools/bispo-shot.mjs` (o Bispo de perto) `tools/view.mjs` (vistas avulsas), `tools/menu-shots.mjs` (cada plano de câmera do fundo do menu e a tela de carregamento), `tools/crop.mjs` (amplia um pedaço de uma captura), `tools/menu-frame.mjs` (um instante de um plano do menu, sem os botões), `tools/feet-shot.mjs` (pés do zumbi mais perto), `tools/blob-count.mjs` (sombras dos personagens no fundo do menu), `tools/menu-controls-shot.mjs` (editor de teclas do menu principal), `tools/probe-pause-hit.mjs` (quem recebe o clique no menu de jogo) e `tools/sfx-levels.mjs` (volume de cada som gravado comparado com o sintetizado). Sons gravados: `tools/build-sfx.mjs` gera `public/sfx` a partir dos pacotes CC0 (ver `assets/LICENSES.md`). Para achar problemas: `tools/soak.mjs` (joga sozinho por minutos e mede memória, objetos e FPS), `tools/menu-cycle.mjs` (entra e sai de partidas e confere se nada fica preso na placa de vídeo), `tools/leak-probe.mjs` (confere se a partida anterior sai da memória), `tools/menu-leak.mjs` (troca o mapa do menu várias vezes e mede a placa de vídeo), `tools/probe-dead-hud.mjs` (posição dos pontos e da munição com o jogador caído) `npx tsx tools/map-info.ts` (resumo dos mapas), `npx tsx tools/rota-stats.ts` (vegetação do Rota e o que ficou em cima da estrada) e `npx tsx tools/passthru.ts [mapa]` (objetos na altura do corpo que não colidem).
 

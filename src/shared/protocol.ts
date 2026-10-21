@@ -368,7 +368,8 @@ export type ClientMsg =
   // token = conta do placar online (opcional): o servidor registra a partida de co-op no nome dela
   // bank = saldo do banco guardado no navegador (limita os saques na partida)
   | { t: 'create'; name: string; level: number; startRound: number; mapId: string; token?: string; bank?: number }
-  | { t: 'join'; code: string; name: string; level: number; token?: string; bank?: number }
+  // v = versão do protocolo do co-op sem servidor (quem tem versão diferente recebe aviso para atualizar a página)
+  | { t: 'join'; code: string; name: string; level: number; token?: string; bank?: number; v?: number }
   | { t: 'config'; startRound: number; mapId: string }
   | { t: 'start' }
   // anfitrião tira um jogador do lobby
