@@ -1,4 +1,4 @@
-// Fotografa o menu e cada plano de câmera do fundo 3D, nos dois mapas, e a tela de carregamento.
+// Fotografa o menu e cada plano de câmera do fundo 3D, em todos os mapas, e a tela de carregamento.
 // Uso: node tools/menu-shots.mjs <pasta> [largura] [altura]
 import { chromium } from 'playwright-core';
 const out = process.argv[2] ?? '.';
@@ -11,7 +11,7 @@ page.on('pageerror', (e) => errs.push(e.message));
 page.on('console', (m) => m.type() === 'error' && errs.push(m.text()));
 await page.goto('http://localhost:5173/?autoplay');
 await page.waitForLoadState('networkidle');
-for (const map of ['cidade', 'rota']) {
+for (const map of ['cidade', 'rota', 'trincheira']) {
   await page.click(`#map-choice [data-map="${map}"]`);
   await (await page.waitForFunction((m) => window.__menu?.map.id === m, map, { timeout: 60000 })).dispose();
   for (let i = 0; i < 3; i++) {

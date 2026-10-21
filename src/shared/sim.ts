@@ -212,6 +212,8 @@ export class GameSim {
       this.bus = { x, z, yaw: Math.atan2(nx - x, nz - z), seg: s.at, d: 0, v: 0, wait: BUS.firstWait, stop: s.zone, honked: false };
     }
     this.ritual = map.ritual ? { candles: map.ritual.candles.map(() => false), state: 'idle', t: 0 } : null;
+    // mapa sem velas nem energia (Trincheira): a Forja já começa acesa
+    if (!map.forge.candles.length && !map.forgeNeedsPower) this.forge.on = true;
     this.world = new World(map);
     this.nav = new NavGrid(this.world, ZOMBIE.radius);
     this.boards = map.entries.map(() => ENTRY_BOARDS);
@@ -1888,7 +1890,8 @@ export class GameSim {
 
   // pontos de surgir da terra nas áreas já abertas
   private openSpawns() {
-    return this.world.map.zombieSpawns.filter((s) => s.area === null || this.world.openDoors.has(s.area));
+    const open = (a: string) => this.world.openDoors.has(a);
+    return this.world.map.zombieSpawns.filter((s) => s.area === null || (Array.isArray(s.area) ? s.area.some(open) : open(s.area)));
   }
 
   // Cão preso: cai outro raio perto de alguém

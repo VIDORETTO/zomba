@@ -31,7 +31,9 @@ export type MaterialId =
   | 'awning'
   | 'sandbag'
   | 'stone'
-  | 'neon';
+  | 'neon'
+  // lama molhada da Terra de Ninguém (Trincheira)
+  | 'mud';
 
 // Um bloco é ao mesmo tempo visual e colisão (quando solid=true).
 // Blocos sólidos são sempre alinhados aos eixos; só os decorativos podem girar.
@@ -163,10 +165,20 @@ export interface Foliage {
 }
 
 // Ponto onde zumbis surgem da terra; area = porta que precisa estar aberta (null = sempre).
+// Com uma lista, basta qualquer uma das portas estar aberta.
 export interface SpawnPoint {
   x: number;
   z: number;
-  area: string | null;
+  area: string | string[] | null;
+}
+
+// Tipo de chão em grade de 1 m (som dos passos): d = terra, h = duro, w = madeira, m = lama
+export interface SurfaceGrid {
+  ox: number;
+  oz: number;
+  w: number;
+  h: number;
+  data: string;
 }
 
 export interface MapDef {
@@ -208,4 +220,10 @@ export interface MapDef {
   mist?: Rect[];
   // até onde (m) os zumbis acham caminho em volta dos jogadores
   navRange?: number;
+  // chão de cada lugar (sem isso o navegador adivinha pelo mapa)
+  surface?: SurfaceGrid;
+  // subtítulo da abertura (padrão: "Algum lugar no interior")
+  place?: string;
+  // céu: cor do alto e do brilho do sol (padrão: fim de tarde alaranjado)
+  sky?: { top: number; sun: number };
 }

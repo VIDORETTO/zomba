@@ -9,7 +9,7 @@ const SCALE: Record<MaterialId, number> = {
   asphalt: 6, sidewalk: 3, dirt: 5, concrete: 4, pavement: 6, brick: 3, brickDark: 3, plaster: 4,
   wood: 2.5, woodDark: 2.5, boards: 0, floorWood: 3, tile: 2, roof: 4, ceiling: 4,
   metal: 3, rust: 2, glass: 0, glassLit: 0, trim: 2, paintYellow: 1, paintWhite: 1,
-  carPaint: 4, tire: 1, lamp: 0, lava: 3, awning: 2, sandbag: 1.5, stone: 1.5, neon: 0,
+  carPaint: 4, tire: 1, lamp: 0, lava: 3, awning: 2, sandbag: 1.5, stone: 2.5, neon: 0, mud: 5,
 };
 
 const DEFAULT_TINT: Partial<Record<MaterialId, number>> = {
@@ -20,7 +20,7 @@ const DEFAULT_TINT: Partial<Record<MaterialId, number>> = {
   carPaint: 0x777777,
 };
 
-const NO_SHADOW = new Set<MaterialId>(['asphalt', 'pavement', 'dirt', 'paintYellow', 'paintWhite', 'lava', 'glass', 'glassLit', 'lamp']);
+const NO_SHADOW = new Set<MaterialId>(['asphalt', 'pavement', 'dirt', 'paintYellow', 'paintWhite', 'lava', 'glass', 'glassLit', 'lamp', 'mud']);
 
 export const FOG_COLOR = 0x5c3c27;
 export const FOG_DENSITY = 0.032;
@@ -73,6 +73,10 @@ function makeMaterial(mat: MaterialId, tint: number | undefined, tex: TexSet, si
       break;
     case 'carPaint':
       Object.assign(p, { roughness: 0.6, metalness: 0.35 });
+      break;
+    case 'mud':
+      // lama molhada: brilha um pouco com a luz baixa do céu
+      Object.assign(p, { roughness: 0.62, metalness: 0.04 });
       break;
     case 'lamp':
       Object.assign(p, { emissive: new THREE.Color(0xffe2b0), emissiveIntensity: 1.3 });
@@ -243,9 +247,9 @@ export function buildMapView(map: MapDef, tex: TexSet, scene: THREE.Scene, q: Qu
     depthWrite: false,
     fog: false,
     uniforms: {
-      top: { value: new THREE.Color(0x2a1a12) },
+      top: { value: new THREE.Color(map.sky?.top ?? 0x2a1a12) },
       horizon: { value: new THREE.Color(map.fogColor ?? FOG_COLOR) },
-      sun: { value: new THREE.Color(0xff8a3a) },
+      sun: { value: new THREE.Color(map.sky?.sun ?? 0xff8a3a) },
       sunDir: { value: sunDir },
     },
     vertexShader: /* glsl */ `

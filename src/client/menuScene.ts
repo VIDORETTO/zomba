@@ -54,6 +54,14 @@ const SHOTS: Record<string, Shot[]> = {
     // a Usina
     { from: [-70, 2.2, 255], to: [-61, 2.7, 254], look: [-44, 4, 244], lookTo: [-38, 4, 243], walk: [[-22, 251], [-56, 249]], road: 0 },
   ],
+  trincheira: [
+    // a Escavação com a Forja no meio do anel de runas
+    { from: [-2, 2.2, 9], to: [-7, 2.5, 7], look: [-15, 1.2, -7], lookTo: [-15, 1.6, -6], walk: [[-4, -22], [-12, -12]] },
+    // a lama da Terra de Ninguém, ao norte
+    { from: [-52, 1.8, -42], to: [-42, 2.0, -44], look: [-10, 1.5, -37], lookTo: [0, 1.6, -36], walk: [[-15, -36], [-40, -41]] },
+    // o Posto de Comando, onde a partida começa
+    { from: [101, 1.9, 60], to: [105, 2.1, 58], look: [97, 1.2, 42], lookTo: [99, 1.4, 42], walk: [[98, 45], [104, 52]] },
+  ],
 };
 
 // Som desligado: o menu reaproveita os zumbis do jogo sem gemidos.

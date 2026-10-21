@@ -1,5 +1,6 @@
 // Testes das regras da simulação (sem navegador). Uso: npx tsx tools/test-sim.ts
 import { buildTown } from '../src/shared/map/town';
+import { buildTrincheira } from '../src/shared/map/trincheira';
 import { getMap } from '../src/shared/map';
 import { GameSim, bossHealth, dogHealth, dogsForRound, zombieHealth } from '../src/shared/sim';
 import type { GameEvent } from '../src/shared/protocol';
@@ -1196,6 +1197,47 @@ check('mapa tem 6 máquinas e 3 caixotes', map.interactables.filter((i) => i.kin
   // corredor que sai 2 s atrás do ônibus, a 6,9 m/s
   check('correndo dá para alcançar o ônibus que saiu da parada', 6.9 * (8 - 2) > at[8], `ônibus a ${at[8]?.toFixed(1)} m em 8 s`);
   check('ônibus chega a uns 6 m/s (não fica lento demais)', top > 6 && top < 6.9, `máx ${top.toFixed(2)} m/s`);
+}
+
+// --- mapa Trincheira: cada portão libera só a sua área ---
+{
+  const tr = getMap('trincheira');
+  check('Trincheira: 6 portões, 9 barricadas, 6 locais da Caixa, 6 bebidas e a Forja acesa', tr.doors.length === 6 && tr.entries.length === 9 && tr.boxSpots.length === 6 &&
+    tr.interactables.filter((i) => i.kind === 'perk').length === 6 && new GameSim(tr, true).forge.on);
+  const s = new GameSim(tr, true);
+  s.addPlayer('a', 'A', 0);
+  s.start();
+  const nav = raw(s).nav;
+  const start = { x: tr.playerSpawns[0][0], z: tr.playerSpawns[0][1] };
+  const reach = (x: number, z: number) => {
+    nav.update([start]);
+    return nav.distanceAt(x, z) < 0xffff;
+  };
+  const open = (ids: string[]) => {
+    raw(s).world.openDoors.clear();
+    for (const id of ids) raw(s).world.openDoors.add(id);
+    nav.rebuild();
+  };
+  // "externo" = lama, Casamata e Estação: qualquer uma das duas portas do Posto libera as três
+  const areaOf = (a: string | string[] | null) => (a === null ? 'posto' : Array.isArray(a) ? 'externo' : a);
+  const areas = [...new Set(tr.zombieSpawns.map((p) => areaOf(p.area)))];
+  const only = (ids: string[], expect: string[]) => {
+    open(ids);
+    return tr.zombieSpawns.filter((p) => reach(p.x, p.z) !== expect.includes(areaOf(p.area))).map((p) => `${areaOf(p.area)}@${p.x},${p.z}`);
+  };
+  const leak0 = only([], ['posto']);
+  check('Trincheira: com tudo fechado só o Posto de Comando é alcançável', leak0.length === 0, leak0.join(' '));
+  const leak1 = [...only(['casamata'], ['posto', 'externo']), ...only(['estacao'], ['posto', 'externo'])];
+  check('Trincheira: Casamata ou Estação liberam a lama, sem abrir outras áreas', leak1.length === 0, leak1.join(' '));
+  const bad: string[] = [];
+  for (const id of ['oficina', 'vala', 'quartel', 'igreja']) if (only(['estacao', id], ['posto', 'externo', id]).length) bad.push(id);
+  check('Trincheira: Oficina, Vala, Quartel e Igreja abrem só a si mesmas', bad.length === 0 && areas.length === 6, bad.join(' '));
+  open(tr.doors.map((d) => d.id));
+  const unreach = tr.interactables.filter((i) => !reach(i.use[0], i.use[1]));
+  check('Trincheira: tudo aberto, toda interação e todo ponto de surgir são alcançáveis', unreach.length === 0 && tr.zombieSpawns.every((p) => reach(p.x, p.z)), unreach.map((i) => i.id).join(' '));
+  // o mapa é montado igual sempre (servidor e navegador precisam da mesma colisão)
+  const again = buildTrincheira();
+  check('Trincheira: montagem determinística', again.blocks.length === tr.blocks.length && again.zombieSpawns.every((p, i) => p.x === tr.zombieSpawns[i].x && p.z === tr.zombieSpawns[i].z));
 }
 
 console.log(`\n${passes} ok, ${fails} falharam`);

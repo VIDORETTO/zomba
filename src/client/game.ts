@@ -271,7 +271,7 @@ export class Game {
     const d = new Date();
     const hh = String(d.getHours()).padStart(2, '0');
     const mm = String(d.getMinutes()).padStart(2, '0');
-    this.hud.showIntro([this.o.map.name.toUpperCase(), 'Algum lugar no interior', `${WEEKDAYS[d.getDay()]}, ${hh}:${mm}`]);
+    this.hud.showIntro([this.o.map.name.toUpperCase(), this.o.map.place ?? 'Algum lugar no interior', `${WEEKDAYS[d.getDay()]}, ${hh}:${mm}`]);
     this.input.lock();
     this.last = performance.now();
     this.raf = requestAnimationFrame(this.frame);
@@ -1081,6 +1081,13 @@ export class Game {
           return b.mat === 'floorWood' || b.mat === 'wood' ? 'wood' : 'hard';
         }
       }
+    }
+    // mapa com o chão de cada lugar já marcado (Trincheira): lama soa como terra por enquanto
+    const sf = this.o.map.surface;
+    if (sf) {
+      const cx = Math.floor(x - sf.ox), cz = Math.floor(z - sf.oz);
+      const c = cx >= 0 && cz >= 0 && cx < sf.w && cz < sf.h ? sf.data[cz * sf.w + cx] : 'd';
+      return c === 'h' ? 'hard' : c === 'w' ? 'wood' : 'dirt';
     }
     // Rota: chão de concreto nas paradas, asfalto na estrada do ônibus, terra no resto
     const route = this.o.map.bus;

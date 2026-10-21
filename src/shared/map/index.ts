@@ -1,16 +1,18 @@
 import { buildRota } from './rota';
 import { buildTown } from './town';
+import { buildTrincheira } from './trincheira';
 import type { MapDef } from './types';
 
 // Mapas do jogo. Cada um é montado uma vez só (no navegador e no servidor).
 export const MAPS = [
   { id: 'cidade', name: 'Cidade', desc: 'Cruzamento com fenda de lava, quintais e cemitério.' },
   { id: 'rota', name: 'Rota', desc: 'Cinco paradas ligadas por um ônibus, no meio da névoa.' },
+  { id: 'trincheira', name: 'Trincheira', desc: 'Lama, seis geradores, colossos e uma escavação antiga.' },
 ] as const;
 
 export type MapId = (typeof MAPS)[number]['id'];
 
-const BUILDERS: Record<MapId, () => MapDef> = { cidade: buildTown, rota: buildRota };
+const BUILDERS: Record<MapId, () => MapDef> = { cidade: buildTown, rota: buildRota, trincheira: buildTrincheira };
 const cache = new Map<string, MapDef>();
 
 export const isMapId = (id: unknown): id is MapId => typeof id === 'string' && id in BUILDERS;

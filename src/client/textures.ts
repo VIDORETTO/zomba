@@ -116,11 +116,11 @@ function finish(c: HTMLCanvasElement, srgb = true): THREE.CanvasTexture {
   return t;
 }
 
-function bricks(size: number, mortar: RGB, palette: RGB[], seed: number): HTMLCanvasElement {
+function bricks(size: number, mortar: RGB, palette: RGB[], seed: number, rows = 16): HTMLCanvasElement {
   const [c, ctx] = canvas(size);
   noiseFill(ctx, size, mortar, 0.2, 8, seed);
   const rnd = mulberry32(seed);
-  const rows = 16;
+
   const bh = size / rows;
   const bw = bh * 2.1;
   const cols = Math.round(size / bw);
@@ -247,7 +247,8 @@ export function buildTextures(): TexSet {
     }
     blotches(ctx, s, 6, 'rgba(20,18,16,0.25)', 15, 50, rnd);
     t.concrete = finish(c);
-    t.stone = t.concrete;
+    // pedra em blocos grandes (Igreja, Cripta, Escavação)
+    t.stone = finish(bricks(256, [52, 50, 47], [[150, 146, 138], [132, 128, 120], [160, 154, 142], [120, 117, 110]], 12, 5));
   }
   {
     // piso de concreto: placas de 3 m com juntas, manchas de óleo, rachaduras e mato nas frestas
@@ -489,6 +490,31 @@ export function buildTextures(): TexSet {
     const [c, ctx] = canvas(s);
     noiseFill(ctx, s, [215, 215, 215], 0.15, 4, 23);
     t.cloth = finish(c);
+  }
+  {
+    // lama: marrom bem escuro, poças mais lisas e marcas de bota e de roda
+    const s = 256;
+    const [c, ctx] = canvas(s);
+    const mr = mulberry32(41);
+    noiseFill(ctx, s, [58, 44, 32], 0.4, 4, 24);
+    blotches(ctx, s, 9, 'rgba(18,14,10,0.55)', 14, 46, mr);
+    blotches(ctx, s, 6, 'rgba(95,88,80,0.35)', 8, 26, mr);
+    ctx.strokeStyle = 'rgba(20,15,10,0.45)';
+    ctx.lineWidth = 5;
+    for (let i = 0; i < 2; i++) {
+      const y = mr() * s;
+      ctx.beginPath();
+      ctx.moveTo(0, y);
+      ctx.bezierCurveTo(s * 0.3, y + 20, s * 0.6, y - 20, s, y);
+      ctx.stroke();
+    }
+    ctx.fillStyle = 'rgba(25,18,12,0.5)';
+    for (let i = 0; i < 40; i++) {
+      ctx.beginPath();
+      ctx.ellipse(mr() * s, mr() * s, 3 + mr() * 3, 6 + mr() * 4, mr() * Math.PI, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    t.mud = finish(c);
   }
   return t;
 }
