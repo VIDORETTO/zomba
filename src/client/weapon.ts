@@ -119,6 +119,9 @@ export class WeaponView {
   private readonly shieldRig = new THREE.Group();
   // Punho de Ferro no lugar da faca (o game.ts liga com me.punho)
   punho = false;
+  // elemento do Punho depois da missão (cor do brilho nos nós dos dedos); null = só aço
+  punhoEl: 'fogo' | 'gelo' | 'vento' | 'raio' | null = null;
+  private fistGlow: THREE.Mesh | null = null;
   // multiplicadores das bebidas: tempo de recarga e intervalo entre tiros
   mods = { reload: 1, fire: 1 };
 
@@ -363,6 +366,11 @@ export class WeaponView {
     for (const x of [-0.03, 0, 0.03]) box(f, 0.008, 0.008, 0.008, x, 0.032, 0.01, rust);
     box(f, 0.09, 0.075, 0.05, 0, -0.005, 0.07, rust);
     limb(f, new THREE.Vector3(0, -0.01, 0.09), new THREE.Vector3(0.05, -0.12, 0.42), 0.075, m.sleeve);
+    // brilho elemental nos nós dos dedos (aparece com o Punho de um elemento)
+    this.fistGlow = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.05, 0.05), new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.85, blending: THREE.AdditiveBlending, depthWrite: false }));
+    this.fistGlow.position.set(0, 0.01, -0.07);
+    this.fistGlow.visible = false;
+    f.add(this.fistGlow);
     f.visible = false;
     this.knifeRig.add(f);
   }
@@ -994,6 +1002,12 @@ export class WeaponView {
   }
 
   update(dt: number, t: number, input: Input, pc: PlayerController, look: [number, number], active: boolean) {
+    if (this.fistGlow) {
+      this.fistGlow.visible = !!this.punhoEl;
+      if (this.punhoEl) {
+        (this.fistGlow.material as THREE.MeshBasicMaterial).color.set({ fogo: 0xff7a2a, gelo: 0x6ab8ff, vento: 0xffe14a, raio: 0xb06aff }[this.punhoEl]).multiplyScalar(1.3 + 0.3 * Math.sin(t * 7));
+      }
+    }
     this.updateShieldHand(dt, t, input, pc, active);
     if (this.shieldHand) {
       // sem tiro nem recarga: só a pancada (a fila de tiros e a mira ficam zeradas)

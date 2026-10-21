@@ -4,7 +4,7 @@ import { TRINCHEIRA } from '../../shared/constants';
 import { colossusFeet, colossusPose } from '../../shared/colossus';
 import type { Interactable, MapDef } from '../../shared/map/types';
 import type { Element, GameEvent, NetPlayer, Snapshot, TrincheiraSnap } from '../../shared/protocol';
-import { COLOSSI, ELEMENTS, ELEMENT_LIST, SET_PARTS, TEAM_ITEMS } from '../../shared/trincheira-info';
+import { COLOSSI, ELEMENTS, ELEMENT_LIST, RADIO_TEXT, SET_PARTS, TEAM_ITEMS } from '../../shared/trincheira-info';
 import type { Hud, TrAlert } from '../hud';
 import type { QualityConfig } from '../quality';
 import type { Sample } from '../snapbuffer';
@@ -22,6 +22,7 @@ import { IgrejaView } from './igrejaView';
 import { LamaView } from './lamaView';
 import { MoundView } from './moundView';
 import { PartsView } from './partsView';
+import { SegredoView } from './segredoView';
 import { SkyFx } from './skyFx';
 import { StaffView } from './staffView';
 import { TankView } from './tankView';
@@ -65,6 +66,7 @@ export class TrincheiraClient {
   private readonly escav: EscavacaoView;
   private readonly igreja: IgrejaView;
   private readonly lama: LamaView;
+  private readonly segredo: SegredoView;
   private readonly tank: TankView;
   private readonly colossus: ColossusView;
   private readonly weather: WeatherFx;
@@ -103,6 +105,7 @@ export class TrincheiraClient {
     this.escav = new EscavacaoView(this.c);
     this.igreja = new IgrejaView(this.c);
     this.lama = new LamaView(this.c);
+    this.segredo = new SegredoView(this.c);
     this.tank = new TankView(this.c);
     this.colossus = new ColossusView(this.c);
     this.weather = new WeatherFx(scene, opts.quality.particles, this.snd);
@@ -188,6 +191,7 @@ export class TrincheiraClient {
     this.forja.update(tr.forjaUp, dt);
     this.escav.update(tr, t);
     this.igreja.update(t);
+    this.segredo.update(dt, t);
     {
       const fog = this.scene.fog as THREE.FogExp2 | null;
       if (fog) this.lama.update(t, this.weather.rainAmount, fog.color, fog.density);
@@ -345,6 +349,21 @@ export class TrincheiraClient {
         }
         break;
       }
+      case 'segredo':
+        this.segredo.onEvent(e);
+        break;
+      case 'punho':
+        if (e.pid === local) this.c.notify(e.el ? `Seu punho agora é o <b style="color:${ELEMENTS[e.el].color}">Punho de ${ELEMENTS[e.el].name}</b>.` : 'Você voltou ao <b>Punho de Ferro</b>.');
+        this.snd.play('cajado-desperto', new THREE.Vector3(this.c.T.ring.c[0], 1, this.c.T.ring.c[1]), 0.5);
+        break;
+      case 'radio':
+        // só quem ouviu vê o texto; o chiado toca no aparelho para todos por perto
+        {
+          const it = this.c.map.interactables.find((i) => i.id === `radio-${e.idx}`);
+          if (it) this.snd.play('radio', new THREE.Vector3(it.use[0], 1.2, it.use[1]));
+          if (e.pid === local) this.hud?.tr.showRadio(`Rádio de campanha ${e.idx + 1} de 6`, RADIO_TEXT[e.idx] ?? []);
+        }
+        break;
       case 'aneis':
         this.escav.onRingTurn(e.ring, e.pos);
         this.snd.play('cajado-monta', new THREE.Vector3(this.c.T.ring.c[0], 0.5, this.c.T.ring.c[1]), 0.5);
@@ -413,7 +432,9 @@ export class TrincheiraClient {
         break;
       }
       case 'fx': {
-        const col = e.kind === 'queima' ? 0xff7a20 : e.kind === 'congela' ? 0xaee0ff : e.kind === 'estilhaca' ? 0xe8f6ff : e.kind === 'sangue' ? 0xb01010 : 0xffa040;
+        const col = e.kind === 'queima' ? 0xff7a20 : e.kind === 'congela' ? 0xaee0ff : e.kind === 'estilhaca' ? 0xe8f6ff : e.kind === 'sangue' ? 0xb01010 : e.kind === 'vento' ? 0xffe14a : e.kind === 'raio' ? 0xb06aff : 0xffa040;
+        if (e.kind === 'raio') this.fx.ring(e.x, e.y - 0.5, e.z, 0.5, 3, 0xb06aff, 0.4);
+        if (e.kind === 'vento') this.fx.ring(e.x, e.y - 0.8, e.z, 0.5, 4, 0xffe14a, 0.5);
         const n = e.kind === 'estilhaca' ? 30 : 10;
         this.fx.burst(e.x, e.y + 1, e.z, n, e.kind === 'estilhaca' ? 5 : 2, col, 0.7, e.kind === 'estilhaca' ? 0.18 : 0.35, { grav: e.kind === 'estilhaca' ? 8 : 0 });
         if (e.kind === 'estilhaca') this.snd.play('gelo-quebra', new THREE.Vector3(e.x, e.y + 1, e.z), 0.7);
@@ -536,6 +557,11 @@ export class TrincheiraClient {
         if (!el) return null;
         const s = tr.staffs[EI[el]];
         const nm = `Cajado de ${ELEMENTS[el].name}`;
+        // depois da missão, quem tem o Punho de Ferro o troca pelo do elemento do altar
+        if (me.punho && s.st !== 'altar') {
+          if (tr.missao.step < 6) return { text: `O altar de ${ELEMENTS[el].name} troca o <b>Punho de Ferro</b> depois da missão`, can: false, price: 0 };
+          return { text: me.punhoEl === el ? `Pressione ${K} para voltar ao <b>Punho de Ferro</b>` : `Pressione ${K} para trocar pelo <b>Punho de ${ELEMENTS[el].name}</b>`, can: true, price: 0 };
+        }
         if (s.st === 'mao' && s.owner === me.id && !s.awake) {
           if (!s.solved) return { text: `O enigma do <b>${nm}</b> ainda não foi resolvido<small>${this.puzzleHint(el)}</small>`, can: false, price: 0 };
           if (TRINCHEIRA.ringsStep && !s.rings) return { text: `Falta a 2ª etapa do <b>${nm}</b><small>Na Escavação: alinhe os 4 anéis no símbolo de ${ELEMENTS[el].name} e acerte a esfera acesa com este cajado</small>`, can: false, price: 0 };
@@ -563,6 +589,10 @@ export class TrincheiraClient {
         if (ready) return { text: `Pressione ${K} para retirar os prêmios do <b>Baú de Desafios</b>`, can: true, price: 0 };
         return { text: '<b>Baú de Desafios</b><small>Cumpra os desafios abaixo para abrir</small>', can: false, price: 0 };
       }
+      case 'radio':
+        return { text: `Pressione ${K} para ouvir o <b>rádio de campanha</b>`, can: true, price: 0 };
+      case 'cantil':
+        return { text: `Pressione ${K} para balançar o <b>cantil de metal</b>`, can: true, price: 0 };
       case 'cabine': {
         const id = it.ref as keyof typeof COLOSSI;
         const nm = COLOSSI[id].name;
@@ -593,7 +623,7 @@ export class TrincheiraClient {
   }
 
   dispose() {
-    for (const v of [this.weather, this.fx, this.escav, this.igreja, this.lama, this.sky, this.colossus]) v.dispose();
+    for (const v of [this.weather, this.fx, this.escav, this.igreja, this.lama, this.sky, this.colossus, this.segredo]) v.dispose();
   }
 }
 

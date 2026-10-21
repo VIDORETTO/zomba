@@ -26,8 +26,8 @@ export class LocalTransport implements Transport {
   private readonly sim: GameSim;
   private acc = 0;
 
-  constructor(map: MapDef, name: string, opts: { startRound?: number; level?: number; bank?: number } = {}) {
-    this.sim = new GameSim(map, true, { startRound: opts.startRound });
+  constructor(map: MapDef, name: string, opts: { startRound?: number; level?: number; bank?: number; log?: boolean } = {}) {
+    this.sim = new GameSim(map, true, { startRound: opts.startRound, log: opts.log });
     this.sim.addPlayer(this.localId, name, 0, opts.level ?? 1, opts.bank ?? 0);
     this.sim.start();
   }

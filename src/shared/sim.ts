@@ -10,7 +10,7 @@ import { bossHealth, zombieHealth } from './rounds';
 import type {
   BoxState, ForgeState, GameEvent, NetPlayer, NetZombie, PlayerInput, ProjectileKind, RoundState, Snapshot, ZombieAnim, ZombieKind,
 } from './protocol';
-import { angleLerp, clamp } from './rng';
+import { angleLerp, clamp, mulberry32 } from './rng';
 import { BASE_PERKS, MAX_PERKS, PERK_FX, SELF_REVIVE_TIME, SOLO_SELF_REVIVES, perkPrice, type PerkId } from './perks';
 import { DEFAULT_POOL, POWERUP, POWERUPS, type PowerupKind } from './powerups';
 import { BANK, MAX_START_ROUND, startPoints } from './progress';
@@ -51,6 +51,11 @@ interface SimGrenade {
 }
 
 export interface SimZombie {
+  // no convés do tanque (C7): posição local guardada, e a escalada em andamento (segundos e de onde saiu)
+  onTank?: boolean;
+  tl?: [number, number];
+  climbT?: number;
+  climbFrom?: [number, number];
   id: number;
   x: number;
   y: number;
@@ -215,7 +220,14 @@ export class GameSim {
   readonly tr!: TrincheiraSystems | null;
   private curWeapon: string | null = null;
 
-  constructor(map: MapDef, readonly solo: boolean, opts: { startRound?: number } = {}) {
+  // gerador da partida (com `seed`, sempre a mesma sequência; sem ela, o aleatório do motor)
+  private rng: () => number = Math.random;
+  // registro de ajuste da Trincheira (F1): só ligado com `log: true`
+  private readonly logOn: boolean;
+
+  constructor(map: MapDef, readonly solo: boolean, opts: { startRound?: number; seed?: number; log?: boolean } = {}) {
+    if (opts.seed !== undefined) this.rng = mulberry32(opts.seed);
+    this.logOn = !!opts.log;
     this.firstRound = Math.max(1, Math.min(MAX_START_ROUND, Math.floor(opts.startRound ?? 1)));
     // começando depois da rodada 4, a primeira rodada infernal vem 2 a 4 rodadas depois
     this.nextHellRound = this.firstRound < DOGS.firstMin
@@ -267,7 +279,9 @@ export class GameSim {
       grantPerk: (p, perk) => self.grantPerk(p, perk),
       giveWeapon: (p, w, held) => self.giveWeapon(p, w, held),
       damageZombie: (z, dmg, p, part, knife, blast) => self.damageZombie(z, dmg, p, part, knife, blast),
-      damagePlayer: (p, dmg, fx, fz, lava) => self.damagePlayer(p, dmg, fx, fz, lava),
+      rand: () => self.rng(),
+      devLog: self.logOn,
+      damagePlayer: (p, dmg, fx, fz, lava, cause) => self.damagePlayer(p, dmg, fx, fz, lava, cause),
       revivePlayer: (p, by) => self.revivePlayer(p, by),
       killSilently: (z, fx) => self.killSilently(z, fx),
       makeZombie: (kind, x, z, hp, speed, extra) => self.makeZombie(kind, x, z, hp, speed, extra),
@@ -310,6 +324,11 @@ export class GameSim {
       arcShot: (p, def, ox, oy, oz, dx, dy, dz) => self.arcShot(p as SimPlayer, def, ox, oy, oz, dx, dy, dz),
       zombieOnSegment: (ax, ay, az, bx, by, bz) => self.zombieOnSegment(ax, ay, az, bx, by, bz),
     };
+  }
+
+  // registro de ajuste da Trincheira (null sem a opção `log`): rodadas e tempos dos geradores, quedas por causa, recapturas, colossos e cajados
+  devLog() {
+    return this.tr?.log ?? null;
   }
 
   addPlayer(id: string, name: string, slot: number, level = 1, bank = 0) {
@@ -440,6 +459,8 @@ export class GameSim {
           this.curWeapon = 'punho';
           this.damageZombie(z, KNIFE.heavyDamage * TRINCHEIRA.punhoMult, p, 'body', true);
           this.killFx = null;
+          // Punho elemental (depois da missão): fogo, gelo, vento ou raio
+          this.tr.punhoEffect(p, z, dx / dl, dz / dl);
         } else {
           this.curWeapon = 'knife';
           this.damageZombie(z, p.heavyKnife ? KNIFE.heavyDamage : KNIFE.damage, p, 'body', true);
@@ -1058,7 +1079,7 @@ export class GameSim {
     by.revives++;
   }
 
-  private damagePlayer(p: SimPlayer, dmg: number, fromX: number, fromZ: number, lava: boolean) {
+  private damagePlayer(p: SimPlayer, dmg: number, fromX: number, fromZ: number, lava: boolean, cause?: string) {
     if (p.life !== 'alive') return;
     // Trincheira: o Escudo de costas e a invulnerabilidade da saída da cabine
     if (this.tr) {
@@ -1072,6 +1093,7 @@ export class GameSim {
     p.health = 0;
     p.life = 'downed';
     p.downs++;
+    this.tr?.noteDown(cause);
     p.bleed = BLEEDOUT_TIME;
     p.revive = 0;
     p.reviveTarget = null;
@@ -2505,6 +2527,8 @@ export class GameSim {
         this.updateBispo(z, dt, targets);
         continue;
       }
+      // Trincheira: zumbi comum sobe no tanque lento (escalada de 1 s) e, no convés, é levado junto
+      if (this.tr?.zombieTank(z, dt)) continue;
       // medidas do tipo: zumbi ou cão
       const C = isVulto(z) ? VULTO : dog ? DOGS : ZOMBIE;
 
@@ -2547,6 +2571,8 @@ export class GameSim {
       if (z.losT <= 0) {
         z.losT = 0.25 + Math.random() * 0.1;
         z.los = td < ZOMBIE.directChaseRange && this.world.lineOfSight(z.x, z.y + (dog ? 0.6 : 1.2), z.z, tp.x, tp.y + 1.2, tp.z);
+        // no convés não há caminho a seguir: vai direto ao jogador
+        if (z.onTank) z.los = true;
       }
       if (!z.los) {
         const d = this.nav.direction(z.x, z.z);
@@ -2601,7 +2627,12 @@ export class GameSim {
         busCollide(this.bus, z, C.radius);
         z.y = Math.max(z.y, busGround(this.bus, z.x, z.z, C.radius, z.y, 0.5));
       }
-      if (this.tr) busCollide(this.tr.tankPose(), z, C.radius, TANK_BODY);
+      if (this.tr) {
+        // no convés o zumbi anda a altura do convés (o casco só o empurra por fora)
+        if (z.onTank) z.y = TANK_BODY.floorY;
+        busCollide(this.tr.tankPose(), z, C.radius, TANK_BODY);
+        this.tr.zombieDeckFix(z);
+      }
       z.yaw = angleLerp(z.yaw, Math.atan2(dx, dz), Math.min(1, dt * 6));
 
       // Zumbi preso longe de todos: reaparece em outro ponto.

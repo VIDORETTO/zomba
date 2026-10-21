@@ -320,7 +320,7 @@ function exitGame(toMenu = true) {
 
 function startSolo() {
   ensureAudio();
-  startGame(new LocalTransport(getMap(prefs.mapId), playerName(), { startRound: prefs.startRound, level: playerLevel(), bank: bankBalance(playerName()) }), prefs.mapId);
+  startGame(new LocalTransport(getMap(prefs.mapId), playerName(), { startRound: prefs.startRound, level: playerLevel(), bank: bankBalance(playerName()), log: import.meta.env.DEV && /[?&](autoplay|registro)\b/.test(location.search) }), prefs.mapId);
 }
 $('btn-solo').addEventListener('click', startSolo);
 

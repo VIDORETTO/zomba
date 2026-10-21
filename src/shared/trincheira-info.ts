@@ -50,6 +50,16 @@ export const CHALLENGE_TEXT = [
   { name: 'Chegar viva(o) ao fim da rodada 15', prize: '+1 vaga de bebida' },
 ];
 
+// Rádios de campanha (C9): 6 gravações curtas, uma por lugar. A história é própria: a escavação, os colossos e a frente de batalha.
+export const RADIO_TEXT: string[][] = [
+  ['Posto de Comando, aqui é o Tenente Brandt. A frente caiu na noite de terça. Se alguém me ouve: a escavação do Capitão Veiga achou algo debaixo do poço.', 'Os homens que desceram não voltaram como saíram.'],
+  ['Diário de campo, página 12. A pedra do poço canta quando os geradores ligam. Veiga diz que é o motor da Forja acordando.', 'Quatro cajados, quatro elementos. Cada um pede uma prova antes de acordar.'],
+  ['Oficina de reparos. Os engenheiros acharam planos de aço mais velhos que a cidade: três gigantes de ferro e vapor, Atlas, Golias e Titã.', 'Ninguém os construiu. Eles só começaram a andar.'],
+  ['Quartel Norte, relatório. Os Cruzados não são soldados: vestem armadura de cruz e não dormem. Querem desligar os geradores, um por um.', 'Se um gerador cair, religue de graça. Eles odeiam o barulho.', 'E fiquem longe das pegadas quando o chão tremer.'],
+  ['Igreja do Posto Oeste. O padre deixou a Tábua de Pedra no altar e fugiu. Dizem que ela só se enche com o aço frio de uma faca.', 'Quem a leva até o fim ganha um punho de ferro.'],
+  ['Última gravação. Se os quatro cajados despertarem e a Forja cantar, a Canção da Escavação termina de uma vez.', 'Defendam o poço por noventa segundos. O resto, deixo com vocês.'],
+];
+
 export const MISSAO_STEPS = [
   'Despertar os 4 cajados',
   'Colocar os 4 cajados despertos na Mesa dos Cajados',
@@ -80,4 +90,6 @@ export const ids = {
   challenge: (i: number) => `desafio-${i}`,
   poco: 'poco',
   ring: (i: number) => `anel-${i}`,
+  cantil: (i: number) => `cantil-${i}`,
+  radio: (i: number) => `radio-${i}`,
 };

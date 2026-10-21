@@ -12,7 +12,7 @@ export type TrSound =
   | 'blindado-salto' | 'cruzado-grito' | 'portal-musica' | 'portal-abre' | 'teleporte' | 'cristal' | 'cajado-monta'
   | 'cajado-desperto' | 'alvo-ok' | 'alvo-erro' | 'tabua' | 'desafio' | 'artilharia-lanca' | 'artilharia-apito' | 'artilharia-bomba'
   | 'sangue-morto' | 'missao-passo' | 'missao-fim' | 'fogo-bola' | 'fogo-pilar' | 'gelo-raio' | 'gelo-quebra' | 'nevasca'
-  | 'redemoinho' | 'raio-bola' | 'trovao' | 'artilharia-longe' | 'vinheta-inicio' | 'vinheta-fim' | 'vinheta-blindado' | 'passo-distante' | 'rangido-colosso';
+  | 'redemoinho' | 'raio-bola' | 'trovao' | 'artilharia-longe' | 'vinheta-inicio' | 'vinheta-fim' | 'vinheta-blindado' | 'passo-distante' | 'rangido-colosso' | 'cantil-1' | 'cantil-2' | 'cantil-3' | 'segredo-musica' | 'radio';
 
 export const TR_SOUNDS: TrSound[] = [
   'gerador-liga', 'gerador-perde', 'gerador-captura', 'alarme', 'forja-sobe', 'fonte-gira', 'fonte-bebida', 'fonte-foge',
@@ -21,7 +21,7 @@ export const TR_SOUNDS: TrSound[] = [
   'blindado-salto', 'cruzado-grito', 'portal-musica', 'portal-abre', 'teleporte', 'cristal', 'cajado-monta',
   'cajado-desperto', 'alvo-ok', 'alvo-erro', 'tabua', 'desafio', 'artilharia-lanca', 'artilharia-apito', 'artilharia-bomba',
   'sangue-morto', 'missao-passo', 'missao-fim', 'fogo-bola', 'fogo-pilar', 'gelo-raio', 'gelo-quebra', 'nevasca',
-  'redemoinho', 'raio-bola', 'trovao', 'artilharia-longe', 'vinheta-inicio', 'vinheta-fim', 'vinheta-blindado', 'passo-distante', 'rangido-colosso',
+  'redemoinho', 'raio-bola', 'trovao', 'artilharia-longe', 'vinheta-inicio', 'vinheta-fim', 'vinheta-blindado', 'passo-distante', 'rangido-colosso', 'cantil-1', 'cantil-2', 'cantil-3', 'segredo-musica', 'radio',
 ];
 
 export interface AudioKit {
@@ -207,6 +207,47 @@ export class TrAudio {
   }
   loopMode(name: string): string | null {
     return this.genLoops.get(Number(name.replace('gen', '')))?.mode ?? null;
+  }
+
+
+  // Música do segredo (~90 s, toda sintetizada): marcha lenta em lá menor, 27 compassos de 3,33 s (72 bpm),
+  // com baixo, acordes em pad, melodia de sinos e uma caixa distante. Toca no canal da música.
+  readonly segredoSecs = 27 * (60 / 72) * 4;
+  private segredoMusic(t0: number) {
+    const { k } = this;
+    const beat = 60 / 72;
+    const bar = beat * 4;
+    const hz = (m: number) => 440 * Math.pow(2, (m - 69) / 12);
+    // progressão: Am, F, C, G (4 compassos); as seções variam a melodia e a densidade
+    const prog = [[57, 60, 64], [53, 57, 60], [48, 52, 55], [55, 59, 62]];
+    const bass = [45, 41, 36, 43];
+    const scale = [69, 72, 74, 76, 79, 81, 84];
+    let seed = 7;
+    const rnd = () => ((seed = (seed * 1664525 + 1013904223) >>> 0) / 4294967296);
+    const d = k.music;
+    for (let b = 0; b < 27; b++) {
+      const t = t0 + b * bar;
+      const chord = prog[b % 4];
+      const section = Math.floor(b / 9);
+      // baixo: duas notas por compasso
+      this.tone(d, t, 'triangle', hz(bass[b % 4]), hz(bass[b % 4]) * 0.995, beat * 1.9, 0.16, 0.02, 400);
+      if (section > 0) this.tone(d, t + beat * 2, 'triangle', hz(bass[b % 4] + 7), hz(bass[b % 4] + 7), beat * 1.8, 0.1, 0.02, 400);
+      // pad do acorde
+      this.pad(chord.map(hz), t, bar * 1.1, 0.05 + section * 0.01, 900);
+      // melodia de sinos: 3 notas por compasso, sorteadas da escala, com pausas na primeira seção
+      for (let n = 0; n < 4; n++) {
+        if (section === 0 && n % 2) continue;
+        if (rnd() < 0.25) continue;
+        const note = scale[Math.floor(rnd() * scale.length)];
+        this.bell(hz(note), t + n * beat + (section === 2 ? 0.0 : 0.02), 0.07 + section * 0.02, 1.6);
+      }
+      // caixa distante no 2 e no 4 a partir da segunda seção
+      if (section > 0) {
+        for (const q of [1, 3]) this.thump(d, t + q * beat, 140, 80, 0.12, 0.2, 'triangle');
+      }
+    }
+    // final: acorde longo de lá maior que se apaga
+    this.pad([hz(45), hz(57), hz(61), hz(64)], t0 + 26 * bar + bar * 0.5, bar * 1.6, 0.07, 700);
   }
 
   // pancada metálica: parciais inarmônicas
@@ -814,6 +855,29 @@ export class TrAudio {
         this.tone(d, t, 'sawtooth', 220, 150, 1.1, 0.12, 0.05, 700);
         this.tone(d, t + 0.1, 'square', 331, 210, 0.9, 0.06, 0.05, 500);
         this.hiss(d, t, 'bandpass', 1400, 600, 1.0, 0.1, 0.1, 3);
+        break;
+      }
+      case 'cantil-1':
+      case 'cantil-2':
+      case 'cantil-3': {
+        // lata batendo na lata: dois tinidos de metal e um sino curto, cada cantil num tom
+        const base = name === 'cantil-1' ? 523.25 : name === 'cantil-2' ? 659.25 : 783.99;
+        const d = wrap(10);
+        this.clang(d, t, base * 2, 0.4, 0.5);
+        this.clang(d, t + 0.13, base * 3.01, 0.25, 0.4);
+        this.bell(base, t + 0.05, 0.28, 1.8);
+        break;
+      }
+      case 'segredo-musica':
+        this.segredoMusic(t);
+        break;
+      case 'radio': {
+        // chiado de rádio de campanha: ruído em faixa estreita, bipes e a voz abafada que some
+        const d = wrap(8);
+        this.hiss(d, t, 'bandpass', 1800, 900, 1.4, 0.35, 0.02, 1.4);
+        this.tone(d, t + 0.05, 'square', 880, 880, 0.08, 0.07, 0.005, 2200);
+        this.tone(d, t + 0.2, 'square', 1175, 1175, 0.08, 0.07, 0.005, 2200);
+        this.hiss(d, t + 0.5, 'bandpass', 1200, 700, 1.6, 0.12, 0.2, 2);
         break;
       }
       case 'trovao': {

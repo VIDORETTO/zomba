@@ -12,12 +12,13 @@ import type { Element, GameEvent, NetPlayer, StaffState, TrGen, TrRobot, TrStaff
 import { ELEMENT_LIST, MOUND_ODDS, SET_PARTS, ids } from './trincheira-info';
 import { GRENADE, KNIFE, WEAPONS, isStaff, type WeaponDef } from './weapons';
 import type { World } from './world';
-import { TANK_BODY, toLocal, type BodyDims } from './busBody';
+import { TANK_BODY, toLocal, toWorld, type BodyDims } from './busBody';
 import type { SimPlayer, SimZombie } from './sim';
 import { angleLerp } from './rng';
 
 const r3 = (v: number) => Math.round(v * 1000) / 1000;
-const pick = <X>(list: X[]): X => list[Math.floor(Math.random() * list.length)];
+// sorteio de um item da lista com o gerador da partida (cada chamada passa o `rand` do host)
+const pickWith = <X>(list: X[], rand: () => number): X => list[Math.floor(rand() * list.length)];
 const dist = (ax: number, az: number, bx: number, bz: number) => Math.hypot(ax - bx, az - bz);
 
 // o que a simulação oferece à Trincheira (fechamentos sobre os membros privados da GameSim)
@@ -29,6 +30,10 @@ export interface TrHost {
   readonly players: Map<string, SimPlayer>;
   readonly zombies: Map<number, SimZombie>;
   time(): number;
+  // registro de partida para ajuste (só desenvolvimento): ligado quando a GameSim recebe `log: true`
+  readonly devLog: boolean;
+  // gerador de números da partida (0 a 1): a mesma semente dá a mesma partida
+  rand(): number;
   round(): number;
   state(): string;
   emit(e: GameEvent): void;
@@ -36,7 +41,7 @@ export interface TrHost {
   grantPerk(p: SimPlayer, perk: PerkId): void;
   giveWeapon(p: SimPlayer, w: string, held: string): void;
   damageZombie(z: SimZombie, dmg: number, p: SimPlayer, part: 'head' | 'body' | 'limb', knife: boolean, blast?: boolean): void;
-  damagePlayer(p: SimPlayer, dmg: number, fromX: number, fromZ: number, lava: boolean): void;
+  damagePlayer(p: SimPlayer, dmg: number, fromX: number, fromZ: number, lava: boolean, cause?: string): void;
   // levanta um jogador caído com a vida cheia; a reanimação conta para `by`
   revivePlayer(p: SimPlayer, by: SimPlayer): void;
   // tira o zumbi do jogo sem pontos nem item (esmagado, queimado, morto pela missão)
@@ -63,11 +68,31 @@ export interface TrHost {
   zombieOnSegment(ax: number, ay: number, az: number, bx: number, by: number, bz: number): { z: SimZombie; t: number } | null;
 }
 
+// Registro de partida para ajuste dos números (F1): só existe com GameSim({ log: true }), nunca no servidor nem na produção.
+export interface TrLog {
+  versao: 1;
+  mapa: 'trincheira';
+  rodadaInicial: number;
+  rodadaFinal: number;
+  segundos: number;
+  // por gerador: rodada e tempo (s) de cada vez que ligou; quantas vezes foi perdido
+  gens: { gen: number; ligadoRodada: number[]; ligadoTempo: number[]; perdas: number; perdidoRodada: number[] }[];
+  // quedas dos jogadores por causa
+  quedas: { zumbi: number; blindado: number; cruzado: number; pisada: number; fogo: number; outro: number };
+  recapturas: { ganhas: number; perdidas: number };
+  // passagens de colosso (pisadas) e quantos (jogadores e zumbis) foram esmagados
+  colossos: { passagens: number; esmagados: number };
+  // por elemento: rodada em que o cajado foi montado e despertado
+  cajados: Record<string, { montadoRodada: number | null; despertoRodada: number | null }>;
+}
+
 export interface TrPlayer {
   shovel: boolean;
   goldShovel: boolean;
   helmet: boolean;
   shield: number;
+  // elemento do Punho (C10): null = Punho de Ferro
+  punhoEl: Element | null;
   // cabine do colosso: onde está, para onde volta e até quando fica
   cabin: { id: TrRobot['id']; back: [number, number]; until: number } | null;
   shieldHand: boolean;
@@ -196,6 +221,11 @@ export class TrincheiraSystems {
   tabuaCharge = 0;
   private punhoTaken = new Set<string>();
   private targets: Target[] = [];
+  // segredo musical: cantis tocados e se a música já tocou
+  readonly cantis = new Set<number>();
+  // rádios já ouvidos por cada jogador (id do jogador → índices)
+  private readonly radiosOuvidos = new Map<string, Set<number>>();
+  private segredoDone = false;
   // anéis da Escavação: o símbolo (0 a 3) que cada um mostra na marca; começam embaralhados e sem nenhum alinhado
   rings = [1, 2, 3, 0];
   readonly areas: AreaFx[] = [];
@@ -205,18 +235,31 @@ export class TrincheiraSystems {
   readonly missao = { step: 1, count: 0, t: 0, startRound: 0, eyes: [false, false, false], defense: 0, done: false, active: false };
   private ps = new Map<string, TrPlayer>();
 
+  // registro de ajuste (null = desligado)
+  readonly log: TrLog | null = null;
+
   constructor(readonly h: TrHost) {
+    if (h.devLog) {
+      this.log = {
+        versao: 1, mapa: 'trincheira', rodadaInicial: h.round(), rodadaFinal: h.round(), segundos: 0,
+        gens: [0, 1, 2, 3, 4, 5].map((gen) => ({ gen, ligadoRodada: [], ligadoTempo: [], perdas: 0, perdidoRodada: [] })),
+        quedas: { zumbi: 0, blindado: 0, cruzado: 0, pisada: 0, fogo: 0, outro: 0 },
+        recapturas: { ganhas: 0, perdidas: 0 },
+        colossos: { passagens: 0, esmagados: 0 },
+        cajados: { fogo: { montadoRodada: null, despertoRodada: null }, gelo: { montadoRodada: null, despertoRodada: null }, vento: { montadoRodada: null, despertoRodada: null }, raio: { montadoRodada: null, despertoRodada: null } },
+      };
+    }
     this.D = h.map.trincheira!;
     for (const _ of this.D.gens) this.gens.push({ on: false, progress: 0, capturing: false, attacked: false, spawnT: 0, templarT: 0, free: false });
     // peças com mais de um local: sorteia um; o resto (cristais, itens únicos) já está lá
     for (const [key, locs] of Object.entries(this.D.pickups)) {
-      const loc = Math.floor(Math.random() * locs.length);
+      const loc = Math.floor(this.h.rand() * locs.length);
       this.picks.add(ids.part(key, loc));
       if (key === 'disco') this.discoLoc = loc;
     }
     // pegadas dos colossos só têm colisão enquanto o pé está no chão; Fonte só ocupa o local atual
     for (const f of this.D.feet) h.world.openDoors.add(`pe-${f.id}`);
-    this.fizz.max = T.fizzUsesMin + Math.floor(Math.random() * (T.fizzUsesMax - T.fizzUsesMin + 1));
+    this.fizz.max = T.fizzUsesMin + Math.floor(this.h.rand() * (T.fizzUsesMax - T.fizzUsesMin + 1));
     this.syncFizzSpots();
     const [x, z] = this.D.tank.path[0];
     const [nx, nz] = this.D.tank.path[1];
@@ -224,7 +267,7 @@ export class TrincheiraSystems {
     ELEMENT_LIST.forEach((el) => {
       const seq: number[] = [];
       while (seq.length < 3) {
-        const n = 1 + Math.floor(Math.random() * 6);
+        const n = 1 + Math.floor(this.h.rand() * 6);
         if (!seq.includes(n)) seq.push(n);
       }
       this.staffs.push({ el, st: 'faltando', awake: false, owner: '', prevOwner: '', charge: 0, solved: false, ringsDone: false, puzzle: el === 'fogo' ? [0, 0, 0, 0] : el === 'raio' ? [0] : [0, 0, 0], seq: el === 'raio' ? seq : [] });
@@ -244,7 +287,7 @@ export class TrincheiraSystems {
     let t = this.ps.get(id);
     if (!t) {
       t = {
-        shovel: false, goldShovel: false, helmet: false, shield: 0, cabin: null, shieldHand: false, bashReady: 0, shieldBrokenRound: -1, punho: false, artilharia: 0, zblood: 0,
+        shovel: false, goldShovel: false, helmet: false, shield: 0, punhoEl: null, cabin: null, shieldHand: false, bashReady: 0, shieldBrokenRound: -1, punho: false, artilharia: 0, zblood: 0,
         flags: [0, 0, 0, 0], claimed: [false, false, false, false], extraPerk: false, digs: 0, hold: null, burn: 0, burnAcc: 0,
         tpUntil: 0, tpCool: 0, tunnelT: 0, tunnelEl: null, invUntil: 0, helmetGiven: false,
       };
@@ -255,6 +298,46 @@ export class TrincheiraSystems {
 
   private emit(e: GameEvent) {
     this.h.emit(e);
+    if (this.log) this.logEvent(e);
+  }
+
+  // anota no registro de ajuste o que cada evento do mapa conta (só com o registro ligado)
+  private logEvent(e: GameEvent) {
+    const L = this.log!;
+    const rodada = this.h.round();
+    L.rodadaFinal = rodada;
+    L.segundos = Math.round(this.h.time());
+    switch (e.e) {
+      case 'gen':
+        if (e.phase === 'done') {
+          L.gens[e.gen].ligadoRodada.push(rodada);
+          L.gens[e.gen].ligadoTempo.push(Math.round(this.h.time()));
+        } else if (e.phase === 'lost') {
+          L.gens[e.gen].perdas++;
+          L.gens[e.gen].perdidoRodada.push(rodada);
+        }
+        break;
+      case 'recaptura':
+        if (e.phase === 'win') L.recapturas.ganhas++;
+        else if (e.phase === 'lose') L.recapturas.perdidas++;
+        break;
+      case 'pisada':
+        L.colossos.passagens++;
+        L.colossos.esmagados += e.killed.length + e.zombies;
+        break;
+      case 'cajado':
+        if (e.phase === 'monta' && L.cajados[e.el].montadoRodada === null) L.cajados[e.el].montadoRodada = rodada;
+        else if (e.phase === 'cheio' && L.cajados[e.el].despertoRodada === null) L.cajados[e.el].despertoRodada = rodada;
+        break;
+      default:
+    }
+  }
+
+  // um jogador caiu: a simulação diz quem o derrubou (zumbi, blindado, cruzado, pisada ou fogo)
+  noteDown(cause: string | undefined) {
+    if (!this.log) return;
+    const q = this.log.quedas as Record<string, number>;
+    q[cause && cause in q ? cause : 'zumbi']++;
   }
 
   // bebidas que a Fonte da Sorte pode dar neste mapa: as 6 de sempre mais as exclusivas dela
@@ -277,6 +360,62 @@ export class TrincheiraSystems {
     this.rings[i] = (this.rings[i] + 1) % 4;
     this.emit({ e: 'aneis', pid: p.id, ring: i, pos: this.rings[i] });
     return true;
+  }
+
+  // efeito do soco do Punho elemental no zumbi acertado (C10); (ux, uz) = direção do golpe
+  punhoEffect(p: SimPlayer, z: SimZombie, ux: number, uz: number) {
+    const el = this.P(p).punhoEl;
+    if (!el || !this.h.zombies.has(z.id)) return;
+    const chief = z.kind === 4 || z.kind === 6 || z.kind === 7 || z.kind === 8;
+    switch (el) {
+      case 'fogo':
+        // queima por 3 s (300 de dano por segundo)
+        z.burn = { t: 3, dps: 300, acc: 0, pid: p.id, weapon: 'punho' };
+        this.emit({ e: 'fx', kind: 'queima', zid: z.id, x: r3(z.x), y: r3(z.y + 1), z: r3(z.z) });
+        break;
+      case 'gelo': {
+        // abaixo de 40% da vida estilhaça; senão congela
+        const ref = zombieHealth(this.h.round());
+        if (!chief && z.hp < ref * 0.4) {
+          this.emit({ e: 'fx', kind: 'estilhaca', zid: z.id, x: r3(z.x), y: r3(z.y + 1), z: r3(z.z) });
+          this.h.setWeapon('punho');
+          this.h.damageZombie(z, Math.max(z.hp, 1), p, 'body', true);
+          this.h.setWeapon(null);
+        } else {
+          z.frost = chief ? 0.6 : 1;
+          z.frostPid = p.id;
+          this.emit({ e: 'fx', kind: 'congela', zid: z.id, x: r3(z.x), y: r3(z.y + 1), z: r3(z.z) });
+        }
+        break;
+      }
+      case 'vento': {
+        // arremessa a 9 m (chefões não saem do lugar), parando antes de uma parede
+        if (chief) break;
+        const wall = this.h.world.raycast(z.x, 1, z.z, ux, 0, uz, 9.4);
+        const d = wall ? Math.max(0, wall.t - 0.4) : 9;
+        z.x += ux * d;
+        z.z += uz * d;
+        this.emit({ e: 'fx', kind: 'vento', zid: z.id, x: r3(z.x), y: r3(z.y + 1), z: r3(z.z) });
+        break;
+      }
+      case 'raio': {
+        // salta em 2 zumbis a até 7 m, com o dano de uma faca pesada
+        const alvos = [...this.h.zombies.values()]
+          .filter((o) => o.id !== z.id && Math.hypot(o.x - z.x, o.z - z.z) <= 7)
+          .sort((a, b) => Math.hypot(a.x - z.x, a.z - z.z) - Math.hypot(b.x - z.x, b.z - z.z))
+          .slice(0, 2);
+        let from = z;
+        for (const o of alvos) {
+          this.emit({ e: 'fx', kind: 'raio', zid: o.id, x: r3(o.x), y: r3(o.y + 1), z: r3(o.z), pid: p.id });
+          this.h.setWeapon('punho');
+          this.h.damageZombie(o, KNIFE.heavyDamage, p, 'body', true);
+          this.h.setWeapon(null);
+          from = o;
+        }
+        void from;
+        break;
+      }
+    }
   }
 
   // escudo na mão ou nas costas (só com o escudo montado e o jogador de pé)
@@ -479,7 +618,7 @@ export class TrincheiraSystems {
       return d >= min && d <= max && this.spawnValid(s);
     });
     if (!spots.length) return null;
-    const s = pick(spots);
+    const s = pickWith(spots, this.h.rand);
     return this.h.spawnZombie([s.x, s.z]);
   }
 
@@ -539,7 +678,7 @@ export class TrincheiraSystems {
       return true;
     }
     this.h.addPoints(p, -price);
-    Object.assign(f, { state: 'spin', t: T.fizzSpin, pid: p.id, perk: pick(missing) });
+    Object.assign(f, { state: 'spin', t: T.fizzSpin, pid: p.id, perk: pickWith(missing, this.h.rand) });
     this.emit({ e: 'fizz', phase: 'spin', loc: f.loc, pid: p.id, perk: null });
     return true;
   }
@@ -564,13 +703,13 @@ export class TrincheiraSystems {
       const options = this.D.fizzGen.map((g, i) => i).filter((i) => i !== f.loc && this.gens[this.D.fizzGen[i]].on);
       this.emit({ e: 'fizz', phase: 'leave', loc: f.loc, pid: null, perk: null });
       if (options.length) {
-        f.loc = pick(options);
+        f.loc = pickWith(options, this.h.rand);
         this.syncFizzSpots();
         this.h.rebuildNav();
         this.emit({ e: 'fizz', phase: 'arrive', loc: f.loc, pid: null, perk: null });
       }
       f.uses = 0;
-      f.max = T.fizzUsesMin + Math.floor(Math.random() * (T.fizzUsesMax - T.fizzUsesMin + 1));
+      f.max = T.fizzUsesMin + Math.floor(this.h.rand() * (T.fizzUsesMax - T.fizzUsesMin + 1));
     }
   }
 
@@ -583,7 +722,7 @@ export class TrincheiraSystems {
       const forced = (!this.snowEver && round >= T.snowBy) || (this.snowEver && round - this.lastSnow >= T.snowGap);
       if (forced) w = 'neve';
       else {
-        const r = Math.random();
+        const r = this.h.rand();
         w = r < T.weatherChances[0] ? 'limpo' : r < T.weatherChances[0] + T.weatherChances[1] ? 'chuva' : 'neve';
       }
     }
@@ -595,7 +734,7 @@ export class TrincheiraSystems {
     this.weather = w;
     // montes de terra: cada local vazio tem 45% de chance
     for (let i = 0; i < this.D.mounds.length - 3; i++) {
-      if (!this.mounds.has(i) && Math.random() < T.moundChance) this.mounds.add(i);
+      if (!this.mounds.has(i) && this.h.rand() < T.moundChance) this.mounds.add(i);
     }
     // montes de gelo só existem na neve
     for (let i = this.D.mounds.length - 3; i < this.D.mounds.length; i++) {
@@ -605,7 +744,7 @@ export class TrincheiraSystems {
     // Cruzados: a partir do 3º gerador, 30% de chance (garantido depois de 4 rodadas sem)
     this.templarRoundsSince++;
     if (this.gensEver >= T.templarAfterGens && !this.recapturing && !this.isPanzerRound(round)) {
-      if (this.templarRoundsSince >= T.templarForceAfter || Math.random() < T.templarChance) this.startRecapture();
+      if (this.templarRoundsSince >= T.templarForceAfter || this.h.rand() < T.templarChance) this.startRecapture();
     }
     // missão: a colheita conta rodadas
     const m = this.missao;
@@ -713,7 +852,7 @@ export class TrincheiraSystems {
       text = key;
       this.emit({ e: 'peca', pid: p.id, key });
     } else {
-      let r = Math.random();
+      let r = this.h.rand();
       let kind: (typeof MOUND_ODDS)[number][0] = 'terra';
       for (const [k, w] of MOUND_ODDS) {
         r -= w;
@@ -726,7 +865,7 @@ export class TrincheiraSystems {
       switch (kind) {
         case 'powerup': {
           const pool = this.powerupPool();
-          const k = pick(pool);
+          const k = pickWith(pool, this.h.rand);
           this.h.dropPowerup(k, x, 0, z);
           text = k;
           break;
@@ -754,7 +893,7 @@ export class TrincheiraSystems {
         case 'arma': {
           const walls = this.h.map.interactables.filter((i) => i.kind === 'weapon' && !p.weapons.includes(i.weapon!));
           if (walls.length) {
-            const w = pick(walls).weapon!;
+            const w = pickWith(walls, this.h.rand).weapon!;
             this.h.giveWeapon(p, w, p.weapons[p.weapons.length - 1]);
             text = w;
           } else {
@@ -891,6 +1030,83 @@ export class TrincheiraSystems {
     this.tankHurts(dt);
   }
 
+  // Zumbis no tanque (C7). Chamado antes do movimento normal de cada zumbi comum: devolve true se a escalada cuidou dele neste quadro.
+  // - tanque parado ou abaixo de tankClimbMaxV, alguém no convés e o zumbi a até 1,2 m da lateral: sobe em tankClimb s (anim `climb`);
+  // - no convés: é levado junto com o tanque, anda e ataca como em terra firme; sem ninguém no convés e o tanque lento, desce.
+  zombieTank(z: SimZombie, dt: number): boolean {
+    if (z.kind > 2 || z.anim === 'rise') return false;
+    const k = this.tank;
+    const pose = this.tankPose();
+    const d = this.tankDims;
+    const lento = k.v < T.tankClimbMaxV;
+    if (z.onTank) {
+      if (z.tl && !this.alive().some((p) => this.onTank(p)) && lento) {
+        z.onTank = false;
+        z.tl = undefined;
+        z.y = 0;
+        return false;
+      }
+      if (z.tl) {
+        const [wx, wz] = toWorld(pose, z.tl[0], z.tl[1]);
+        z.x = wx;
+        z.z = wz;
+        z.y = d.floorY;
+      }
+      return false;
+    }
+    if (z.climbT !== undefined) {
+      if (!lento) {
+        z.climbT = undefined;
+        z.climbFrom = undefined;
+        if (z.anim === 'climb') z.anim = 'move';
+        return false;
+      }
+      z.climbT += dt;
+      z.anim = 'climb';
+      const u = Math.min(1, z.climbT / T.tankClimb);
+      const [fx, fz] = z.climbFrom!;
+      const tx = Math.sign(fx || 1) * (d.hw - 0.45);
+      const lx = fx + (tx - fx) * u;
+      const [wx, wz] = toWorld(pose, lx, fz);
+      z.x = wx;
+      z.z = wz;
+      z.y = d.floorY * u + 0.35 * Math.sin(Math.PI * u);
+      if (u >= 1) {
+        z.onTank = true;
+        z.tl = [lx, fz];
+        z.climbT = undefined;
+        z.climbFrom = undefined;
+        z.anim = 'move';
+        z.y = d.floorY;
+      }
+      return true;
+    }
+    if (!lento) return false;
+    const [lx, lz] = toLocal(pose, z.x, z.z);
+    if (Math.abs(lz) < d.hl - 0.3 && Math.abs(lx) > d.hw - 0.2 && Math.abs(lx) <= d.hw + 1.6 && z.y < 0.8 && this.alive().some((p) => this.onTank(p))) {
+      z.climbT = 0;
+      z.climbFrom = [lx, lz];
+      z.anim = 'climb';
+      return true;
+    }
+    return false;
+  }
+
+  // depois do movimento: o zumbi do convés fica dentro dele (e o ponto local guardado acompanha)
+  zombieDeckFix(z: SimZombie) {
+    if (!z.onTank) return;
+    const d = this.tankDims;
+    const pose = this.tankPose();
+    let [lx, lz] = toLocal(pose, z.x, z.z);
+    lx = Math.max(-(d.hw - 0.35), Math.min(d.hw - 0.35, lx));
+    lz = Math.max(-(d.hl - 0.35), Math.min(d.hl - 0.35, lz));
+    const [wx, wz] = toWorld(pose, lx, lz);
+    z.x = wx;
+    z.z = wz;
+    z.y = d.floorY;
+    z.tl = [lx, lz];
+  }
+
   // esmaga quem estiver no caminho e queima quem fica atrás (sem pontos para ninguém)
   private tankHurts(dt: number) {
     const k = this.tank;
@@ -898,6 +1114,8 @@ export class TrincheiraSystems {
     const d = this.tankDims;
     for (const z of [...this.h.zombies.values()]) {
       if (z.anim === 'rise' || z.kind === 4 || z.kind === 6 || z.kind === 7) continue;
+      // quem subiu no convés (ou está subindo) vai de carona: o tanque só esmaga quem fica no chão
+      if (z.onTank || z.climbT !== undefined) continue;
       const [lx, lz] = toLocal(pose, z.x, z.z);
       if (k.v > 1.5 && Math.abs(lx) < d.hw + 0.4 && lz > -d.hl && lz < d.hl + 0.8) {
         this.emit({ e: 'esmaga', zid: z.id });
@@ -978,7 +1196,7 @@ export class TrincheiraSystems {
         continue;
       }
       if (p.life === 'alive') {
-        this.h.damagePlayer(p, 99999, foot.cx, foot.cz, false);
+        this.h.damagePlayer(p, 99999, foot.cx, foot.cz, false, 'pisada');
         killed.push(p.id);
       } else if (p.life === 'downed') {
         p.bleed = Math.min(p.bleed, 0.01);
@@ -1019,6 +1237,33 @@ export class TrincheiraSystems {
     this.emit({ e: 'cabine', pid: p.id, robot: id, prize: '', phase: 'entra', x: r3(p.x), z: r3(p.z) });
   }
   private cabinSlot = 0;
+
+  // rádio de campanha: cada um toca uma vez por jogador (o texto vem do navegador pelo índice)
+  private interactRadio(p: SimPlayer, it: Interactable): boolean {
+    const idx = Number(it.id.replace('radio-', ''));
+    let ouvidos = this.radiosOuvidos.get(p.id);
+    if (!ouvidos) this.radiosOuvidos.set(p.id, (ouvidos = new Set()));
+    if (ouvidos.has(idx)) {
+      this.emit({ e: 'deny', pid: p.id, reason: 'possui' });
+      return true;
+    }
+    ouvidos.add(idx);
+    this.emit({ e: 'radio', pid: p.id, idx });
+    return true;
+  }
+
+  // segredo musical: F num dos 3 cantis toca um sino; com os 3, toca a música (uma vez por partida)
+  private interactCantil(p: SimPlayer, it: Interactable): boolean {
+    const idx = Number(it.id.replace('cantil-', ''));
+    this.emit({ e: 'segredo', phase: 'cantil', pid: p.id, idx });
+    if (this.segredoDone || this.cantis.has(idx)) return true;
+    this.cantis.add(idx);
+    if (this.cantis.size >= 3) {
+      this.segredoDone = true;
+      this.emit({ e: 'segredo', phase: 'musica', pid: p.id });
+    }
+    return true;
+  }
 
   // F no pedestal da cabine: o prêmio do colosso (só uma vez por colosso na partida)
   private interactCabine(p: SimPlayer, it: Interactable): boolean {
@@ -1203,9 +1448,9 @@ export class TrincheiraSystems {
   private planPanzer(round: number) {
     if (round !== this.panzerRound) return;
     this.panzerRoundNow = round;
-    this.panzerTimer = BOSS.arriveMin + Math.random() * (BOSS.arriveMax - BOSS.arriveMin);
+    this.panzerTimer = BOSS.arriveMin + this.h.rand() * (BOSS.arriveMax - BOSS.arriveMin);
     this.panzerQueue = round >= 16 && this.h.players.size >= 3 ? 2 : 1;
-    this.panzerRound = round + T.panzerGapMin + Math.floor(Math.random() * (T.panzerGapMax - T.panzerGapMin + 1));
+    this.panzerRound = round + T.panzerGapMin + Math.floor(this.h.rand() * (T.panzerGapMax - T.panzerGapMin + 1));
   }
 
   private tickPanzerSpawn(dt: number) {
@@ -1234,8 +1479,8 @@ export class TrincheiraSystems {
     const rich = alive.reduce((a, b) => (b.points > a.points ? b : a));
     let spot: [number, number] | null = null;
     for (let tries = 0; tries < 60 && !spot; tries++) {
-      const a = Math.random() * Math.PI * 2;
-      const r = 12 + Math.random() * 16;
+      const a = this.h.rand() * Math.PI * 2;
+      const r = 12 + this.h.rand() * 16;
       const x = rich.x + Math.sin(a) * r, z = rich.z + Math.cos(a) * r;
       if (this.h.nav.distanceAt(x, z) < 0xffff && !this.h.world.inLava(x, z) && this.groupAt(x, z) !== '.') spot = [x, z];
     }
@@ -1291,7 +1536,7 @@ export class TrincheiraSystems {
           const d = Math.hypot(dx, dz);
           if (d > T.panzerFlameRange || (dx * fx + dz * fz) / (d || 1) < Math.cos((20 * Math.PI) / 180) || Math.abs(p.y - z.y) > 2) continue;
           const t = this.P(p);
-          this.h.damagePlayer(p, T.panzerFlameDps * 0.5 * (t.helmet ? 0.5 : 1), z.x, z.z, false);
+          this.h.damagePlayer(p, T.panzerFlameDps * 0.5 * (t.helmet ? 0.5 : 1), z.x, z.z, false, 'blindado');
           t.burn = 2;
         }
       }
@@ -1311,7 +1556,7 @@ export class TrincheiraSystems {
       if (!b.hit && b.t >= 0.7 + 0.35) {
         b.hit = true;
         if (p && p.life === 'alive' && dist(p.x, p.z, z.x, z.z) < T.panzerClawRange + 3 && sees(p)) {
-          this.h.damagePlayer(p, 15, z.x, z.z, false);
+          this.h.damagePlayer(p, 15, z.x, z.z, false, 'blindado');
           if (p.life === 'alive') this.emit({ e: 'bosspull', pid: p.id, x: r3(z.x), z: r3(z.z), stop: 2.6 });
         }
       }
@@ -1329,8 +1574,8 @@ export class TrincheiraSystems {
         const p = b.target ? this.h.players.get(b.target) : undefined;
         if (p) {
           for (let tries = 0; tries < 40; tries++) {
-            const a = Math.random() * Math.PI * 2;
-            const r = 7 + Math.random() * 4;
+            const a = this.h.rand() * Math.PI * 2;
+            const r = 7 + this.h.rand() * 4;
             const x = p.x + Math.sin(a) * r, zz = p.z + Math.cos(a) * r;
             if (this.h.nav.distanceAt(x, zz) < 0xffff && !this.h.world.inLava(x, zz) && this.groupAt(x, zz) !== '.') {
               z.x = x;
@@ -1425,7 +1670,7 @@ export class TrincheiraSystems {
   private startRecapture() {
     const candidates = this.gens.map((g, i) => ({ g, i })).filter((o) => o.g.on && !o.g.capturing);
     if (!candidates.length) return;
-    const { i } = pick(candidates);
+    const { i } = pickWith(candidates, this.h.rand);
     this.recapturing = true;
     this.templarRoundsSince = 0;
     this.templarTarget = i;
@@ -1439,9 +1684,9 @@ export class TrincheiraSystems {
     // nascem a 25-40 m do gerador, num lugar de onde existe caminho até ele
     let made = 0;
     for (let tries = 0; tries < 600 && made < n; tries++) {
-      const a = Math.random() * Math.PI * 2;
+      const a = this.h.rand() * Math.PI * 2;
       // se não há lugar a 25-40 m (área pequena), aceita mais perto
-      const r = (tries < 300 ? 25 : 10) + Math.random() * 15;
+      const r = (tries < 300 ? 25 : 10) + this.h.rand() * 15;
       const x = d.x + Math.cos(a) * r, z = d.z + Math.sin(a) * r;
       const g = this.groupAt(x, z);
       if (g === '.' || g === 'm' || this.h.world.inLava(x, z) || this.templarNav!.distanceAt(x, z) >= 0xffff) continue;
@@ -1531,7 +1776,7 @@ export class TrincheiraSystems {
       st.atkT += dt;
       if (st.atkT >= ZOMBIE.attackWindup && !z.attackHit) {
         z.attackHit = true;
-        for (const p of targets) if (dist(p.x, p.z, z.x, z.z) < 1.7) this.h.damagePlayer(p, ZOMBIE.damage, z.x, z.z, false);
+        for (const p of targets) if (dist(p.x, p.z, z.x, z.z) < 1.7) this.h.damagePlayer(p, ZOMBIE.damage, z.x, z.z, false, 'cruzado');
       }
       if (st.atkT >= ZOMBIE.attackWindup + ZOMBIE.attackRecover) z.anim = 'move';
       return;
@@ -1596,7 +1841,7 @@ export class TrincheiraSystems {
         t.burnAcc += dt;
         if (t.burnAcc >= 0.5 && p.life === 'alive') {
           t.burnAcc = 0;
-          this.h.damagePlayer(p, 6 * (t.helmet ? 0.5 : 1), p.x, p.z, true);
+          this.h.damagePlayer(p, 6 * (t.helmet ? 0.5 : 1), p.x, p.z, true, 'fogo');
         }
       }
     }
@@ -1916,6 +2161,17 @@ export class TrincheiraSystems {
 
   private interactAltar(p: SimPlayer, it: Interactable): boolean {
     const el = it.ref as Element;
+    // depois da missão, quem tem o Punho de Ferro o troca pelo do elemento do altar (quantas vezes quiser)
+    if (this.P(p).punho && this.staffOf(el).st !== 'altar') {
+      if (!this.missao.done) {
+        this.emit({ e: 'deny', pid: p.id, reason: 'faltam' });
+        return true;
+      }
+      const t = this.P(p);
+      t.punhoEl = t.punhoEl === el ? null : el;
+      this.emit({ e: 'punho', pid: p.id, el: t.punhoEl });
+      return true;
+    }
     const s = this.staffOf(el);
     const deny = (reason: 'faltam' | 'ocupado') => this.emit({ e: 'deny', pid: p.id, reason });
     if (s.st === 'altar') {
@@ -1955,7 +2211,7 @@ export class TrincheiraSystems {
   // dono sangrou até o fim ou saiu: o cajado volta sozinho ao pedestal
   onPlayerGone(p: SimPlayer) {
     const t = this.P(p);
-    Object.assign(t, { shovel: false, goldShovel: false, helmet: false, shield: 0, cabin: null, shieldHand: false, punho: false, hold: null, burn: 0, zblood: 0 });
+    Object.assign(t, { shovel: false, goldShovel: false, helmet: false, shield: 0, punhoEl: null, cabin: null, shieldHand: false, punho: false, hold: null, burn: 0, zblood: 0 });
     p.weapons = p.weapons.filter((w) => !isStaff(w));
     for (const s of this.staffs) {
       if (s.st === 'mao' && s.owner === p.id) {
@@ -2016,7 +2272,7 @@ export class TrincheiraSystems {
       let prize = '';
       const [cx, cz] = this.D.challengeChests[Number(it.ref)] ?? [p.x, p.z];
       if (i === 0) {
-        const k = pick(this.powerupPool());
+        const k = pickWith(this.powerupPool(), this.h.rand);
         this.h.dropPowerup(k, cx, 0, cz);
         prize = k;
       } else if (i === 1) {
@@ -2060,8 +2316,8 @@ export class TrincheiraSystems {
       if (s.next > 0) continue;
       s.next = 2 / T.artilleryShells;
       s.shells--;
-      const a = Math.random() * Math.PI * 2;
-      const r = Math.sqrt(Math.random()) * T.artilleryRadius;
+      const a = this.h.rand() * Math.PI * 2;
+      const r = Math.sqrt(this.h.rand()) * T.artilleryRadius;
       const x = s.x + Math.cos(a) * r, z = s.z + Math.sin(a) * r;
       this.emit({ e: 'artilharia', phase: 'bomba', pid: s.pid, x: r3(x), z: r3(z) });
       const owner = this.h.players.get(s.pid);
@@ -2326,7 +2582,7 @@ export class TrincheiraSystems {
       m.count++;
       if (m.count >= T.missaoKills) this.missionStep(4, 'Colheita completa: agora, os olhos dos colossos.');
     }
-    if (m.active && m.step === 4 && Math.random() < 0.015) this.h.dropPowerup('sangue', z.x, z.y, z.z);
+    if (m.active && m.step === 4 && this.h.rand() < 0.015) this.h.dropPowerup('sangue', z.x, z.y, z.z);
   }
 
   // ---------- missão principal ----------
@@ -2422,6 +2678,8 @@ export class TrincheiraSystems {
       case 'missao': return this.interactPoco(p);
       case 'ring': return this.interactRing(p, it);
       case 'cabine': return this.interactCabine(p, it);
+      case 'cantil': return this.interactCantil(p, it);
+      case 'radio': return this.interactRadio(p, it);
       default: return false;
     }
   }
@@ -2456,7 +2714,7 @@ export class TrincheiraSystems {
   playerFields(p: SimPlayer): Partial<NetPlayer> {
     const t = this.P(p);
     return {
-      shovel: t.shovel, goldShovel: t.goldShovel, helmet: t.helmet, shield: Math.round(t.shield), shieldHand: t.shieldHand && t.shield > 0, ...(t.cabin ? { cabine: t.cabin.id } : {}), punho: t.punho,
+      shovel: t.shovel, goldShovel: t.goldShovel, helmet: t.helmet, shield: Math.round(t.shield), shieldHand: t.shieldHand && t.shield > 0, ...(t.cabin ? { cabine: t.cabin.id } : {}), punho: t.punho, punhoEl: t.punhoEl,
       artilharia: t.artilharia, zblood: r3(t.zblood), challenges: this.challengeProgress(p), claimed: [...t.claimed], extraPerk: t.extraPerk,
     };
   }
@@ -2495,6 +2753,8 @@ export class TrincheiraSystems {
       rings: [...this.rings],
       orb: this.orbElement(),
       cabinTaken: [...this.cabinTaken].map((k) => k.replace('cabine-', '') as TrRobot['id']),
+      cantis: [...this.cantis].sort(),
+      segredo: this.segredoDone,
     };
   }
 

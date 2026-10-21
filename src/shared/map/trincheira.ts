@@ -1101,6 +1101,20 @@ export function buildTrincheira(): MapDef {
     interactables.push({ id: ids.tank, kind: 'tank', use: lever, y: 0 });
   }
 
+  // ---------- segredo musical: 3 cantis de metal pendurados, um no Quartel Norte, um na Vala Sul e um no Posto Oeste ----------
+  // (pontos escolhidos no canto de cada lugar e levados para o chão livre mais perto)
+  [[-6, -72], [-4, 58], [-116, 12]].forEach((p, i) => {
+    const [x, z] = snap(p as P2);
+    // um poste curto com o cantil pendurado (só desenho no navegador); a interação fica no chão ao lado
+    interactables.push({ id: ids.cantil(i), kind: 'cantil', use: [x, z], y: 0, reach: 1.6 });
+  });
+
+  // ---------- rádios de campanha: 6 aparelhos espalhados (um por lugar) ----------
+  [[108, 57], [72, -13], [44, 13], [4, -61], [-80, 2], [-22, -13]].forEach((p, i) => {
+    const [x, z] = snap(p as P2);
+    interactables.push({ id: ids.radio(i), kind: 'radio', use: [x, z], y: 0, reach: 1.6 });
+  });
+
   // ---------- cabines dos colossos: 3 salas de 6 x 6 m fora do mapa (x de 209 a 221), uma por colosso ----------
   const cabins: TrincheiraData['cabins'] = [];
   for (const [k, [id, eye]] of (Object.entries({ atlas: 0xffd23a, golias: 0x4aa8ff, tita: 0xff3a2a }) as ['atlas' | 'golias' | 'tita', number][]).entries()) {

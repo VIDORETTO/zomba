@@ -200,7 +200,7 @@ export const TRINCHEIRA = {
   moundChance: 0.45,
   digTime: 1.2,
   digTimeGold: 0.6,
-  goldAfter: 30,
+  goldAfter: 45,
   // tanque
   tankCost: 500,
   tankSpeed: 5,
@@ -215,15 +215,15 @@ export const TRINCHEIRA = {
   // colossos
   robotFirstRound: 2,
   robotWarn: 8,
-  robotPause: 20,
+  robotPause: 45,
   stepLift: 1.5,
   stepMove: 2,
   stepDown: 1.5,
   stepHold: 1,
   // Cruzados e recaptura
   templarAfterGens: 3,
-  templarChance: 0.3,
-  templarForceAfter: 4,
+  templarChance: 0.25,
+  templarForceAfter: 5,
   templarBase: 4,
   templarPerPlayer: 2,
   templarHpMult: 2,
@@ -248,6 +248,9 @@ export const TRINCHEIRA = {
   panzerVisorBreak: 0.2,
   zbloodTime: 20,
   shieldHp: 1500,
+  // zumbis sobem no tanque parado ou abaixo de tankClimbMaxV m/s: a escalada leva tankClimb s
+  tankClimb: 1,
+  tankClimbMaxV: 1.5,
   // cabine do colosso: tempo máximo lá dentro (s) antes de voltar à pegada
   cabinMax: 15,
   // anéis da Escavação: a 2ª etapa da melhoria dos cajados (false = só o enigma, como antes)

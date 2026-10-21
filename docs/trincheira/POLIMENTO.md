@@ -1036,6 +1036,14 @@ Pasta sugerida: `docs/trincheira/capturas/` (só capturas do nosso jogo).
 | B7 | pronto | 2026-10-21 | Armadura de placas em todo o corpo, mochila com tanque e mangueira, chama-piloto; as 3 placas (75/50/25%) e o visor viram cacos (`blindado-cacos`); `ZombieManager.bossHp` |
 | B8 | pronto, falta aprovação das capturas | 2026-10-21 | pedras com borda na cor da alcova mais perto, colunas de luz, anel de portal em cada alcova, runas e 8 pilares quebrados |
 
+| A7 | pronto | 2026-10-21 | `GameSim` aceita `seed`; `TrHost.rand()` (mulberry32) substitui todo `Math.random()` de `trincheira.ts` (`grep` não acha nada). Teste: mesma semente, mesmas peças, clima das rodadas 1 a 20 e montes |
+| C7 | pronto, falta aprovar o visual da escalada | 2026-10-21 | `zombieTank`/`zombieDeckFix`: tanque parado ou abaixo de `tankClimbMaxV` (1,5 m/s), zumbi a 1,2 m da lateral sobe em `tankClimb` (1 s); no convés anda e ataca; é levado junto. 3 testes da especificação |
+| C8 | pronto, falta aprovar a música | 2026-10-21 | 3 cantis (Quartel, Vala Sul, Posto Oeste), `interactCantil`; cada um toca um sino, o mesmo cantil duas vezes não conta; com os 3 vem o evento `segredo` (uma vez por partida) e a música `segredoMusic` (~90 s, sintetizada, canal de música). Visual dos cantis em `segredoView.ts` |
+| C9 | pronto, falta revisar os textos | 2026-10-21 | 6 rádios de campanha (`kind: 'radio'`), texto próprio em `RADIO_TEXT` (2 a 3 linhas cada), uma vez por jogador (`radiosOuvidos`); evento `radio` leva o índice; `Hud.showRadio` |
+| C10 | pronto | 2026-10-21 | Depois da missão, o altar da Câmara troca o Punho de Ferro pelo elemental (`punhoEl`); fogo queima 3 s, gelo congela e estilhaça abaixo de 40%, vento arremessa, raio salta em 2 zumbis; troca à vontade; sem missão o altar recusa. Brilho do punho em `weapon.ts` (`fistGlow`) |
+| F1 | pronto | 2026-10-21 | `TrLog` (`GameSim({ log: true })`) com geradores (rodada e tempo de cada ligada, perdas), quedas por causa, recapturas, colossos e cajados; `devLog()`; `damagePlayer(..., cause)`. Navegador: `src/client/devlog.ts` só em desenvolvimento (`?autoplay` ou `?registro`), baixa o JSON ao fim da partida (`Game.baixarRegistro`). Produção: `tools/test-trincheira-prod.mjs` confere que a marca e a função não existem no pacote |
+| F2 | pronto, falta o usuário jogar | 2026-10-21 | `tools/tr-ajuste.ts`: partida automática (2 robôs, regras reais, registro ligado) até a rodada 22, 3 sementes. Ver "Observações do S7" e a tabela 10 do README. Mudaram `robotPause` 20 → 45, `templarChance` 0,3 → 0,25, `templarForceAfter` 4 → 5, `goldAfter` 30 → 45. Os testes de regra leem `TRINCHEIRA` |
+
 **Observações do S1**
 
 - `test-rota.mjs` tem 1 falha constante (FPS, por software) e 2 verificações de tempo do ônibus que oscilam. Medido nos dois lados (com e sem as mudanças do S1): igual, não é regressão.
@@ -1053,6 +1061,17 @@ Pasta sugerida: `docs/trincheira/capturas/` (só capturas do nosso jogo).
 | C6 | pronto | 2026-10-21 | `TrincheiraSystems.rings`/`orbElement`/`interactRing`, 4 alavanca (`kind: 'ring'`), alvo `esfera`, altar recusa sem a etapa, `ringsStep`; anéis giram no navegador (4 símbolos por anel), marca, esfera e alavancas. O teste de missão (A6) passa pelos anéis |
 
 | C4 | pronto | 2026-10-21 | 3 salas de 6 × 6 m (x 209 a 221; `LIMITS.maxX` 240), `toCabin`/`tickCabins`/`interactCabine`, prêmio por F uma vez por colosso, volta à pegada em 15 s ou no fim da passagem com 3 s de invulnerabilidade; `NetPlayer.cabine`, `TrincheiraSnap.cabinTaken`, evento `cabine` com `phase`, `x`, `z`. A sala é simples (rebite, janela, painel e pedestal) |
+
+**Observações do S7**
+
+- **Rodada de ajuste (F2).** Quem jogou foram 2 robôs (`npx tsx tools/tr-ajuste.ts 3 22 1`): eles ligam os 6 geradores, matam o que chega perto, cavam montes e se levantam quando caem. Serve para medir o ritmo do jogo, **não a dificuldade**: quem ajusta a dificuldade é o usuário jogando, com o registro baixado no fim da partida (`?autoplay`, só em desenvolvimento).
+- **Colosso (pausa de 20 s):** com 20 s o colosso estava em cena **59%** do tempo (cerca de 1770 s de 3000 s). Com 45 s, 40%. Mudou para 45 s.
+- **Recaptura (30%):** 7 a 9 recapturas em 20 rodadas (35% das rodadas, com a garantia a cada 4). Mudou para 25% e garantia a cada 5; ficou em 5 a 8.
+- **Blindado (a cada 3 a 5 rodadas):** apareceu nas rodadas 8, 11 a 13, 14 a 17, 17 a 20 e 22; intervalo médio 3,7. Sem mudança.
+- **Pá Dourada (30 montes):** um cavador dedicado a recebia na **rodada 4** e cavava de 183 a 193 montes em 22 rodadas (são só 18 locais, 45% cada). Mudou para 45 montes (rodada 5 a 6 para o dedicado, bem mais tarde para quem só cava de passagem).
+- **Geradores (200 por jogador, 20 s):** o robô tem pontos de sobra, então só mostra que a captura de 20 s cabe com folga nas rodadas 1 e 2. Sem mudança; preço e tempo dependem de jogar de verdade.
+- Os testes de regra que dependem desses números (Pá Dourada, pausa do colosso) leem `TRINCHEIRA`.
+- O orçamento de desempenho (F3) foi conferido de novo com o conteúdo do S6 e do S7; ver a tabela da F3.
 
 **Observações do S5**
 

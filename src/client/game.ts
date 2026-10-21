@@ -94,7 +94,7 @@ const AUTOPLAY = import.meta.env.DEV && new URLSearchParams(location.search).has
 // interações novas da Trincheira (o texto do aviso vem do TrincheiraClient)
 const TR_KINDS: Record<string, true> = {
   generator: true, fizz: true, tank: true, shovel: true, mound: true, part: true, bench: true, gramofone: true, disco: true,
-  portal: true, crystal: true, staffPedestal: true, altar: true, tabua: true, tabuaAltar: true, challenge: true, missao: true, ring: true, cabine: true,
+  portal: true, crystal: true, staffPedestal: true, altar: true, tabua: true, tabuaAltar: true, challenge: true, missao: true, ring: true, cabine: true, cantil: true, radio: true,
 };
 
 const WEEKDAYS =['Domingo', 'Segunda-feira', 'Terça-feira', 'Quarta-feira', 'Quinta-feira', 'Sexta-feira', 'Sábado'];
@@ -458,6 +458,7 @@ export class Game {
       this.weapon.setSights(me.sights ?? {});
       this.weapon.heavyKnife = me.heavyKnife;
       this.weapon.punho = !!me.punho;
+      this.weapon.punhoEl = me.punhoEl ?? null;
       if (this.pendingSwitch && me.weapons.includes(this.pendingSwitch)) {
         this.weapon.switchTo(this.pendingSwitch);
         this.pendingSwitch = null;
@@ -1504,6 +1505,14 @@ export class Game {
     if (sim?.tr && p) sim.tr.debug(cmd, arg, p);
   }
 
+  // Só em desenvolvimento (?autoplay ou ?registro, solo): baixa o registro de ajuste da partida (F1); em produção a função nem existe
+  baixarRegistro() {
+    if (!import.meta.env.DEV) return;
+    const sim = (this.transport as unknown as { sim?: { devLog(): unknown } }).sim;
+    const log = sim?.devLog();
+    if (log) void import('./devlog').then((m) => m.baixarRegistro(log));
+  }
+
   // Só em desenvolvimento: dá pontos ao jogador local (testes automáticos no solo).
   debugPoints(n: number) {
     const sim = (this.transport as unknown as { sim?: { players: Map<string, { points: number }> } }).sim;
@@ -2203,6 +2212,7 @@ export class Game {
   private gameOver(round: number) {
     if (this.over) return;
     this.over = true;
+    if (import.meta.env.DEV) this.baixarRegistro();
     this.audio.gameOver();
     this.hud.downed(false);
     setTimeout(() => {

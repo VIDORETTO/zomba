@@ -2,7 +2,7 @@
 import { launch } from './launch.mjs';
 const out = process.argv[2] ?? '.';
 const browser = await launch();
-const page = await browser.newPage({ viewport: { width: 1280, height: 720 } });
+const page = await browser.newPage({ viewport: { width: 1280, height: 720 }, acceptDownloads: true });
 const errs = [];
 page.on('pageerror', (e) => errs.push(e.message));
 page.on('console', (m) => { if (m.type() === 'error') errs.push(m.text()); });
@@ -401,6 +401,61 @@ await page.screenshot({ path: `${out}/j7-artilharia.png` });
   await page.waitForFunction(() => !window.__game.me.cabine, null, { timeout: 8000 });
   const fora = await G(() => window.__game.pc.pos.x < 200);
   check('Cabine: sem colosso em cena o jogador volta para fora', fora);
+}
+
+// 20. C8: segredo musical (3 cantis; a música de ~90 s existe e toca sem erro)
+{
+  const nomes = await G(() => { const n = []; window.__game.scene.traverse((o) => { if (/^segredo-cantil-\d$/.test(o.name)) n.push(o.name); }); return n.sort(); });
+  check('Segredo: os 3 cantis aparecem pendurados no mapa', nomes.length === 3, JSON.stringify(nomes));
+  const dur = await G(() => window.__game.audio.tr.segredoSecs);
+  check('Segredo: a música dura cerca de 90 s', dur > 85 && dur < 95, `${dur}`);
+  const antes = errs.length;
+  const chamadas = await G(() => {
+    const g = window.__game, a = g.audio, calls = [];
+    const ts = a.trSound.bind(a);
+    a.trSound = (n, p, v) => { calls.push(n); ts(n, p, v); };
+    g.onEvents([{ e: 'segredo', phase: 'cantil', pid: 'local', idx: 1 }, { e: 'segredo', phase: 'musica', pid: 'local' }]);
+    return calls;
+  });
+  await page.waitForTimeout(600);
+  check('Segredo: o sino de cada cantil e a música tocam sem erro', chamadas.includes('cantil-2') && chamadas.includes('segredo-musica') && errs.length === antes, JSON.stringify(chamadas));
+  // F no cantil de verdade: simulação e navegador
+  await G(() => { const g = window.__game, s = g.transport.sim; s.tr.cantis.clear(); s.tr.segredoDone = false; const it = g.o.map.interactables.find((i) => i.id === 'cantil-0'); g.debugView(it.use[0], it.use[1], 0, 0); });
+  await page.waitForTimeout(500);
+  const aviso = await prompt();
+  check('Segredo: o aviso do cantil aparece perto dele', /cantil/.test(aviso), aviso);
+  await press('KeyF');
+  await page.waitForTimeout(600);
+  check('Segredo: F no cantil conta na simulação', (await sim((s) => [...s.tr.cantis].join(','))) === '0');
+}
+
+// 21. C9: rádios de campanha (aparelho, chiado, texto de 2 ou 3 linhas, uma vez por jogador)
+{
+  const n = await G(() => { let k = 0; window.__game.scene.traverse((o) => { if (/^radio-aparelho-\d$/.test(o.name)) k++; }); return k; });
+  check('Rádios: os 6 aparelhos aparecem no mapa', n === 6, `${n}`);
+  await G(() => { const g = window.__game, s = g.transport.sim; s.tr.radiosOuvidos.clear(); const it = g.o.map.interactables.find((i) => i.id === 'radio-1'); g.debugView(it.use[0], it.use[1], 0, 0); });
+  await page.waitForTimeout(500);
+  check('Rádios: o aviso mostra "rádio de campanha"', /rádio de campanha/.test(await prompt()));
+  await press('KeyF');
+  await page.waitForTimeout(900);
+  const txt = await G(() => { const b = document.querySelector('.tr-radio'); return b && !b.classList.contains('hidden') ? [...b.querySelectorAll('p')].map((p) => p.textContent) : null; });
+  check('Rádios: F mostra as linhas da história na tela', txt && txt.length >= 2 && /gerador|pedra|poço|cajado/i.test(txt.join(' ')), JSON.stringify(txt));
+  await page.screenshot({ path: `${out}/c9-radio.png` });
+  await press('KeyF');
+  await page.waitForTimeout(500);
+  const outra = await sim((s) => s.tr.radiosOuvidos.get('local').size);
+  check('Rádios: ouvir o mesmo rádio de novo não conta outra vez', outra === 1, `${outra}`);
+}
+
+// 22. F1: em desenvolvimento (?autoplay) o registro de ajuste existe e é baixado como JSON
+{
+  const [dl] = await Promise.all([page.waitForEvent('download', { timeout: 8000 }), G(() => window.__game.baixarRegistro())]);
+  const { readFileSync } = await import('node:fs');
+  const txt = readFileSync(await dl.path(), 'utf8');
+  let j = null;
+  try { j = JSON.parse(txt); } catch { /* fica null */ }
+  check('Registro: o arquivo baixado é JSON com a marca e os campos do registro', !!j && j.marca === 'zomba-registro-dev' && j.registro && Array.isArray(j.registro.gens) && 'quedas' in j.registro && 'cajados' in j.registro, j ? Object.keys(j.registro ?? {}).join(',') : txt.slice(0, 60));
+  check('Registro: o nome do arquivo diz que é da Trincheira', /^trincheira-registro-/.test(dl.suggestedFilename()), dl.suggestedFilename());
 }
 
 // 10. E1: pilha de avisos no topo (barra de chefe fixa; no máximo 2 avisos embaixo, por prioridade)

@@ -91,6 +91,8 @@ export class TrHud {
   private readonly mission: HTMLElement;
   private readonly blood: HTMLElement;
   private readonly status: HTMLElement;
+  private readonly radioBox: HTMLElement;
+  private radioT = 0;
   private readonly keys = new WeakMap<HTMLElement, string>();
   private genEls: HTMLElement[] = [];
 
@@ -106,6 +108,19 @@ export class TrHud {
     this.mission = el('div', 'tr-mission hidden', root);
     this.blood = el('div', 'tr-blood hidden', root, '<span></span>');
     this.status = el('div', 'tr-status hidden', root);
+    this.radioBox = el('div', 'tr-radio hidden', root);
+  }
+
+  // rádio de campanha: as linhas aparecem uma a uma embaixo da tela e somem depois de uns 12 s
+  showRadio(titulo: string, linhas: string[]) {
+    const box = this.radioBox;
+    box.innerHTML = `<h4>${titulo}</h4>${linhas.map((l) => `<p>${l}</p>`).join('')}`;
+    box.classList.remove('hidden', 'out');
+    const ps = [...box.querySelectorAll<HTMLElement>('p')];
+    ps.forEach((p, i) => { p.style.animationDelay = `${i * 2.2}s`; });
+    const id = ++this.radioT;
+    setTimeout(() => { if (id === this.radioT) box.classList.add('out'); }, 7000 + linhas.length * 2200);
+    setTimeout(() => { if (id === this.radioT) box.classList.add('hidden'); }, 8000 + linhas.length * 2200);
   }
 
   // só reescreve a página quando o texto muda

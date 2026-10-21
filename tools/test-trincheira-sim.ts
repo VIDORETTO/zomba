@@ -3,8 +3,11 @@ import { TRINCHEIRA as T } from '../src/shared/constants';
 import { getMap } from '../src/shared/map';
 import type { GameEvent } from '../src/shared/protocol';
 import { GameSim, zombieHealth } from '../src/shared/sim';
-import { ids, ELEMENT_LIST } from '../src/shared/trincheira-info';
+import { ids, ELEMENT_LIST, RADIO_TEXT } from '../src/shared/trincheira-info';
+import { TANK_BODY as TH } from '../src/shared/busBody';
 
+import * as fsMod from 'node:fs';
+const require_fs = () => fsMod;
 let fails = 0;
 let passes = 0;
 function check(name: string, ok: boolean, detail = '') {
@@ -278,18 +281,18 @@ const zombie = (s: GameSim, x: number, z: number, hp = 150, kind = 0) => {
   s.handle('p0', { t: 'hold', id: ids.mound(18) });
   run(s, 1.3);
   check('cavar o monte de gelo dá a peça 1 do Cajado de Gelo', tr(s).team.has('gelo-1'));
-  // Pá Dourada depois de 30 montes e Capacete na primeira cavada com ela
+  // Pá Dourada depois de T.goldAfter montes e Capacete na primeira cavada com ela
   const s3 = mk();
   quiet(s3);
   const p3 = me(s3);
   const t3 = tr(s3).P(p3);
   t3.shovel = true;
-  t3.digs = 29;
+  t3.digs = T.goldAfter - 1;
   tr(s3).debug('montes', undefined, p3);
   goIt(s3, ids.mound(1));
   s3.handle('p0', { t: 'hold', id: ids.mound(1) });
   const evG = run(s3, 1.4);
-  check('30º monte dá a Pá Dourada', t3.goldShovel && has(evG, 'dig', (e) => e.e === 'dig' && e.result === 'pa-dourada'));
+  check(`${T.goldAfter}º monte dá a Pá Dourada`, t3.goldShovel && has(evG, 'dig', (e) => e.e === 'dig' && e.result === 'pa-dourada'));
   goIt(s3, ids.mound(2));
   s3.handle('p0', { t: 'hold', id: ids.mound(2) });
   const evH = run(s3, 0.9);
@@ -1615,6 +1618,307 @@ function missionToHarvest(players: number, plan: [number, El][]) {
     use(t.s, 'cabine-tita');
     check('prêmio de Titã: 3 Granadas de Artilharia', tr(t.s).P(me(t.s)).artilharia === 3);
   }
+}
+
+// --- C7: zumbis sobem no tanque ---
+{
+  const preparar = () => {
+    const s = mk(1, 3);
+    quiet(s);
+    tr(s).debug('tanque', undefined, me(s));
+    // tanque parado onde está (o "volta" do atalho só o chamou: para o movimento)
+    Object.assign(tr(s).tank, { state: 'parado', v: 0, wait: 0 });
+    const k = tr(s).tank;
+    const a = me(s);
+    // jogador no convés, atrás da torre (a torre ocupa o meio)
+    const sn = Math.sin(k.yaw), cs = Math.cos(k.yaw);
+    const px = k.x + 2.2 * sn, pz = k.z + 2.2 * cs;
+    s.handle('p0', { t: 'state', x: px, y: 1.16, z: pz, yaw: 0, pitch: 0, crouch: false, speed: 0 });
+    return { s, k, a };
+  };
+  // posição no mundo de um ponto local do tanque
+  const mundo = (k: { x: number; z: number; yaw: number }, lx: number, lz: number): [number, number] => {
+    const sn = Math.sin(k.yaw), cs = Math.cos(k.yaw);
+    return [k.x + lx * cs + lz * sn, k.z - lx * sn + lz * cs];
+  };
+  {
+    const { s, k, a } = preparar();
+    check('tanque: o jogador está no convés (preparo do teste)', tr(s).onTank(a));
+    const [zx, zz] = mundo(k, TH.hw + 0.9, 0);
+    const z = zombie(s, zx, zz, 9e5);
+    z.speed = 1.2;
+    let t = 0;
+    while (t < 6 && !z.onTank) { run(s, 0.1); t += 0.1; }
+    check('jogador no tanque parado: um zumbi chega ao convés em menos de 6 s', z.onTank === true && z.y > 1, `${t.toFixed(1)} s, y ${z.y.toFixed(2)}`);
+    check('a subida dura cerca de 1 s (animação de escalada)', t >= 0.9, `${t.toFixed(1)} s`);
+    // no convés anda até o jogador e ataca
+    const h0 = a.health;
+    run(s, 4);
+    check('no convés o zumbi ataca normalmente (o jogador toma dano)', a.health < h0, `vida ${a.health}`);
+  }
+  {
+    // com o tanque andando a mais de 1,5 m/s ninguém sobe
+    const { s, k, a } = preparar();
+    k.state = 'volta';
+    k.v = 5;
+    const [zx, zz] = mundo(k, TH.hw + 0.9, 0);
+    const z = zombie(s, zx, zz, 9e5);
+    z.speed = 0.01;
+    // o zumbi fica parado ao lado e o tanque, correndo, se afasta: nunca o zumbi chega a subir
+    let subiu = false;
+    for (let i = 0; i < 30; i++) {
+      k.v = 5;
+      run(s, 0.1);
+      if (z.onTank) subiu = true;
+      // o jogador segue no convés (carregado pelo tanque)
+      s.handle('p0', { t: 'state', x: k.x + 2.2 * Math.sin(k.yaw), y: 1.16, z: k.z + 2.2 * Math.cos(k.yaw), yaw: 0, pitch: 0, crouch: false, speed: 0 });
+    }
+    check('tanque a 5 m/s: o zumbi não sobe', !subiu);
+    void a;
+  }
+  {
+    // zumbi no convés é levado junto com o tanque
+    const { s, k, a } = preparar();
+    const [zx, zz] = mundo(k, TH.hw + 0.9, 0);
+    const z = zombie(s, zx, zz, 9e5);
+    z.speed = 1.2;
+    let t = 0;
+    while (t < 6 && !z.onTank) { run(s, 0.1); t += 0.1; }
+    check('zumbi no convés (preparo do teste)', z.onTank === true);
+    const antes = [z.x, z.z];
+    const [alx, alz] = [z.tl[0], z.tl[1]];
+    k.state = 'volta';
+    k.v = 5;
+    for (let i = 0; i < 20; i++) {
+      s.handle('p0', { t: 'state', x: k.x + 2.2 * Math.sin(k.yaw), y: 1.16, z: k.z + 2.2 * Math.cos(k.yaw), yaw: 0, pitch: 0, crouch: false, speed: 0 });
+      run(s, 0.1);
+    }
+    const andou = Math.hypot(z.x - antes[0], z.z - antes[1]);
+    check('zumbi no convés é levado junto com o tanque', z.onTank === true && andou > 4 && z.y > 1, `andou ${andou.toFixed(1)} m, no convés ${z.onTank}`);
+    void a; void alx; void alz;
+  }
+  {
+    // sem ninguém no convés o zumbi não sobe
+    const { s, k } = preparar();
+    s.handle('p0', { t: 'state', x: k.x + 20, y: 0, z: k.z, yaw: 0, pitch: 0, crouch: false, speed: 0 });
+    const [zx, zz] = mundo(k, TH.hw + 0.9, 0);
+    const z = zombie(s, zx, zz, 9e5);
+    z.speed = 0.01;
+    run(s, 3);
+    check('sem jogador no convés, o zumbi ao lado do tanque não sobe', !z.onTank);
+  }
+}
+
+// --- C8: segredo musical (3 cantis escondidos) ---
+{
+  const mkc = () => {
+    const s = mk(2, 2);
+    quiet(s);
+    return s;
+  };
+  const cantil = (i: number) => `cantil-${i}`;
+  {
+    const s = mkc();
+    check('segredo: 3 cantis de metal pendurados no mapa (Quartel, Vala Sul e Posto Oeste)', [0, 1, 2].every((i) => !!it(cantil(i))));
+    const onde = [0, 1, 2].map((i) => tr(s).groupAt(it(cantil(i)).use[0], it(cantil(i)).use[1]));
+    check('os cantis ficam em três áreas diferentes (Quartel, Vala, Oeste)', new Set(onde).size === 3, onde.join(','));
+    goIt(s, cantil(0));
+    use(s, cantil(0));
+    let ev = ev0(s);
+    check('F no cantil toca um sino', has(ev, 'segredo', (e) => e.e === 'segredo' && e.phase === 'cantil' && e.idx === 0));
+    use(s, cantil(0));
+    ev = ev0(s);
+    check('o mesmo objeto 2 vezes não conta 2', !has(ev, 'segredo', (e) => e.e === 'segredo' && e.phase === 'musica') && tr(s).cantis.size === 1);
+    goIt(s, cantil(1), 1);
+    use(s, cantil(1), 1);
+    ev = ev0(s);
+    check('com 2 dos 3 a música ainda não toca', !has(ev, 'segredo', (e) => e.e === 'segredo' && e.phase === 'musica'));
+    goIt(s, cantil(2));
+    use(s, cantil(2));
+    ev = ev0(s);
+    check('3 objetos ativados disparam o segredo (a música) uma vez', ev.filter((e) => e.e === 'segredo' && e.phase === 'musica').length === 1);
+    use(s, cantil(2));
+    goIt(s, cantil(0));
+    use(s, cantil(0));
+    ev = ev0(s);
+    check('depois de tocada, a música não dispara de novo (uma vez por partida)', !has(ev, 'segredo', (e) => e.e === 'segredo' && e.phase === 'musica'));
+    check('o snapshot leva quais cantis já tocaram', JSON.stringify(s.snapshot().tr!.cantis) === '[0,1,2]' && s.snapshot().tr!.segredo === true);
+  }
+}
+
+// --- C9: rádios de campanha com a história ---
+{
+  const radio = (i: number) => `radio-${i}`;
+  const s = mk(2, 2);
+  quiet(s);
+  const todos = [0, 1, 2, 3, 4, 5].map((i) => it(radio(i)));
+  check('rádios: 6 interações de rádio existem no mapa', todos.every((x) => !!x) && todos.length === 6);
+  check('rádios: ficam em áreas diferentes (espalhados pelo mapa)', new Set(todos.map((x) => tr(s).groupAt(x.use[0], x.use[1]))).size >= 5, todos.map((x) => tr(s).groupAt(x.use[0], x.use[1])).join(','));
+  check('rádios: cada um tem 2 ou 3 linhas de história', RADIO_TEXT.length === 6 && RADIO_TEXT.every((l) => l.length >= 2 && l.length <= 3 && l.every((x) => x.length > 10)));
+  goIt(s, radio(3));
+  use(s, radio(3));
+  let ev = ev0(s);
+  check('o evento do rádio leva o índice certo e quem ouviu', has(ev, 'radio', (e) => e.e === 'radio' && e.idx === 3 && e.pid === 'p0'));
+  use(s, radio(3));
+  ev = ev0(s);
+  check('cada rádio uma vez por jogador: a segunda vez recusa', !has(ev, 'radio') && has(ev, 'deny'));
+  goIt(s, radio(3), 1);
+  use(s, radio(3), 1);
+  ev = ev0(s);
+  check('o outro jogador ainda pode ouvir o mesmo rádio', has(ev, 'radio', (e) => e.e === 'radio' && e.idx === 3 && e.pid === 'p1'));
+}
+
+// --- C10: punhos elementais ---
+{
+  const mkp = (done: boolean) => {
+    const s = mk(1, 12);
+    quiet(s);
+    tr(s).missao.done = done;
+    tr(s).P(me(s)).punho = true;
+    goto(s, AX, AZ);
+    return s;
+  };
+  const soco = (s: GameSim, z: { id: number }) => {
+    s.tick(1);
+    s.handle('p0', { t: 'knife', zid: z.id });
+  };
+  const ferro = (s: GameSim, el: string) => { goIt(s, ids.altar(el as never)); use(s, ids.altar(el as never)); };
+  {
+    const s = mkp(false);
+    ferro(s, 'fogo');
+    check('sem a missão concluída, o altar recusa trocar o punho', tr(s).P(me(s)).punhoEl === null && has(ev0(s), 'deny'));
+  }
+  {
+    const s = mkp(true);
+    ferro(s, 'fogo');
+    check('missão concluída: F no altar do Fogo troca o Punho de Ferro pelo de Fogo', tr(s).P(me(s)).punhoEl === 'fogo');
+    ferro(s, 'gelo');
+    check('pode trocar de elemento quantas vezes quiser (agora Gelo)', tr(s).P(me(s)).punhoEl === 'gelo');
+    ferro(s, 'gelo');
+    check('F no mesmo altar de novo devolve o Punho de Ferro', tr(s).P(me(s)).punhoEl === null);
+    check('o snapshot leva o elemento do punho', (() => { ferro(s, 'raio'); return s.snapshot().players[0].punhoEl === 'raio'; })());
+  }
+  {
+    const s = mkp(true);
+    tr(s).P(me(s)).punhoEl = 'fogo';
+    goto(s, AX, AZ);
+    const z = zombie(s, AX + 1, AZ, 9e5);
+    z.speed = 0;
+    soco(s, z);
+    const pegou = z.burn && z.burn.t > 2.9 && z.burn.weapon === 'punho';
+    run(s, 1.6);
+    check('Punho de Fogo: o soco queima o zumbi por 3 s (300 por segundo)', !!pegou && z.hp < 9e5 - 1350 - 140, `${(9e5 - z.hp).toFixed(0)} de dano`);
+  }
+  {
+    const s = mkp(true);
+    tr(s).P(me(s)).punhoEl = 'gelo';
+    goto(s, AX, AZ);
+    const alto = zombie(s, AX + 1, AZ, zombieHealth(12) * 5);
+    alto.speed = 0;
+    soco(s, alto);
+    check('Punho de Gelo: o soco congela quem tem vida alta', (alto.frost ?? 0) >= 0.9 && raw(s).zombies.has(alto.id), `frio ${alto.frost}`);
+    const baixo = zombie(s, AX + 1, AZ, 1, 0);
+    baixo.hp = zombieHealth(12) * 0.35 + 150;
+    baixo.speed = 0;
+    soco(s, baixo);
+    check('Punho de Gelo: abaixo de 40% da vida o soco estilhaça', !raw(s).zombies.has(baixo.id));
+  }
+  {
+    const s = mkp(true);
+    tr(s).P(me(s)).punhoEl = 'vento';
+    goto(s, AX, AZ);
+    const z = zombie(s, AX + 1, AZ, 9e5);
+    z.speed = 0;
+    soco(s, z);
+    check('Punho de Vento: o soco arremessa o zumbi a mais de 6 m', Math.hypot(z.x - AX, z.z - AZ) > 6, `${Math.hypot(z.x - AX, z.z - AZ).toFixed(1)} m`);
+  }
+  {
+    const s = mkp(true);
+    tr(s).P(me(s)).punhoEl = 'raio';
+    goto(s, AX, AZ);
+    const z = zombie(s, AX + 1, AZ, 9e5);
+    const o1 = zombie(s, AX + 4, AZ + 2, 9e5);
+    const o2 = zombie(s, AX + 5, AZ - 2, 9e5);
+    const longe = zombie(s, AX + 20, AZ, 9e5);
+    for (const q of [z, o1, o2, longe]) q.speed = 0;
+    soco(s, z);
+    check('Punho de Raio: o soco salta em 2 zumbis por perto (e não nos longe)', o1.hp < 9e5 && o2.hp < 9e5 && longe.hp === 9e5, `${(9e5 - o1.hp).toFixed(0)} e ${(9e5 - o2.hp).toFixed(0)}`);
+  }
+}
+
+// --- A7: os sorteios da Trincheira usam o gerador da partida (mesma semente, mesma partida) ---
+{
+  const partida = (seed: number) => {
+    const s = new GameSim(map, false, { startRound: 1, seed });
+    s.addPlayer('p0', 'P0', 0);
+    s.start();
+    s.tick(3.2);
+    const t = raw(s).tr;
+    const clima: string[] = [];
+    const montes: string[] = [];
+    for (let r = 1; r <= 20; r++) {
+      t.onRoundStart(r);
+      clima.push(t.weather);
+      montes.push([...t.mounds].sort((a: number, b: number) => a - b).join('.'));
+    }
+    return {
+      pecas: JSON.stringify(t.team.size) + JSON.stringify(raw(s).tr.drops) + JSON.stringify([...(raw(s).tr.picks as Set<string>)].sort()),
+      fonte: `${t.fizz.loc}/${t.fizz.max}`,
+      clima: clima.join(','),
+      montes: montes.join('|'),
+      blindado: String(t.panzerRound),
+    };
+  };
+  const a = partida(1234), b = partida(1234), c = partida(99);
+  check('mesma semente: as peças, a Fonte, o clima das rodadas 1 a 20 e os montes saem iguais', JSON.stringify(a) === JSON.stringify(b));
+  check('semente diferente: a partida muda (clima ou montes)', a.clima !== c.clima || a.montes !== c.montes);
+  const fonte = require_fs();
+  const src = fonte.readFileSync(new URL('../src/shared/trincheira.ts', import.meta.url), 'utf8');
+  check('a Trincheira não usa mais Math.random (só o gerador da partida)', !/Math\.random/.test(src.replace(/\/\/.*$/gm, '')));
+}
+
+// --- F1: registro de partida para ajuste (só em desenvolvimento) ---
+{
+  const s = new GameSim(map, false, { startRound: 6, log: true });
+  s.addPlayer('p0', 'P0', 0);
+  s.addPlayer('p1', 'P1', 1); // com dois jogadores, uma queda não acaba a partida
+  s.start();
+  s.tick(3.2);
+  raw(s).toSpawn = 0;
+  raw(s).zombies.clear();
+  raw(s).spawnZombie = () => undefined;
+  s.drainEvents();
+  const todos: GameEvent[] = [];
+  const rodar = (secs: number) => { todos.push(...run(s, secs)); };
+  const a = me(s);
+  // gerador 1 liga (a captura de verdade, pelas regras) e os Cruzados o derrubam e perdem
+  const rodadaLigou = raw(s).round;
+  tr(s).debug('gens', undefined, a);
+  s.tick(0.1);
+  tr(s).debug('cruzados', undefined, a);
+  rodar(1);
+  for (const z of [...raw(s).zombies.values()]) if (z.kind === 8) raw(s).damageZombie(z, 1e9, a, 'body', false);
+  rodar(1);
+  // um zumbi derruba o jogador, depois o Blindado e depois um colosso o pisa
+  raw(s).damagePlayer(a, 1e6, 0, 0, false);
+  a.life = 'alive'; a.health = 100;
+  raw(s).damagePlayer(a, 1e6, 0, 0, false, 'blindado');
+  a.life = 'alive'; a.health = 100;
+  tr(s).debug('colosso', 'atlas', a);
+  rodar(T.robotWarn + 0.1);
+  const foot = tr(s).robot.feet[0];
+  goto(s, foot.cx, foot.cz);
+  rodar(T.stepLift + T.stepMove + T.stepDown + 0.3);
+  tr(s).debug('cajados', undefined, a);
+  const log = (s as unknown as { devLog(): Record<string, unknown> | null }).devLog();
+  check('registro: existe com a opção ligada e tem os campos', !!log && ['gens', 'quedas', 'recapturas', 'colossos', 'cajados', 'rodadaInicial'].every((k) => k in log!), log ? Object.keys(log).join(',') : 'sem registro');
+  const L = log as unknown as { gens: { gen: number; ligadoRodada: number[]; ligadoTempo: number[]; perdas: number }[]; quedas: Record<string, number>; recapturas: { ganhas: number; perdidas: number }; colossos: { passagens: number; esmagados: number }; rodadaInicial: number };
+  check('registro: cada gerador ligado anotou a rodada e o tempo (6 geradores, um evento cada)', L.gens.length === 6 && L.gens.every((g) => g.ligadoRodada.length === 1 && g.ligadoTempo.length === 1) && L.gens.every((g) => g.ligadoRodada[0] === rodadaLigou), JSON.stringify(L.gens[0]));
+  check('registro: as recapturas ganhas batem com os eventos', L.recapturas.ganhas === todos.filter((e) => e.e === 'recaptura' && e.phase === 'win').length && L.recapturas.ganhas >= 1, JSON.stringify(L.recapturas));
+  check('registro: as quedas por causa batem (zumbi 1, Blindado 1, pisada 1)', L.quedas.zumbi === 1 && L.quedas.blindado === 1 && L.quedas.pisada >= 1, JSON.stringify(L.quedas));
+  check('registro: a passagem do colosso e os esmagados batem com o evento pisada', L.colossos.passagens >= 0 && L.colossos.esmagados === todos.filter((e) => e.e === 'pisada').reduce((n, e) => n + (e.e === 'pisada' ? e.killed.length + e.zombies : 0), 0), JSON.stringify(L.colossos));
+  const sem = new GameSim(map, false, { startRound: 1 });
+  check('registro: sem a opção ligada não há registro (nada é anotado)', (sem as unknown as { devLog(): unknown }).devLog() === null);
 }
 
 // --- Escavação (B1): a decoração é só desenho, nada fecha o caminho ---

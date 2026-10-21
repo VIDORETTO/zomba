@@ -67,6 +67,8 @@ export interface NetPlayer {
   // vida do Escudo de Trincheira (0 = sem escudo) e se ele está na mão (senão fica nas costas)
   shield?: number;
   shieldHand?: boolean;
+  // elemento do Punho (null/ausente = Punho de Ferro puro), depois da missão (C10)
+  punhoEl?: Element | null;
   // cabine do colosso em que o jogador está (senão ausente)
   cabine?: 'atlas' | 'golias' | 'tita';
   // Punho de Ferro no lugar da faca
@@ -210,6 +212,9 @@ export interface TrincheiraSnap {
   orb: Element | null;
   // cabines cujo prêmio já foi levado (ids dos colossos)
   cabinTaken: ('atlas' | 'golias' | 'tita')[];
+  // segredo musical: cantis já tocados (0 a 2) e se a música já tocou nesta partida
+  cantis: number[];
+  segredo: boolean;
 }
 
 export type GameEvent =
@@ -225,6 +230,12 @@ export type GameEvent =
   // by: id de quem reanimou, ou 'cajado' (disparo do cajado desperto); from: quem atirou (só no caso do cajado)
   | { e: 'previve'; pid: string; by: string; from?: string }
   | { e: 'bash'; pid: string }
+  // o jogador trocou o punho no altar de um elemento (el null = voltou ao Punho de Ferro)
+  | { e: 'punho'; pid: string; el: Element | null }
+  // segredo musical: 'cantil' = um dos 3 cantis tocou (idx 0 a 2); 'musica' = os 3 tocaram, começa a música de ~90 s
+  // rádio de campanha (C9): quem ouviu e qual (0 a 5)
+  | { e: 'radio'; pid: string; idx: number }
+  | { e: 'segredo'; phase: 'cantil' | 'musica'; pid: string; idx?: number }
   // um anel da Escavação girou 90° (pos = símbolo que ficou na marca)
   | { e: 'aneis'; pid: string; ring: number; pos: number }
   // choque da Faísca e onda da Casca Grossa (só efeito visual e som)
@@ -321,7 +332,7 @@ export type GameEvent =
   // fogo do Cajado de Fogo carregado, nevasca, redemoinho, bola de raio (efeitos de área, só visuais)
   | { e: 'area'; kind: 'pilar' | 'nevasca' | 'redemoinho' | 'orbRaio' | 'choque'; x: number; y: number; z: number; r: number; dur: number }
   // queimadura, congelamento e fim do Sangue Morto em jogador/zumbi (só visuais)
-  | { e: 'fx'; kind: 'queima' | 'congela' | 'estilhaca' | 'chama' | 'sangue'; zid?: number; pid?: string; x: number; y: number; z: number };
+  | { e: 'fx'; kind: 'queima' | 'congela' | 'estilhaca' | 'chama' | 'sangue' | 'vento' | 'raio'; zid?: number; pid?: string; x: number; y: number; z: number };
 
 export type PlayerInput =
   | { t: 'state'; x: number; y: number; z: number; yaw: number; pitch: number; crouch: boolean; speed: number }

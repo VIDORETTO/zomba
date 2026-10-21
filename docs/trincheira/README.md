@@ -927,10 +927,10 @@ Regras puras (contas, sorteios, ciclos) vão em `tools/test-sim.ts`.
 | `genRadius` / `genCostPerPlayer` / `genTime` / `genExtraPlayer` / `genSpawnEvery` | 3.5 / 200 / 20 / 0.5 / 4 |
 | `fizzCost` / `fizzSpin` / `fizzUsesMin` / `fizzUsesMax` | 1500 / 4 / 4 / 6 |
 | `weatherChances` (limpo, chuva, neve) / `snowBy` / `snowGap` | 0.5, 0.3, 0.2 / 7 / 8 |
-| `moundChance` / `digTime` / `digTimeGold` / `goldAfter` | 0.45 / 1.2 / 0.6 / 30 |
+| `moundChance` / `digTime` / `digTimeGold` / `goldAfter` | 0.45 / 1.2 / 0.6 / 45 |
 | `tankCost` / `tankSpeed` / `tankStopWait` / `tankCooldown` / `tankFlameDps` / `tankFlameRange` | 500 / 5 / 10 / 30 / 300 / 4 |
-| `robotFirstRound` / `robotWarn` / `robotPause` / `stepLift` / `stepMove` / `stepDown` / `stepHold` | 2 / 8 / 20 / 1.5 / 2 / 1.5 / 1 |
-| `templarAfterGens` / `templarChance` / `templarForceAfter` / `templarBase` / `templarPerPlayer` / `templarHpMult` / `templarSpeed` / `templarTakeTime` / `templarReward` | 3 / 0.3 / 4 / 4 / 2 / 2 / 1.6 / 8 / 500 |
+| `robotFirstRound` / `robotWarn` / `robotPause` / `stepLift` / `stepMove` / `stepDown` / `stepHold` | 2 / 8 / 45 / 1.5 / 2 / 1.5 / 1 |
+| `templarAfterGens` / `templarChance` / `templarForceAfter` / `templarBase` / `templarPerPlayer` / `templarHpMult` / `templarSpeed` / `templarTakeTime` / `templarReward` | 3 / 0.25 / 5 / 4 / 2 / 2 / 1.6 / 8 / 500 |
 | `panzerFirst` / `panzerGapMin` / `panzerGapMax` / `panzerFlameDps` / `panzerFlameRange` / `panzerClawRange` / `panzerClawCd` / `panzerVisorBreak` / `panzerReward` | 8 / 3 / 5 / 30 / 6 / 15 / 12 / 0.2 / 500 |
 | `zbloodTime` | 20 |
 | `shieldHp` / `shieldArc` | 1500 / 120° |
@@ -946,6 +946,19 @@ Regras puras (contas, sorteios, ciclos) vão em `tools/test-sim.ts`.
 | `PERK_FX` novos: `faiscaRadius` / `faiscaCooldown` / `faiscaMinDamage` / `faiscaMaxDamage` | 3 / 3 / 200 / 1200 |
 | `PERK_FX` novos: `olhoHeadMult` / `olhoSpreadMult` / `olhoNeckY` | 1,25 / 0,7 / 1,15 |
 | `PERK_FX` novos: `cascaFall` / `cascaRadius` / `cascaDamage` | 1,5 / 4 / 400 por metro |
+| `tankClimb` / `tankClimbMaxV` (zumbi sobe no tanque parado) | 1 / 1,5 |
+| `cabinMax` (tempo máximo na cabine do colosso, s) | 15 |
+| `ringsStep` (anéis da Escavação antes do altar) | ligado |
+| `shieldHandMove` / `shieldBashRange` (escudo na mão: velocidade, alcance da pancada) | 0,9 / 2 |
+
+**Mudanças da rodada de ajuste (F2, 2026-10-21)** — medidas em 3 partidas de robôs até a rodada 22 (`tools/tr-ajuste.ts`); a dificuldade de verdade precisa ser conferida jogando, com o registro de `?autoplay`:
+
+| Número | Antes → depois | Motivo |
+| --- | --- | --- |
+| `robotPause` | 20 → 45 | Com 20 s o colosso ficava em cena 59% do tempo; com 45 s fica 40% |
+| `templarChance` / `templarForceAfter` | 0,3 / 4 → 0,25 / 5 | Recaptura em 35% das rodadas cansa; passou a ficar entre 25% e 30% |
+| `goldAfter` | 30 → 45 | Quem só cavava recebia a Pá Dourada na rodada 4; agora na 5 ou 6 (e mais tarde para quem cava de passagem) |
+| Blindado, geradores | sem mudança | Intervalo médio entre Blindados de 3,7 rodadas; os geradores dependem de jogar de verdade |
 
 Esses números são o ponto de partida. Ajuste jogando, mas registre a mudança aqui.
 
@@ -1057,3 +1070,18 @@ Veja `POLIMENTO.md`, seção 11, para o estado de cada ticket.
 
 - **Som:** `vinheta-*`, `passo-distante`, `rangido-colosso` em `trSound.ts`; motor do gerador (`genLoop`).
 - **Telas:** planta na pausa (`pauseMap.ts`), dicas (`tips.ts`), pilha de avisos (S1).
+
+### Polimento S6: Origins (médio) (2026-10-21)
+
+- **C4:** 3 cabines de colosso (`TrincheiraData.cabins`, salas de 6 × 6 m em x 209 a 221, `LIMITS.maxX` 240), `toCabin`/`tickCabins`/`interactCabine`; `NetPlayer.cabine`, `TrincheiraSnap.cabinTaken`, evento `cabine`. Constantes `cabinMax`.
+- **C5:** escudo na mão (tecla X, mensagens `shield` e `bash`, `TrPlayer.shieldHand`); `shieldHandMove`, `shieldBashRange` e outros na seção 10.
+- **C6:** anéis da Escavação (`kind: 'ring'`, `ringsStep`), alvo `esfera`, `TrStaff.rings`.
+
+### Polimento S7: extras e ajuste (2026-10-21)
+
+- **A7:** `GameSim({ seed })` e `TrHost.rand()`; `trincheira.ts` não usa mais `Math.random`.
+- **C7:** zumbis sobem no tanque parado (`tankClimb`, `tankClimbMaxV`).
+- **C8, C9:** 3 cantis e 6 rádios (`kind: 'cantil'` e `'radio'`), eventos `segredo` e `radio`; textos em `RADIO_TEXT`.
+- **C10:** punhos elementais (`NetPlayer.punhoEl`, evento `punho`).
+- **F1:** registro de ajuste só em desenvolvimento (`GameSim({ log: true })`, `devLog()`, `src/client/devlog.ts`); `tools/test-trincheira-prod.mjs` garante que não vai para a produção.
+- **F2:** `tools/tr-ajuste.ts` (partida automática de robôs) e a tabela de mudanças na seção 10.

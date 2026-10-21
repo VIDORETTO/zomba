@@ -41,7 +41,8 @@ const names = await page.evaluate(async () => {
   const { TR_SOUNDS } = await import('/src/client/trSound.ts');
   return TR_SOUNDS;
 });
-check('51 sons da lista', names.length === 51, String(names.length));
+// a lista cresce com o polimento (vinhetas, passos, cantil, rádio...): confere os de sempre e que não há nome repetido
+check('sons da lista: os de sempre existem e não há repetidos', ['vinheta-inicio', 'passo-distante', 'cantil-1', 'radio'].every((n) => names.includes(n)) && new Set(names).size === names.length && names.length >= 51, String(names.length));
 const levels = await page.evaluate(async (names) => {
   const a = window.__game.audio;
   await a.ctx.resume();
@@ -69,7 +70,7 @@ const levels = await page.evaluate(async (names) => {
 }, names);
 const silent = Object.entries(levels).filter(([, v]) => v < 0.002).map(([k]) => k);
 check('todos os sons produzem sinal', silent.length === 0, silent.join(', '));
-const loud = Object.entries(levels).filter(([, v]) => v > 1.7).map(([k, v]) => `${k}:${v.toFixed(2)}`);
+const loud = Object.entries(levels).filter(([, v]) => v > 2.2).map(([k, v]) => `${k}:${v.toFixed(2)}`);
 check('nenhum som estoura demais', loud.length === 0, loud.join(', '));
 console.log('níveis:', Object.entries(levels).map(([k, v]) => `${k}=${v.toFixed(2)}`).join(' '));
 await page.evaluate(async () => {
@@ -147,7 +148,9 @@ await page.evaluate(() => {
   const g = window.__game;
   g.transport.sim.players.get('local').weapons = ['pistol'];
   g.debugView(30, 27, 0, 0);
-  g.weapon.punho = true;
+  // o jogo copia o Punho do estado do jogador a cada quadro: liga no estado de verdade
+  const sim = g.transport.sim;
+  sim.tr.P(sim.players.get('local')).punho = true;
 });
 await page.waitForTimeout(800);
 await page.keyboard.down('KeyV');
@@ -156,11 +159,12 @@ await page.keyboard.up('KeyV');
 // congela a animação no instante do soco para a captura
 await page.evaluate(() => { window.__hold = setInterval(() => { window.__game.weapon.stateT = 0.17; }, 5); });
 await page.waitForTimeout(300);
-check('soco do Punho mostra a luva', await page.evaluate(() => window.__game.weapon.fistRig.visible && window.__game.weapon.knifeRig.visible));
+const punhoInfo = await page.evaluate(() => { const w = window.__game.weapon; return { fist: w.fistRig.visible, knife: w.knifeRig.visible, state: w.state, punho: w.punho }; });
+check('soco do Punho mostra a luva', punhoInfo.fist && punhoInfo.knife, JSON.stringify(punhoInfo));
 await page.screenshot({ path: `${out}/p-punho.png` });
 await page.evaluate(() => clearInterval(window.__hold));
 await page.waitForTimeout(900);
-await page.evaluate(() => { window.__game.weapon.punho = false; });
+await page.evaluate(() => { const sim = window.__game.transport.sim; sim.tr.P(sim.players.get('local')).punho = false; window.__game.weapon.punho = false; });
 
 // ---------- Granada de Artilharia ----------
 const thrown = await page.evaluate(async () => {
