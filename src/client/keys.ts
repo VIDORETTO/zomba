@@ -3,7 +3,7 @@
 
 export type Action =
   | 'forward' | 'back' | 'left' | 'right' | 'sprint' | 'jump' | 'crouch' | 'crouchHold'
-  | 'fire' | 'aim' | 'reload' | 'use' | 'grenade' | 'artillery' | 'knife'
+  | 'fire' | 'aim' | 'reload' | 'use' | 'grenade' | 'artillery' | 'knife' | 'shield'
   | 'weapon1' | 'weapon2' | 'weapon3' | 'nextWeapon' | 'prevWeapon';
 
 export type KeyMap = Record<Action, [string, string]>;
@@ -23,6 +23,7 @@ export const ACTIONS: { id: Action; label: string; group: string }[] = [
   { id: 'grenade', label: 'Granada', group: 'Combate' },
   { id: 'artillery', label: 'Granada de Artilharia', group: 'Combate' },
   { id: 'knife', label: 'Faca', group: 'Combate' },
+  { id: 'shield', label: 'Escudo na mão (alternar)', group: 'Combate' },
   { id: 'use', label: 'Comprar, abrir, usar, reanimar', group: 'Combate' },
   { id: 'weapon1', label: 'Arma 1', group: 'Armas' },
   { id: 'weapon2', label: 'Arma 2', group: 'Armas' },
@@ -47,6 +48,7 @@ export const DEFAULT_KEYS: KeyMap = {
   grenade: ['KeyG', ''],
   artillery: ['Digit4', ''],
   knife: ['KeyV', 'KeyE'],
+  shield: ['KeyX', ''],
   weapon1: ['Digit1', ''],
   weapon2: ['Digit2', ''],
   weapon3: ['Digit3', ''],

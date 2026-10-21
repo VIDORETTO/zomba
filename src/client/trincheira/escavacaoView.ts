@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import type { Element, TrincheiraSnap } from '../../shared/protocol';
+import type { TrincheiraSnap } from '../../shared/protocol';
 import { ELEMENTS, ELEMENT_LIST } from '../../shared/trincheira-info';
 import { additive, glowSprite, Merger, runeTexture, solid } from './common';
 import type { TrCtx } from './ctx';
@@ -32,53 +32,59 @@ function polarRing(rIn: number, rOut: number, seg: number, repeat: number, y = 0
   return g;
 }
 
-// símbolo do elemento em um quadrado (anéis de pedra): fogo = gota, gelo = losango, vento = espiral, raio = zigue-zague
+// faixa de 4 símbolos (um por elemento, 90° entre eles): fogo = gota, gelo = losango, vento = espiral, raio = zigue-zague.
+// A textura é esticada em volta do anel (muito mais comprida que larga), então o desenho nasce espremido na horizontal.
 function symbolTexture(): THREE.CanvasTexture {
-  const S = 128;
+  const W = 1024, H = 128;
   const c = document.createElement('canvas');
-  c.width = S * 4;
-  c.height = S;
+  c.width = W;
+  c.height = H;
   const ctx = c.getContext('2d')!;
   ctx.fillStyle = '#8a8478';
-  ctx.fillRect(0, 0, c.width, c.height);
+  ctx.fillRect(0, 0, W, H);
   ctx.fillStyle = 'rgba(0,0,0,0.12)';
-  for (let i = 0; i < 600; i++) ctx.fillRect(Math.random() * c.width, Math.random() * S, 3, 3);
-  ctx.lineWidth = 7;
+  for (let i = 0; i < 700; i++) ctx.fillRect(Math.random() * W, Math.random() * H, 3, 3);
+  // marcas finas entre os símbolos
+  ctx.fillStyle = 'rgba(30,26,20,0.55)';
+  for (let k = 0; k < 4; k++) ctx.fillRect(k * 256 - 2, 8, 4, H - 16);
+  ctx.lineWidth = 9;
   ctx.lineJoin = 'round';
   ctx.lineCap = 'round';
-  const col = (el: Element) => ELEMENTS[el].color;
   ELEMENT_LIST.forEach((el, k) => {
-    const ox = k * S + S / 2, oy = S / 2;
-    ctx.strokeStyle = col(el);
+    ctx.save();
+    ctx.translate(k * 256 + 128, 64);
+    ctx.scale(0.3, 1);
+    ctx.strokeStyle = ELEMENTS[el].color;
     ctx.beginPath();
     if (el === 'fogo') {
-      ctx.moveTo(ox, oy - 40);
-      ctx.bezierCurveTo(ox + 34, oy - 6, ox + 30, oy + 34, ox, oy + 36);
-      ctx.bezierCurveTo(ox - 30, oy + 34, ox - 34, oy - 6, ox, oy - 40);
+      ctx.moveTo(0, -46);
+      ctx.bezierCurveTo(36, -8, 32, 38, 0, 40);
+      ctx.bezierCurveTo(-32, 38, -36, -8, 0, -46);
     } else if (el === 'gelo') {
-      ctx.moveTo(ox, oy - 40);
-      ctx.lineTo(ox + 28, oy);
-      ctx.lineTo(ox, oy + 40);
-      ctx.lineTo(ox - 28, oy);
+      ctx.moveTo(0, -46);
+      ctx.lineTo(30, 0);
+      ctx.lineTo(0, 46);
+      ctx.lineTo(-30, 0);
       ctx.closePath();
-      ctx.moveTo(ox - 28, oy);
-      ctx.lineTo(ox + 28, oy);
+      ctx.moveTo(-30, 0);
+      ctx.lineTo(30, 0);
     } else if (el === 'vento') {
       for (let a = 0; a < 14; a += 0.3) {
-        const r = 4 + a * 2.7;
-        const x = ox + Math.cos(a) * r, y = oy + Math.sin(a) * r;
+        const r = 4 + a * 2.8;
+        const x = Math.cos(a) * r, y = Math.sin(a) * r;
         a === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
       }
     } else {
-      ctx.moveTo(ox + 10, oy - 42);
-      ctx.lineTo(ox - 18, oy + 2);
-      ctx.lineTo(ox + 6, oy + 2);
-      ctx.lineTo(ox - 12, oy + 42);
-      ctx.lineTo(ox + 24, oy - 8);
-      ctx.lineTo(ox, oy - 8);
+      ctx.moveTo(10, -46);
+      ctx.lineTo(-18, 2);
+      ctx.lineTo(6, 2);
+      ctx.lineTo(-12, 46);
+      ctx.lineTo(24, -8);
+      ctx.lineTo(0, -8);
       ctx.closePath();
     }
     ctx.stroke();
+    ctx.restore();
   });
   const t = new THREE.CanvasTexture(c);
   t.colorSpace = THREE.SRGBColorSpace;
@@ -111,6 +117,11 @@ export class EscavacaoView {
   // runa acesa no pé de cada pedestal de cajado (acende quando o cajado está lá)
   private readonly pedRunes: { mesh: THREE.Mesh; mat: THREE.MeshBasicMaterial }[] = [];
   private readonly rope: THREE.Mesh;
+  // anéis: ângulo atual e alvo (0 a 3 → (k + 1,5) × 90°); alavancas e a esfera do centro
+  private readonly ringAng = [0, 0, 0, 0];
+  private readonly levers: THREE.Group[] = [];
+  private readonly orb: THREE.Mesh;
+  private readonly orbGlow: THREE.Sprite;
 
   constructor(private readonly c: TrCtx) {
     const [cx, cz] = c.T.ring.c;
@@ -263,7 +274,7 @@ export class EscavacaoView {
       const edges = new Merger();
       bands.forEach(([a, b], i) => {
         const mat = simple ? new THREE.MeshLambertMaterial({ map: symbols, color: 0xbab4a8 }) : new THREE.MeshStandardMaterial({ map: symbols, color: 0xbab4a8, roughness: 0.9 });
-        const geo = polarRing(a, b, 64, 4, 0.045);
+        const geo = polarRing(a, b, 64, 1, 0.045);
         const ring = new THREE.Mesh(geo, mat);
         ring.name = `escavacao-anel-${i}`;
         ring.receiveShadow = true;
@@ -277,6 +288,42 @@ export class EscavacaoView {
       g.add(edgeMesh);
       g.position.set(cx, 0, cz);
       this.root.add(g);
+    }
+
+    // ---------- marca dos anéis (uma linha brilhante ao norte), alavancas e a esfera ----------
+    {
+      const mark = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.02, 3.4), additive(0xe8f4ff, { opacity: 0.8, fog: true }).clone());
+      mark.position.set(cx, 0.1, cz - 4.35);
+      mark.name = 'escavacao-marca';
+      this.root.add(mark);
+      const steel = solid(tex, 'rivet', 0x5a5650, simple, 0.5, 0.5);
+      c.map.interactables.filter((i) => i.kind === 'ring').forEach((it, k) => {
+        const g = new THREE.Group();
+        g.name = `escavacao-alavanca-${k}`;
+        g.position.set(it.use[0], 0, it.use[1]);
+        g.rotation.y = Math.atan2(cx - it.use[0], cz - it.use[1]);
+        const post = new THREE.Mesh(new THREE.BoxGeometry(0.3, 0.9, 0.3), steel);
+        post.position.y = 0.45;
+        const handle = new THREE.Group();
+        handle.position.y = 0.9;
+        const bar = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.7, 0.08), steel);
+        bar.position.y = 0.3;
+        const knob = new THREE.Mesh(new THREE.SphereGeometry(0.11, 8, 6), solid(tex, 'rivet', 0xb89a50, simple, 0.4, 0.6));
+        knob.position.y = 0.68;
+        handle.add(bar, knob);
+        g.add(post, handle);
+        g.userData.handle = handle;
+        this.root.add(g);
+        this.levers.push(g);
+      });
+      this.orb = new THREE.Mesh(new THREE.SphereGeometry(0.7, 16, 12), new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.9, fog: false }));
+      this.orb.name = 'escavacao-esfera';
+      this.orb.position.set(cx, 5, cz);
+      this.orb.visible = false;
+      this.orbGlow = glowSprite(0xffffff, 7, 0.8);
+      this.orbGlow.position.copy(this.orb.position);
+      this.orbGlow.visible = false;
+      this.root.add(this.orb, this.orbGlow);
     }
 
     // ---------- pedestais dos cajados: laje trabalhada e runa do elemento ----------
@@ -314,6 +361,28 @@ export class EscavacaoView {
     this.lanterns.forEach((l, i) => ((l.material as THREE.SpriteMaterial).opacity = 0.7 + 0.15 * Math.sin(t * 7 + i * 2) + 0.08 * Math.sin(t * 13 + i)));
     // a corda do guindaste balança de leve
     this.rope.rotation.x = Math.sin(t * 0.9) * 0.015;
+    // anéis de pedra: giram suave até o símbolo que a simulação manda (90° por giro, sempre no mesmo sentido)
+    this.rings.forEach((r, i) => {
+      const alvo = (tr.rings[i] + 1.5) * (Math.PI / 2);
+      let d = alvo - this.ringAng[i];
+      // o giro é sempre para frente: se o alvo ficou atrás (voltou ao 0), soma uma volta
+      while (d < -0.01) d += Math.PI * 2;
+      this.ringAng[i] += Math.min(d, Math.max(0.02, d * 0.12));
+      r.rotation.y = this.ringAng[i];
+      const lever = this.levers[i];
+      if (lever) (lever.userData.handle as THREE.Group).rotation.x = Math.max(0, Math.min(0.7, d)) * 0.8;
+    });
+    // esfera do centro: acesa na cor do elemento quando os anéis alinham num cajado com o enigma resolvido
+    const o = tr.orb;
+    this.orb.visible = !!o;
+    this.orbGlow.visible = !!o;
+    if (o) {
+      (this.orb.material as THREE.MeshBasicMaterial).color.set(ELEMENTS[o].hex).multiplyScalar(1.4);
+      (this.orbGlow.material as THREE.SpriteMaterial).color.set(ELEMENTS[o].hex);
+      this.orb.position.y = 5 + Math.sin(t * 2) * 0.15;
+      this.orbGlow.position.y = this.orb.position.y;
+      this.orb.scale.setScalar(1 + 0.08 * Math.sin(t * 5));
+    }
     // runa do pedestal acesa quando o cajado está lá
     this.c.T.staffTable.forEach((p, i) => {
       const st = tr.staffs[ELEMENT_LIST.indexOf(p.el)];
@@ -322,6 +391,14 @@ export class EscavacaoView {
       const on = st.st === 'pedestal';
       r.mat.opacity = on ? 0.9 + 0.1 * Math.sin(t * 3 + i) : 0.22;
     });
+  }
+
+  // um anel girou (som e brilho curto no anel)
+  onRingTurn(ring: number, pos: number) {
+    void pos;
+    const r = this.rings[ring];
+    if (r) (r.material as THREE.MeshStandardMaterial).emissive?.set(0x445566);
+    setTimeout(() => (r?.material as THREE.MeshStandardMaterial | undefined)?.emissive?.set(0x000000), 250);
   }
 
   dispose() {

@@ -335,6 +335,44 @@ await page.screenshot({ path: `${out}/j7-artilharia.png` });
   await page.waitForTimeout(400);
 }
 
+// 17. C5: escudo na mão (tecla X), pancada com o botão de atirar e lentidão
+{
+  await G(() => { const g = window.__game, s = g.transport.sim; s.zombies.clear(); s.tr.robot = null; s.tr.P(s.players.get('local')).shield = 1500; s.players.get('local').weapons = ['cano-longo']; g.debugView(30, 27, 0, 0); });
+  await page.waitForTimeout(700);
+  const tecla = await G(() => window.__game.input.keys.shield);
+  check('Escudo na mão: a tecla X vem como padrão e é configurável', tecla && tecla[0] === 'KeyX', JSON.stringify(tecla));
+  await press('KeyX');
+  await page.waitForTimeout(700);
+  const mao = await G(() => ({ sim: window.__game.me.shieldHand, rig: window.__game.weapon.shieldRig.visible, move: window.__game.pc.weaponMove }));
+  check('Escudo na mão: X pega o escudo (a arma some e o modelo aparece), anda 10% mais devagar', mao.sim === true && mao.rig === true && Math.abs(mao.move - 0.9) < 0.001, JSON.stringify(mao));
+  await page.screenshot({ path: `${out}/c5-escudo.png` });
+  await G(() => { const s = window.__game.transport.sim, p = s.players.get('local'); const z = s.makeZombie(0, p.x, p.z - 1.3, 9e5, 0, {}); z.speed = 0; window.__zid = z.id; });
+  await page.mouse.click(640, 360);
+  await page.waitForTimeout(700);
+  const z = await G(() => { const s = window.__game.transport.sim, z = s.zombies.get(window.__zid), p = s.players.get('local'); return z ? { hp: z.hp, d: Math.hypot(z.x - p.x, z.z - p.z) } : null; });
+  check('Escudo na mão: o botão de atirar dá pancada (fere e empurra), sem gastar munição', z && z.hp < 9e5 && z.d > 2.2, JSON.stringify(z));
+  const mun = await G(() => window.__game.weapon.ammo);
+  check('Escudo na mão: a pancada não gasta munição', mun === 10, `${mun}`);
+  await press('KeyX');
+  await page.waitForTimeout(700);
+  const volta = await G(() => ({ sim: window.__game.me.shieldHand, rig: window.__game.weapon.shieldRig.visible, arma: window.__game.weapon.def.id }));
+  check('Escudo na mão: X de novo guarda o escudo nas costas e a arma volta', volta.sim === false && volta.rig === false && volta.arma === 'cano-longo', JSON.stringify(volta));
+  await G(() => { const s = window.__game.transport.sim; s.zombies.clear(); s.tr.P(s.players.get('local')).shield = 0; });
+}
+
+// 18. C6: F na alavanca gira o anel (do navegador até a simulação) e o aviso explica
+{
+  await G(() => { const g = window.__game, s = g.transport.sim; s.zombies.clear(); s.tr.rings = [1, 2, 3, 0]; const it = g.o.map.interactables.find((i) => i.id === 'anel-1'); g.debugView(it.use[0], it.use[1], 0, 0); });
+  await page.waitForTimeout(500);
+  const aviso = await prompt();
+  check('Anéis: o aviso da alavanca explica o que fazer', /anel 2/.test(aviso), aviso);
+  await press('KeyF');
+  await page.waitForTimeout(800);
+  const r = await sim((s) => s.tr.rings.join(','));
+  check('Anéis: F na alavanca gira só o anel dela em 90°', r === '1,3,3,0', r);
+  await G(() => { window.__game.transport.sim.tr.rings = [1, 2, 3, 0]; });
+}
+
 // 10. E1: pilha de avisos no topo (barra de chefe fixa; no máximo 2 avisos embaixo, por prioridade)
 {
   await G(() => { const s = window.__game.transport.sim; s.tr.robot = null; s.toSpawn = 0; s.zombies.clear(); window.__game.debugTr('tp:100,52'); });

@@ -248,7 +248,14 @@ export const TRINCHEIRA = {
   panzerVisorBreak: 0.2,
   zbloodTime: 20,
   shieldHp: 1500,
+  // anéis da Escavação: a 2ª etapa da melhoria dos cajados (false = só o enigma, como antes)
+  ringsStep: true,
   shieldArc: 120,
+  // escudo na mão: anda 10% mais devagar; a pancada (2 m, à frente, 120°) fere como a faca, empurra 2,2 m e espera 0,8 s
+  shieldHandMove: 0.9,
+  shieldBashRange: 2,
+  shieldBashPush: 2.2,
+  shieldBashCd: 0.8,
   droneTime: 60,
   droneCd: 90,
   droneRange: 18,

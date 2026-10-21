@@ -103,7 +103,7 @@ export interface Interactable {
   kind: 'ammo' | 'perk' | 'door' | 'weapon' | 'grenade' | 'knife' | 'box' | 'forge' | 'candle' | 'bank' | 'sight' | 'power' | 'ritual'
     // Trincheira
     | 'generator' | 'fizz' | 'tank' | 'shovel' | 'mound' | 'part' | 'bench' | 'gramofone' | 'disco'
-    | 'portal' | 'crystal' | 'staffPedestal' | 'altar' | 'tabua' | 'tabuaAltar' | 'challenge' | 'missao';
+    | 'portal' | 'crystal' | 'staffPedestal' | 'altar' | 'tabua' | 'tabuaAltar' | 'challenge' | 'missao' | 'ring';
   perk?: import('../perks').PerkId;
   door?: string;
   weapon?: string;

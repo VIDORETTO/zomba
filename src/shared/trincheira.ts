@@ -10,7 +10,7 @@ import { BASE_PERKS, MAX_PERKS, PERK_FX, SOLO_SELF_REVIVES, type PerkId } from '
 import { DEFAULT_POOL, type PowerupKind } from './powerups';
 import type { Element, GameEvent, NetPlayer, StaffState, TrGen, TrRobot, TrStaff, TrincheiraSnap, Weather } from './protocol';
 import { ELEMENT_LIST, MOUND_ODDS, SET_PARTS, ids } from './trincheira-info';
-import { GRENADE, WEAPONS, isStaff, type WeaponDef } from './weapons';
+import { GRENADE, KNIFE, WEAPONS, isStaff, type WeaponDef } from './weapons';
 import type { World } from './world';
 import { TANK_BODY, toLocal, type BodyDims } from './busBody';
 import type { SimPlayer, SimZombie } from './sim';
@@ -68,6 +68,8 @@ export interface TrPlayer {
   goldShovel: boolean;
   helmet: boolean;
   shield: number;
+  shieldHand: boolean;
+  bashReady: number;
   shieldBrokenRound: number;
   punho: boolean;
   artilharia: number;
@@ -104,7 +106,7 @@ interface Gen {
 
 interface Target {
   id: string;
-  kind: 'bau' | 'lapide' | 'domo' | 'placa' | 'sola' | 'olho';
+  kind: 'bau' | 'lapide' | 'domo' | 'placa' | 'sola' | 'olho' | 'esfera';
   idx: number;
   x: number;
   y: number;
@@ -121,6 +123,8 @@ interface StaffSim {
   prevOwner: string;
   charge: number;
   solved: boolean;
+  // esfera dos anéis acertada (2ª etapa)
+  ringsDone: boolean;
   puzzle: number[];
   seq: number[];
 }
@@ -190,6 +194,8 @@ export class TrincheiraSystems {
   tabuaCharge = 0;
   private punhoTaken = new Set<string>();
   private targets: Target[] = [];
+  // anéis da Escavação: o símbolo (0 a 3) que cada um mostra na marca; começam embaralhados e sem nenhum alinhado
+  rings = [1, 2, 3, 0];
   readonly areas: AreaFx[] = [];
   // artilharia
   private strikes: { x: number; z: number; t: number; shells: number; next: number; pid: string }[] = [];
@@ -219,7 +225,7 @@ export class TrincheiraSystems {
         const n = 1 + Math.floor(Math.random() * 6);
         if (!seq.includes(n)) seq.push(n);
       }
-      this.staffs.push({ el, st: 'faltando', awake: false, owner: '', prevOwner: '', charge: 0, solved: false, puzzle: el === 'fogo' ? [0, 0, 0, 0] : el === 'raio' ? [0] : [0, 0, 0], seq: el === 'raio' ? seq : [] });
+      this.staffs.push({ el, st: 'faltando', awake: false, owner: '', prevOwner: '', charge: 0, solved: false, ringsDone: false, puzzle: el === 'fogo' ? [0, 0, 0, 0] : el === 'raio' ? [0] : [0, 0, 0], seq: el === 'raio' ? seq : [] });
     });
     // alvos dos enigmas e da missão
     this.D.chests.forEach((c, i) => this.targets.push({ id: `bau-${i}`, kind: 'bau', idx: i, x: c[0], y: 0.7, z: c[1], r: 1.2 }));
@@ -236,7 +242,7 @@ export class TrincheiraSystems {
     let t = this.ps.get(id);
     if (!t) {
       t = {
-        shovel: false, goldShovel: false, helmet: false, shield: 0, shieldBrokenRound: -1, punho: false, artilharia: 0, zblood: 0,
+        shovel: false, goldShovel: false, helmet: false, shield: 0, shieldHand: false, bashReady: 0, shieldBrokenRound: -1, punho: false, artilharia: 0, zblood: 0,
         flags: [0, 0, 0, 0], claimed: [false, false, false, false], extraPerk: false, digs: 0, hold: null, burn: 0, burnAcc: 0,
         tpUntil: 0, tpCool: 0, tunnelT: 0, tunnelEl: null, invUntil: 0, helmetGiven: false,
       };
@@ -252,6 +258,60 @@ export class TrincheiraSystems {
   // bebidas que a Fonte da Sorte pode dar neste mapa: as 6 de sempre mais as exclusivas dela
   fizzPool(): PerkId[] {
     return [...BASE_PERKS, ...(this.h.map.fizzExtra ?? [])];
+  }
+
+  // a esfera acesa do centro: os 4 anéis mostram o símbolo de um elemento cujo enigma está resolvido e cuja esfera ainda não foi acertada
+  orbElement(): Element | null {
+    if (!T.ringsStep) return null;
+    const e = this.rings[0];
+    if (!this.rings.every((v) => v === e)) return null;
+    const s = this.staffs[e];
+    return s && s.solved && !s.ringsDone ? s.el : null;
+  }
+
+  private interactRing(p: SimPlayer, it: Interactable): boolean {
+    const i = Number(it.id.replace('anel-', ''));
+    if (!T.ringsStep || !(i >= 0 && i < 4)) return true;
+    this.rings[i] = (this.rings[i] + 1) % 4;
+    this.emit({ e: 'aneis', pid: p.id, ring: i, pos: this.rings[i] });
+    return true;
+  }
+
+  // escudo na mão ou nas costas (só com o escudo montado e o jogador de pé)
+  setShieldHand(p: SimPlayer, on: boolean) {
+    const t = this.P(p);
+    t.shieldHand = on && t.shield > 0 && p.life === 'alive';
+  }
+
+  holdingShield(p: SimPlayer) {
+    const t = this.P(p);
+    return t.shieldHand && t.shield > 0 && p.life === 'alive';
+  }
+
+  // pancada do escudo: zumbi a até 2 m, à frente (120°): dano de faca e empurrão (chefões não saem do lugar)
+  shieldBash(p: SimPlayer) {
+    const t = this.P(p);
+    if (!this.holdingShield(p) || this.h.time() < t.bashReady) return;
+    t.bashReady = this.h.time() + T.shieldBashCd;
+    this.emit({ e: 'bash', pid: p.id });
+    const fx = -Math.sin(p.yaw), fz = -Math.cos(p.yaw);
+    const half = Math.cos(((T.shieldArc / 2) * Math.PI) / 180);
+    for (const z of [...this.h.zombies.values()]) {
+      const dx = z.x - p.x, dz = z.z - p.z;
+      const d = Math.hypot(dx, dz);
+      if (d > T.shieldBashRange || Math.abs(z.y - p.y) > 2 || (d > 0.05 && (dx * fx + dz * fz) / d < half)) continue;
+      const ux = d > 0.05 ? dx / d : fx, uz = d > 0.05 ? dz / d : fz;
+      const chief = z.kind === 4 || z.kind === 6 || z.kind === 7 || z.kind === 8;
+      this.h.setWeapon('escudo');
+      this.h.damageZombie(z, KNIFE.damage, p, 'body', true);
+      this.h.setWeapon(null);
+      if (chief || !this.h.zombies.has(z.id)) continue;
+      // empurra, parando antes de uma parede
+      const wall = this.h.world.raycast(z.x, 1, z.z, ux, 0, uz, T.shieldBashPush + 0.4);
+      const push = wall ? Math.max(0, wall.t - 0.4) : T.shieldBashPush;
+      z.x += ux * push;
+      z.z += uz * push;
+    }
   }
 
   // Faísca: ao recarregar, um choque em volta; o dano cresce quanto mais vazio estava o pente; espera de 3 s entre choques
@@ -989,9 +1049,11 @@ export class TrincheiraSystems {
     if (eye) list.push(eye);
     const sole = this.soleTarget();
     if (sole) list.push(sole);
+    // a esfera dos anéis (acima do poço) só existe enquanto acesa
+    if (this.orbElement()) list.push({ id: 'esfera', kind: 'esfera', idx: ELEMENT_LIST.indexOf(this.orbElement()!), x: this.D.ring.c[0], y: 5, z: this.D.ring.c[1], r: 0.9 });
     for (const t of list) {
       // domos e olhos: de qualquer distância; o resto pelo alcance da arma
-      const reach = t.kind === 'domo' || t.kind === 'olho' || t.kind === 'sola' ? Math.max(range, 160) : t.kind === 'lapide' ? Math.max(range, 40) : range;
+      const reach = t.kind === 'domo' || t.kind === 'olho' || t.kind === 'sola' || t.kind === 'esfera' ? Math.max(range, 160) : t.kind === 'lapide' ? Math.max(range, 40) : range;
       const vx = t.x - ox, vy = t.y - oy, vz = t.z - oz;
       const s = vx * dx + vy * dy + vz * dz;
       if (s < 0 || s > reach) continue;
@@ -1038,6 +1100,14 @@ export class TrincheiraSystems {
           s.puzzle[0] = 0;
           this.emit({ e: 'alvo', kind: 'placa', idx: t.idx, pid: p.id, ok: false });
         }
+        break;
+      }
+      case 'esfera': {
+        // só o cajado do elemento da esfera a apaga (e conclui a 2ª etapa daquele cajado)
+        const o = this.orbElement();
+        if (!o || staff !== o) break;
+        this.staffOf(o).ringsDone = true;
+        this.emit({ e: 'alvo', kind: 'esfera', idx: t.idx, pid: p.id, ok: true });
         break;
       }
       case 'sola': {
@@ -1496,10 +1566,14 @@ export class TrincheiraSystems {
     if (d < 1e-3) return dmg;
     // costas do jogador: o oposto de para onde ele olha
     const bx = Math.sin(p.yaw), bz = Math.cos(p.yaw);
-    if ((dx * bx + dz * bz) / d < Math.cos(((T.shieldArc / 2) * Math.PI) / 180)) return dmg;
+    const dot = (dx * bx + dz * bz) / d;
+    const half = Math.cos(((T.shieldArc / 2) * Math.PI) / 180);
+    // na mão o escudo cobre a frente (120°); nas costas, a parte de trás
+    if (t.shieldHand && p.life === 'alive' ? -dot < half : dot < half) return dmg;
     t.shield -= dmg;
     if (t.shield <= 0) {
       t.shield = 0;
+      t.shieldHand = false;
       t.shieldBrokenRound = this.h.round();
       this.emit({ e: 'craft', pid: p.id, what: 'escudo', phase: 'expire' });
     }
@@ -1816,6 +1890,10 @@ export class TrincheiraSystems {
     }
     // o cajado normal na mão, enigma resolvido: põe no altar
     const held = p.weapons.find((w) => isStaff(w) && WEAPONS[w].staff === el && !WEAPONS[w].awake);
+    if (held && s.st === 'mao' && s.owner === p.id && s.solved && !s.awake && T.ringsStep && !s.ringsDone) {
+      this.emit({ e: 'deny', pid: p.id, reason: 'aneis' });
+      return true;
+    }
     if (held && s.st === 'mao' && s.owner === p.id && s.solved && !s.awake) {
       p.weapons = p.weapons.filter((w) => w !== held);
       s.st = 'altar';
@@ -1831,7 +1909,7 @@ export class TrincheiraSystems {
   // dono sangrou até o fim ou saiu: o cajado volta sozinho ao pedestal
   onPlayerGone(p: SimPlayer) {
     const t = this.P(p);
-    Object.assign(t, { shovel: false, goldShovel: false, helmet: false, shield: 0, punho: false, hold: null, burn: 0, zblood: 0 });
+    Object.assign(t, { shovel: false, goldShovel: false, helmet: false, shield: 0, shieldHand: false, punho: false, hold: null, burn: 0, zblood: 0 });
     p.weapons = p.weapons.filter((w) => !isStaff(w));
     for (const s of this.staffs) {
       if (s.st === 'mao' && s.owner === p.id) {
@@ -2296,6 +2374,7 @@ export class TrincheiraSystems {
       case 'tabuaAltar': return this.interactTabuaAltar(p);
       case 'challenge': return this.interactChallenge(p, it);
       case 'missao': return this.interactPoco(p);
+      case 'ring': return this.interactRing(p, it);
       default: return false;
     }
   }
@@ -2329,7 +2408,7 @@ export class TrincheiraSystems {
   playerFields(p: SimPlayer): Partial<NetPlayer> {
     const t = this.P(p);
     return {
-      shovel: t.shovel, goldShovel: t.goldShovel, helmet: t.helmet, shield: Math.round(t.shield), punho: t.punho,
+      shovel: t.shovel, goldShovel: t.goldShovel, helmet: t.helmet, shield: Math.round(t.shield), shieldHand: t.shieldHand && t.shield > 0, punho: t.punho,
       artilharia: t.artilharia, zblood: r3(t.zblood), challenges: this.challengeProgress(p), claimed: [...t.claimed], extraPerk: t.extraPerk,
     };
   }
@@ -2338,7 +2417,7 @@ export class TrincheiraSystems {
     const gens: TrGen[] = this.gens.map((g) => ({ on: g.on, progress: r3(g.progress), capturing: g.capturing, attacked: g.attacked }));
     const r = this.robot;
     const staffs: TrStaff[] = this.staffs.map((s) => ({
-      el: s.el, st: s.st, awake: s.awake, owner: s.owner, charge: r3(s.charge), solved: s.solved, puzzle: [...s.puzzle], seq: [...s.seq],
+      el: s.el, st: s.st, awake: s.awake, owner: s.owner, charge: r3(s.charge), solved: s.solved, rings: s.ringsDone, puzzle: [...s.puzzle], seq: [...s.seq],
     }));
     const k = this.tank;
     const d = this.build.drone;
@@ -2365,6 +2444,8 @@ export class TrincheiraSystems {
       tabuaCharge: this.tabuaCharge,
       missao: { step: this.missao.step, count: this.missao.step === 4 ? this.missao.eyes.filter(Boolean).length : this.missao.count, t: r3(this.missao.t) },
       recapture: this.recapturing,
+      rings: [...this.rings],
+      orb: this.orbElement(),
     };
   }
 
@@ -2421,6 +2502,7 @@ export class TrincheiraSystems {
           s.st = 'pedestal';
           s.awake = true;
           s.solved = true;
+          s.ringsDone = true;
         }
         break;
       case 'portais':
@@ -2478,6 +2560,7 @@ export class TrincheiraSystems {
           s.st = 'pedestal';
           s.awake = true;
           s.solved = true;
+          s.ringsDone = true;
           s.prevOwner = me.id;
         }
         this.forjaUp = true;

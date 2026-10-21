@@ -64,8 +64,9 @@ export interface NetPlayer {
   shovel?: boolean;
   goldShovel?: boolean;
   helmet?: boolean;
-  // vida do Escudo de Trincheira (0 = sem escudo)
+  // vida do Escudo de Trincheira (0 = sem escudo) e se ele está na mão (senão fica nas costas)
   shield?: number;
+  shieldHand?: boolean;
   // Punho de Ferro no lugar da faca
   punho?: boolean;
   // Granadas de Artilharia
@@ -165,6 +166,8 @@ export interface TrStaff {
   puzzle: number[];
   // enigma do raio: sequência de placas que as lâmpadas mostram (1 a 6)
   seq: number[];
+  // 2ª etapa: a esfera dos anéis da Escavação já foi acertada com o cajado deste elemento
+  rings: boolean;
 }
 
 export interface TrincheiraSnap {
@@ -200,6 +203,9 @@ export interface TrincheiraSnap {
   missao: { step: number; count: number; t: number };
   // recaptura em andamento (Cruzados vivos)
   recapture: boolean;
+  // anéis da Escavação: símbolo (0 fogo, 1 gelo, 2 vento, 3 raio) que cada um mostra na marca, e a esfera acesa do centro
+  rings: number[];
+  orb: Element | null;
 }
 
 export type GameEvent =
@@ -214,6 +220,9 @@ export type GameEvent =
   | { e: 'pdown'; pid: string }
   // by: id de quem reanimou, ou 'cajado' (disparo do cajado desperto); from: quem atirou (só no caso do cajado)
   | { e: 'previve'; pid: string; by: string; from?: string }
+  | { e: 'bash'; pid: string }
+  // um anel da Escavação girou 90° (pos = símbolo que ficou na marca)
+  | { e: 'aneis'; pid: string; ring: number; pos: number }
   // choque da Faísca e onda da Casca Grossa (só efeito visual e som)
   | { e: 'bebida'; perk: 'faisca' | 'casca-grossa'; pid: string; x: number; z: number; r: number }
   | { e: 'pdead'; pid: string }
@@ -252,7 +261,7 @@ export type GameEvent =
   | { e: 'pleave'; pid: string; name: string }
   | { e: 'refill'; pid: string; weapon: string }
   | { e: 'perk'; pid: string; perk: PerkId }
-  | { e: 'deny'; pid: string; reason: 'pontos' | 'limite' | 'possui' | 'longe' | 'esgotado' | 'cheio' | 'desligada' | 'unica' | 'mira' | 'trancado' | 'faltam' | 'ocupado' }
+  | { e: 'deny'; pid: string; reason: 'pontos' | 'limite' | 'possui' | 'longe' | 'esgotado' | 'cheio' | 'desligada' | 'unica' | 'mira' | 'trancado' | 'faltam' | 'ocupado' | 'aneis' }
   | { e: 'sight'; pid: string; weapon: string; sight: SightKind }
   | { e: 'forge'; phase: 'candle' | 'on' | 'start' | 'ready' | 'take' | 'expire'; pid: string | null; weapon: string | null }
   | { e: 'weapon'; pid: string; weapon: string; replaced: string | null }
@@ -292,7 +301,7 @@ export type GameEvent =
   | { e: 'portal'; el: Element; pid: string }
   | { e: 'teleporte'; pid: string; el: Element; to: 'camara' | 'tunel' }
   // alvo de enigma acertado
-  | { e: 'alvo'; kind: 'bau' | 'lapide' | 'domo' | 'placa' | 'sola' | 'olho'; idx: number; pid: string; ok: boolean }
+  | { e: 'alvo'; kind: 'bau' | 'lapide' | 'domo' | 'placa' | 'sola' | 'olho' | 'esfera'; idx: number; pid: string; ok: boolean }
   // cajado: montado, pego, devolvido, no altar, desperto; enigma resolvido
   | { e: 'cajado'; el: Element; phase: 'monta' | 'pega' | 'devolve' | 'altar' | 'cheio' | 'perde'; pid: string }
   | { e: 'desperto'; el: Element; pid: string }
@@ -314,6 +323,9 @@ export type PlayerInput =
   // ray = origem e direção do tiro (para acertar alvos de enigma e olhos dos colossos)
   | { t: 'shoot'; weapon: string; hits: { zid: number; part: HitPart }[]; ray?: [number, number, number, number, number, number] }
   | { t: 'knife'; zid: number | null }
+  // escudo na mão (liga/desliga) e pancada com ele
+  | { t: 'shield'; on: boolean }
+  | { t: 'bash' }
   // recarga começou com `ammo` tiros no pente (Faísca) / acabou de cair `h` metros (Casca Grossa)
   | { t: 'reload'; weapon: string; ammo: number }
   | { t: 'land'; h: number }

@@ -120,6 +120,9 @@ export class RemotePlayers {
       }
       Object.assign(v.p, pb);
       v.shield.visible = (pb.shield ?? 0) > 0;
+      // na mão: o escudo vai para a frente do corpo (o boneco olha para +z); nas costas fica atrás
+      v.shield.position.z = pb.shieldHand ? 0.14 : 0;
+      v.shield.rotation.y = pb.shieldHand ? Math.PI : 0;
       v.setGhost((pb.zblood ?? 0) > 0);
       const r = v.h.root;
       r.visible = pb.life !== 'dead';

@@ -603,6 +603,7 @@ O Blindado é um soldado dentro de uma armadura mecânica a vapor (sem insígnia
   - Fica **nas costas**, sem ocupar vaga de arma.
   - Bloqueia **100% do dano de zumbi vindo de trás** (ângulo de 120° às costas).
   - Aguenta 1500 de dano e então quebra. Quem teve o escudo quebrado pode pegar outro na rodada seguinte.
+  - **Na mão (C5):** a tecla `Escudo na mão (alternar)` (padrão X) tira o escudo das costas. Na mão ele bloqueia 100% do dano que vem da frente (arco de 120°), mas **não** o das costas; não se atira, e o botão de atirar dá a **pancada** (zumbi a até 2 m, à frente: dano de faca, empurrão de 2,2 m, espera de 0,8 s; chefões levam o dano e não saem do lugar). Anda 10% mais devagar. Mensagens `shield` e `bash`; o snapshot leva `shieldHand`. Quebrando, o escudo sai da mão.
   - Visual: placa de aço rebitada com visor estreito, nas costas do personagem.
 - **Drone de Campo** (cérebro + hélice + corpo):
   - Existe **um só** para a equipe.
@@ -676,6 +677,16 @@ O Blindado é um soldado dentro de uma armadura mecânica a vapor (sem insígnia
   - F de novo no pedestal, com o cajado na mão, **devolve** o cajado e libera a vaga.
   - Se o dono sangrar até o fim ou sair, o cajado volta sozinho ao pedestal.
   - Munição Cheia recarrega os cajados.
+
+#### 2ª etapa da melhoria: os anéis da Escavação (C6)
+
+Depois do enigma do elemento (e antes do altar da Câmara), cada cajado precisa passar pelos **4 anéis de pedra** em volta da Forja:
+
+- Cada anel tem os 4 símbolos de elemento a 90° um do outro. Os anéis começam embaralhados (`[1, 2, 3, 0]`, nenhum alinhado).
+- 4 alavancas (`anel-0` a `anel-3`, uma por diagonal, logo depois do último anel): F gira o anel em 90°, sempre para o mesmo lado.
+- Com os **4 anéis no símbolo de um elemento cujo enigma já está resolvido** (e a etapa ainda não feita), acende uma **esfera** acima da Forja (`orb` no snapshot). Acertá-la com um cajado **daquele elemento** (comum ou desperto) conclui a etapa (`ringsDone`; `TrStaff.rings` no snapshot). O altar da Câmara recusa o cajado enquanto a etapa não está feita (`deny` com `aneis`).
+- A ordem dos elementos é livre. `TRINCHEIRA.ringsStep = false` volta ao comportamento antigo.
+- Os atalhos de teste `debug('cajados')` e `debug('missao')` já marcam a etapa como feita.
 
 #### Armas
 

@@ -1049,6 +1049,9 @@ Pasta sugerida: `docs/trincheira/capturas/` (só capturas do nosso jogo).
 | E2 | pronto | 2026-10-21 | `pauseMap.ts`: planta com áreas abertas/fechadas, geradores (cinza, ciano, vermelho), Fonte, Caixa, tanque, portais, Câmara, você e aliados; só na Trincheira; redesenha a cada 0,5 s |
 | E3 | pronto | 2026-10-21 | `tips.ts`: 6 dicas de 1 linha, uma vez cada, guardadas em `localStorage` (falha sem quebrar); opção "Dicas" no menu e na pausa |
 
+| C5 | pronto | 2026-10-21 | Tecla `shield` (X), mensagens `shield` e `bash`, `TrPlayer.shieldHand`; bloqueio de frente (120°) na mão e de costas guardado; sem tiro na mão; pancada de 2 m com empurrão; −10% de velocidade; modelo na mão (`WeaponView.shieldRig`) e no boneco dos aliados |
+| C6 | pronto | 2026-10-21 | `TrincheiraSystems.rings`/`orbElement`/`interactRing`, 4 alavanca (`kind: 'ring'`), alvo `esfera`, altar recusa sem a etapa, `ringsStep`; anéis giram no navegador (4 símbolos por anel), marca, esfera e alavancas. O teste de missão (A6) passa pelos anéis |
+
 **Observações do S5**
 
 - O som das vinhetas é sintetizado; a aprovação "de ouvido" do D1 é do usuário.

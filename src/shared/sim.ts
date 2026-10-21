@@ -378,6 +378,8 @@ export class GameSim {
         if (p.life === 'dead' || !Array.isArray(msg.hits)) return;
         const def = WEAPONS[msg.weapon];
         if (!def || !p.weapons.includes(def.id)) return;
+        // com o escudo na mão não se atira (só a pancada)
+        if (this.tr?.holdingShield(p)) return;
         this.emit({ e: 'shot', pid, weapon: def.id });
         for (const h of msg.hits.slice(0, def.pellets * (def.pierce ?? 1))) {
           const z = this.zombies.get(h.zid);
@@ -451,6 +453,12 @@ export class GameSim {
       case 'land':
         if (p.life === 'alive' && Number.isFinite(msg.h)) this.tr?.onLand(p, msg.h);
         break;
+      case 'shield':
+        this.tr?.setShieldHand(p, !!msg.on);
+        break;
+      case 'bash':
+        this.tr?.shieldBash(p);
+        break;
       case 'revive':
         p.reviveTarget = p.life === 'alive' ? msg.target : null;
         break;
@@ -472,6 +480,7 @@ export class GameSim {
       case 'launch': {
         const def = WEAPONS[msg.weapon];
         if (p.life === 'dead' || !def?.projectile || !p.weapons.includes(def.id)) return;
+        if (this.tr?.holdingShield(p)) return;
         if (this.time - p.lastLaunch < def.fireDelay * 0.7) return;
         const dl = Math.hypot(msg.dx, msg.dy, msg.dz);
         if (!Number.isFinite(dl) || dl < 1e-3 || Math.hypot(msg.x - p.x, msg.y - p.y - 1.4, msg.z - p.z) > 2.5) return;

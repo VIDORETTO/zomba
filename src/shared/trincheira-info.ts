@@ -79,4 +79,5 @@ export const ids = {
   tabuaAltar: 'tabua-altar',
   challenge: (i: number) => `desafio-${i}`,
   poco: 'poco',
+  ring: (i: number) => `anel-${i}`,
 };

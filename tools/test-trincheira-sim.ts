@@ -656,6 +656,7 @@ const zombie = (s: GameSim, x: number, z: number, hp = 150, kind = 0) => {
   use(s, ids.altar('fogo'));
   check('altar exige o enigma resolvido', st.st === 'mao' && has(ev0(s), 'deny'));
   st.solved = true;
+  st.ringsDone = true; // a 2ª etapa (anéis) tem teste próprio mais abaixo
   use(s, ids.altar('fogo'));
   check('cajado vai para o altar e sai da mão', st.st === 'altar' && !a.weapons.includes('cajado-fogo'));
   for (let k = 0; k < 19; k++) raw(s).damageZombie(zombie(s, 100, 50, 1), 5, a, 'body', false, true);
@@ -1021,6 +1022,22 @@ function solvePuzzle(s: GameSim, i: number, el: El) {
   }
 }
 
+// 2ª etapa da melhoria: gira os 4 anéis até o símbolo do elemento e acerta a esfera com o cajado dele
+function ringsStep(s: GameSim, i: number, el: El) {
+  const [rcx, rcz] = D.ring.c;
+  const e = elIdx(el);
+  for (let r = 0; r < 4; r++) {
+    for (let k = (e - tr(s).rings[r] + 4) % 4; k > 0; k--) {
+      goIt(s, ids.ring(r), i);
+      use(s, ids.ring(r), i);
+    }
+  }
+  const ox = rcx - 12, oy = 1.6, oz = rcz;
+  goto(s, ox, oz, i);
+  const dx = rcx - ox, dy = 5 - oy, dl = Math.hypot(dx, dy);
+  tr(s).rayShot(me(s, i), `cajado-${el}`, ox, oy, oz, dx / dl, dy / dl, 0, 100);
+}
+
 // uma volta inteira de um cajado com o jogador i: montar, pegar, enigma, altar, encher, despertar e pôr na Mesa
 function staffJourney(s: GameSim, i: number, el: El) {
   const a = me(s, i);
@@ -1029,6 +1046,7 @@ function staffJourney(s: GameSim, i: number, el: El) {
   if (st.st === 'faltando') use(s, ids.staff(el), i);
   use(s, ids.staff(el), i); // pega do pedestal
   solvePuzzle(s, i, el);
+  ringsStep(s, i, el);
   goIt(s, ids.altar(el), i);
   use(s, ids.altar(el), i); // põe no altar
   const killer = me(s, 0);
@@ -1317,6 +1335,185 @@ function missionToHarvest(players: number, plan: [number, El][]) {
   const nBrick = map.blocks.filter((b) => b.mat === 'brick').length;
   const mixOf = (mix ?? {}).brick ?? {};
   check('B5: o tijolo da Oficina é marrom sujo (brickDirty); o tijolo vermelho vivo da Cidade não aparece nas paredes', (mixOf.brickDirty ?? 0) > 0 && !mixOf.brick && nBrick === 0, `brickDirty ${(mixOf.brickDirty ?? 0).toFixed(0)} m², brick ${nBrick} blocos`);
+}
+
+// --- C5: escudo na mão ---
+{
+  const setup = () => {
+    const s = mk(1, 3);
+    quiet(s);
+    goto(s, AX, AZ);
+    const a = me(s);
+    tr(s).P(a).shield = T.shieldHp;
+    // yaw 0: o jogador olha para -z; a frente é -z e as costas +z
+    s.handle('p0', { t: 'state', x: AX, y: 0, z: AZ, yaw: 0, pitch: 0, crouch: false, speed: 0 });
+    return { s, a };
+  };
+  const hurt = (s: GameSim, fromZ: number, dmg = 40) => raw(s).damagePlayer(me(s), dmg, AX, fromZ, false);
+  {
+    const { s, a } = setup();
+    s.handle('p0', { t: 'shield', on: true });
+    check('escudo na mão: o jogador o pega com a tecla (só com escudo)', tr(s).P(a).shieldHand === true);
+    hurt(s, AZ - 2);
+    check('escudo na mão bloqueia o dano que vem de frente', a.health === 100 && tr(s).P(a).shield === T.shieldHp - 40, `vida ${a.health}, escudo ${tr(s).P(a).shield}`);
+    hurt(s, AZ + 2);
+    check('escudo na mão não bloqueia o que vem de costas', a.health === 60, `vida ${a.health}`);
+    // de lado (90°): fora do arco de 120°
+    const h0 = a.health;
+    raw(s).damagePlayer(a, 20, AX + 2, AZ, false);
+    check('escudo na mão: de lado (90°) já fura o arco de 120°', a.health === h0 - 20, `vida ${a.health}`);
+  }
+  {
+    const { s, a } = setup();
+    hurt(s, AZ + 2);
+    check('escudo nas costas (como hoje) bloqueia o que vem de costas', a.health === 100 && tr(s).P(a).shield < T.shieldHp);
+    hurt(s, AZ - 2);
+    check('escudo nas costas não bloqueia o que vem de frente', a.health === 60, `vida ${a.health}`);
+  }
+  {
+    const s = mk(1, 3);
+    quiet(s);
+    s.handle('p0', { t: 'shield', on: true });
+    check('sem escudo a tecla não faz nada', tr(s).P(me(s)).shieldHand === false);
+  }
+  {
+    const { s, a } = setup();
+    s.handle('p0', { t: 'shield', on: true });
+    const perto = zombie(s, AX, AZ - 1.3, 9e5);
+    const atras = zombie(s, AX, AZ + 1.3, 9e5);
+    const longe = zombie(s, AX, AZ - 4, 9e5);
+    perto.speed = atras.speed = longe.speed = 0;
+    s.handle('p0', { t: 'bash' });
+    check('pancada do escudo fere o zumbi à frente (dano de faca)', perto.hp < 9e5 && 9e5 - perto.hp >= 100, `${(9e5 - perto.hp).toFixed(0)} de dano`);
+    check('pancada empurra o zumbi para longe (mais de 1 m)', Math.hypot(perto.x - AX, perto.z - AZ) > 2.3, `${Math.hypot(perto.x - AX, perto.z - AZ).toFixed(2)} m`);
+    check('pancada não pega quem está atrás nem longe (2 m)', atras.hp === 9e5 && longe.hp === 9e5);
+    const hp1 = perto.hp;
+    s.handle('p0', { t: 'bash' });
+    check('pancada tem espera: duas seguidas contam uma', perto.hp === hp1);
+    run(s, 1);
+    perto.x = AX; perto.z = AZ - 1.3;
+    s.handle('p0', { t: 'bash' });
+    check('depois da espera a pancada vale de novo', perto.hp < hp1);
+    check('a pancada não gasta a vida do escudo', tr(s).P(a).shield === T.shieldHp);
+  }
+  {
+    const { s } = setup();
+    s.handle('p0', { t: 'shield', on: true });
+    const z = zombie(s, AX, AZ - 5, 9e5);
+    z.speed = 0;
+    s.handle('p0', { t: 'shoot', weapon: 'cano-longo', hits: [{ zid: z.id, part: 'body' }] });
+    check('com o escudo na mão não sai tiro', z.hp === 9e5);
+    s.handle('p0', { t: 'launch', weapon: 'cano-longo', x: AX, y: 1.5, z: AZ, dx: 0, dy: 0, dz: -1 });
+    check('com o escudo na mão também não sai disparo de projétil', z.hp === 9e5);
+  }
+  {
+    const { s, a } = setup();
+    s.handle('p0', { t: 'shield', on: true });
+    for (let k = 0; k < 2; k++) hurt(s, AZ - 2, 800);
+    check('vida do escudo cai com os bloqueios e ele quebra (sai da mão); depois o dano da frente passa', tr(s).P(a).shield === 0 && tr(s).P(a).shieldHand === false, `escudo ${tr(s).P(a).shield}`);
+    hurt(s, AZ - 2, 30);
+    check('com o escudo quebrado o dano de frente fere', a.health === 70, `vida ${a.health}`);
+  }
+  {
+    const { s, a } = setup();
+    s.handle('p0', { t: 'shield', on: true });
+    check('o snapshot mostra o escudo na mão', s.snapshot().players[0].shieldHand === true);
+    s.handle('p0', { t: 'shield', on: false });
+    check('guardar o escudo nas costas', tr(s).P(a).shieldHand === false && s.snapshot().players[0].shieldHand === false);
+  }
+}
+
+// --- C6: anéis da Escavação (2ª etapa da melhoria dos cajados) ---
+{
+  const [rcx, rcz] = D.ring.c;
+  const EL = ['fogo', 'gelo', 'vento', 'raio'] as const;
+  const setup = () => {
+    const s = mk(1, 3);
+    quiet(s);
+    return s;
+  };
+  const girar = (s: GameSim, i: number, vezes = 1) => {
+    for (let k = 0; k < vezes; k++) {
+      goIt(s, ids.ring(i));
+      use(s, ids.ring(i));
+    }
+  };
+  // gira os 4 anéis até todos mostrarem o símbolo do elemento (índice 0 a 3)
+  const alinhar = (s: GameSim, e: number) => {
+    for (let i = 0; i < 4; i++) girar(s, i, (e - tr(s).rings[i] + 4) % 4);
+  };
+  const tiroNaEsfera = (s: GameSim, arma: string) => {
+    const a = me(s);
+    const ox = rcx - 12, oy = 1.6, oz = rcz;
+    goto(s, ox, oz);
+    const dx = rcx - ox, dy = 5 - oy, dz = 0, dl = Math.hypot(dx, dy, dz);
+    tr(s).rayShot(a, arma, ox, oy, oz, dx / dl, dy / dl, dz / dl, 100);
+  };
+  {
+    const s = setup();
+    const antes = [...tr(s).rings];
+    check('anéis: começam embaralhados (nenhum símbolo comum a todos)', new Set(antes).size === 4, antes.join(','));
+    girar(s, 2);
+    check('F na alavanca gira o anel em 90°', tr(s).rings[2] === (antes[2] + 1) % 4 && tr(s).rings[0] === antes[0], `${antes.join(',')} → ${tr(s).rings.join(',')}`);
+    girar(s, 2, 3);
+    check('4 giros devolvem o anel ao lugar (volta completa)', tr(s).rings[2] === antes[2]);
+  }
+  {
+    const s = setup();
+    alinhar(s, 0);
+    check('anéis alinhados no Fogo, mas sem o enigma do Fogo resolvido: a esfera não acende', s.snapshot().tr!.orb === null);
+    tr(s).staffs[0].solved = true;
+    s.tick(0.1);
+    check('anéis alinhados no Fogo, com o enigma do Fogo resolvido: a esfera acende', s.snapshot().tr!.orb === 'fogo', `${s.snapshot().tr!.orb}`);
+    tiroNaEsfera(s, 'cajado-gelo');
+    check('acertar a esfera do Fogo com o cajado de outro elemento não conclui', tr(s).staffs[0].ringsDone !== true);
+    tiroNaEsfera(s, 'cajado-fogo');
+    check('acertar a esfera com o Cajado de Fogo conclui a etapa dos anéis', tr(s).staffs[0].ringsDone === true && s.snapshot().tr!.orb === null);
+    // a ordem é livre: o Vento vem depois
+    tr(s).staffs[2].solved = true;
+    alinhar(s, 2);
+    check('a ordem é livre: o Vento acende a esfera depois do Fogo', s.snapshot().tr!.orb === 'vento', `${s.snapshot().tr!.orb}`);
+    tiroNaEsfera(s, 'cajado-vento-d');
+    check('o cajado desperto do elemento também acerta a esfera', tr(s).staffs[2].ringsDone === true);
+  }
+  {
+    // o altar recusa sem a etapa e aceita com ela
+    const s = setup();
+    const a = me(s);
+    const st = tr(s).staffs[0];
+    st.st = 'mao';
+    st.owner = 'p0';
+    st.solved = true;
+    a.weapons = ['pistol', 'cajado-fogo'];
+    goIt(s, ids.altar('fogo'));
+    use(s, ids.altar('fogo'));
+    check('sem a etapa dos anéis, o altar recusa o cajado', st.st === 'mao' && has(ev0(s), 'deny'));
+    st.ringsDone = true;
+    use(s, ids.altar('fogo'));
+    check('com a etapa dos anéis, o altar aceita o cajado', st.st === 'altar');
+  }
+  {
+    // com ringsStep = false volta ao comportamento de antes
+    const TT = T as unknown as { ringsStep: boolean };
+    TT.ringsStep = false;
+    const s = setup();
+    const a = me(s);
+    const st = tr(s).staffs[0];
+    st.st = 'mao';
+    st.owner = 'p0';
+    st.solved = true;
+    a.weapons = ['pistol', 'cajado-fogo'];
+    goIt(s, ids.altar('fogo'));
+    use(s, ids.altar('fogo'));
+    check('com ringsStep = false o altar aceita direto (o comportamento de antes)', st.st === 'altar');
+    TT.ringsStep = true;
+  }
+  {
+    const s = setup();
+    check('o snapshot leva os anéis e a esfera', Array.isArray(s.snapshot().tr!.rings) && s.snapshot().tr!.rings.length === 4 && 'orb' in s.snapshot().tr!);
+    check('as 4 alavancas existem e são alcançáveis (mapa)', [0, 1, 2, 3].every((i) => !!it(ids.ring(i))));
+  }
+  void EL;
 }
 
 // --- Escavação (B1): a decoração é só desenho, nada fecha o caminho ---

@@ -453,6 +453,36 @@ await existem('Câmara: pedras com borda, portais de volta, colunas de luz, runa
   await shot('b8-camara-raio');
 }
 
+// C6: anéis da Escavação
+{
+  await existem('Anéis: 4 alavancas, a marca e a esfera existem na cena', ['escavacao-alavanca-0', 'escavacao-alavanca-3', 'escavacao-marca', 'escavacao-esfera']);
+  // gira o anel 0 duas vezes pela simulação e o desenho acompanha (rotação do anel muda)
+  const r = await G(async () => {
+    const g = window.__game, s = g.transport.sim, tr = g.tr;
+    const ring = (i) => { let m = null; g.scene.traverse((o) => { if (o.name === `escavacao-anel-${i}`) m = o; }); return m; };
+    const a0 = ring(0).rotation.y;
+    s.tr.rings[0] = (s.tr.rings[0] + 2) % 4;
+    await new Promise((res) => setTimeout(res, 2500));
+    const a1 = ring(0).rotation.y;
+    // alinha tudo no Fogo com o enigma resolvido: a esfera acende
+    s.tr.rings = [0, 0, 0, 0];
+    s.tr.staffs[0].solved = true;
+    s.tr.staffs[0].ringsDone = false;
+    await new Promise((res) => setTimeout(res, 1500));
+    let orb = null; g.scene.traverse((o) => { if (o.name === 'escavacao-esfera') orb = o; });
+    const acesa = orb.visible;
+    s.tr.staffs[0].ringsDone = true;
+    await new Promise((res) => setTimeout(res, 800));
+    const apagada = !orb.visible;
+    return { a0, a1, acesa, apagada };
+  });
+  check('Anéis: o anel gira até o símbolo que a simulação manda', Math.abs(r.a1 - r.a0) > 0.5, `${r.a0.toFixed(2)} → ${r.a1.toFixed(2)}`);
+  check('Anéis: a esfera acende com os anéis alinhados e apaga depois do acerto', r.acesa === true && r.apagada === true, JSON.stringify(r));
+  await G(() => { const s = window.__game.transport.sim; s.tr.rings = [1, 2, 3, 0]; s.tr.staffs[0].solved = false; s.tr.staffs[0].ringsDone = false; });
+  await view(-15, 2, 0, 0.5, 2000);
+  await shot('c6-aneis');
+}
+
 // ---------------------------------------------------------------------------
 // F3: orçamento de desempenho (chamadas de desenho e triângulos por quadro, nos 6 pontos da tour)
 // ---------------------------------------------------------------------------

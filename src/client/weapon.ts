@@ -33,6 +33,8 @@ export interface WeaponCallbacks {
   sound(s: WeaponSound): void;
   // a recarga começou com `ammo` tiros no pente (a Faísca usa)
   reload?(ammo: number): void;
+  // pancada do escudo (botão de atirar com o escudo na mão)
+  bash?(): void;
 }
 
 type State = 'idle' | 'reload' | 'knife' | 'raise' | 'action' | 'switch';
@@ -110,6 +112,11 @@ export class WeaponView {
   spread = 0;
   sprintT = 0;
   heavyKnife = false;
+  // escudo na mão (Trincheira): some a arma, o botão de atirar dá pancada
+  shieldHand = false;
+  private shieldT = 0;
+  private bashT = 99;
+  private readonly shieldRig = new THREE.Group();
   // Punho de Ferro no lugar da faca (o game.ts liga com me.punho)
   punho = false;
   // multiplicadores das bebidas: tempo de recarga e intervalo entre tiros
@@ -317,6 +324,26 @@ export class WeaponView {
     }
 
     this.setInventory([this.startId]);
+    // escudo de Trincheira segurado na mão esquerda: placa rebitada com visor estreito e punho
+    {
+      const steel = std(0x9a9a92, 0.5, 0.2);
+      const dark = std(0x2a2a2a, 0.6, 0.2);
+      const plate = new THREE.Mesh(new THREE.BoxGeometry(0.34, 0.5, 0.035), steel);
+      const rim = new THREE.Mesh(new THREE.BoxGeometry(0.37, 0.53, 0.02), dark);
+      rim.position.z = -0.018;
+      const slit = new THREE.Mesh(new THREE.BoxGeometry(0.2, 0.035, 0.04), dark);
+      slit.position.set(0, 0.14, 0.005);
+      const grip = new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.14, 0.05), dark);
+      grip.position.set(0, -0.02, 0.06);
+      this.shieldRig.add(rim, plate, slit, grip);
+      for (const [x, y] of [[-0.14, 0.2], [0.14, 0.2], [-0.14, -0.2], [0.14, -0.2]]) {
+        const rv = new THREE.Mesh(new THREE.BoxGeometry(0.025, 0.025, 0.02), dark);
+        rv.position.set(x, y, -0.02);
+        this.shieldRig.add(rv);
+      }
+      this.shieldRig.visible = false;
+      this.root.add(this.shieldRig);
+    }
   }
 
   // Punho de Ferro: luva de aço rebitada com ponteiras nos nós dos dedos (o punho aponta para -Z)
@@ -933,7 +960,47 @@ export class WeaponView {
 
   // ---------- quadro ----------
 
+  private wasHand = false;
+
+  // escudo na mão: a arma some, o botão de atirar dá a pancada e o escudo balança com o andar
+  private updateShieldHand(dt: number, t: number, input: Input, pc: PlayerController, active: boolean) {
+    if (this.shieldHand !== this.wasHand) {
+      this.wasHand = this.shieldHand;
+      if (this.shieldHand) {
+        this.slot.model.group.visible = false;
+        this.charging = false;
+        this.shotBuffer = 0;
+        this.burstLeft = 0;
+        if (this.state === 'reload') this.setState('idle');
+      } else {
+        this.showSlot(this.cur);
+        this.setState('raise');
+      }
+    }
+    this.shieldT += ((this.shieldHand ? 1 : 0) - this.shieldT) * (1 - Math.exp(-dt * 10));
+    this.bashT += dt;
+    this.shieldRig.visible = this.shieldT > 0.03;
+    if (!this.shieldRig.visible) return;
+    if (this.shieldHand && active && input.hit('fire') && this.bashT > 0.55) {
+      this.bashT = 0;
+      this.cb.bash?.();
+      this.cb.sound('knifeSwing');
+    }
+    const k = this.bashT < 0.32 ? Math.sin((this.bashT / 0.32) * Math.PI) : 0;
+    const b = pc.bobAmount;
+    this.shieldRig.position.set(-0.24 + Math.cos(pc.bobPhase) * 0.01 * b + 0.1 * k, -0.2 + (1 - this.shieldT) * -0.5 - Math.abs(Math.sin(pc.bobPhase)) * 0.01 * b, -0.58 - 0.3 * k);
+    this.shieldRig.rotation.set(0.05 + 0.25 * k, 0.55 - 0.5 * k, 0.04 * Math.cos(pc.bobPhase) * b);
+    void t;
+  }
+
   update(dt: number, t: number, input: Input, pc: PlayerController, look: [number, number], active: boolean) {
+    this.updateShieldHand(dt, t, input, pc, active);
+    if (this.shieldHand) {
+      // sem tiro nem recarga: só a pancada (a fila de tiros e a mira ficam zeradas)
+      this.stateT += dt;
+      this.ads = clamp(this.ads - dt / 0.2, 0, 1);
+      return;
+    }
     this.stateT += dt;
     this.fireCD -= dt;
     this.shotBuffer -= dt;

@@ -645,6 +645,11 @@ export function buildTrincheira(): MapDef {
     box(px - 0.2, 3.2, pz - 0.2, px + 0.2, 3.5, pz + 0.2, 'lamp', false);
     lights.push({ pos: [px, 3.1, pz], color: 0xffcf8a, intensity: 26, distance: 15, kind: 'lamp' });
   }
+  // 4 alavancas dos anéis de pedra (2ª etapa dos cajados): uma em cada diagonal, logo depois da borda do último anel
+  for (let k = 0; k < 4; k++) {
+    const a = Math.PI / 4 + (k * Math.PI) / 2;
+    interactables.push({ id: ids.ring(k), kind: 'ring', use: [rcx + Math.cos(a) * 6.6, rcz + Math.sin(a) * 6.6], y: 0 });
+  }
   // mesa do gramofone
   {
     const [gx, gz] = P.gramofone;

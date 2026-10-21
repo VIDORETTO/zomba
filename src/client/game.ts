@@ -5,7 +5,7 @@ import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
 import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
 import type { ShaderPass } from 'three/addons/postprocessing/ShaderPass.js';
 import type { RunInput } from '../shared/board';
-import { BISPO, BLEEDOUT_TIME, PLAYER, PLAYER_COLORS, REVIVE_RANGE, TICK_DT } from '../shared/constants';
+import { BISPO, BLEEDOUT_TIME, PLAYER, PLAYER_COLORS, REVIVE_RANGE, TICK_DT, TRINCHEIRA } from '../shared/constants';
 import type { MapDef } from '../shared/map/types';
 import type { GameEvent, NetPlayer, Snapshot } from '../shared/protocol';
 import { clamp, lerp } from '../shared/rng';
@@ -94,7 +94,7 @@ const AUTOPLAY = import.meta.env.DEV && new URLSearchParams(location.search).has
 // interações novas da Trincheira (o texto do aviso vem do TrincheiraClient)
 const TR_KINDS: Record<string, true> = {
   generator: true, fizz: true, tank: true, shovel: true, mound: true, part: true, bench: true, gramofone: true, disco: true,
-  portal: true, crystal: true, staffPedestal: true, altar: true, tabua: true, tabuaAltar: true, challenge: true, missao: true,
+  portal: true, crystal: true, staffPedestal: true, altar: true, tabua: true, tabuaAltar: true, challenge: true, missao: true, ring: true,
 };
 
 const WEEKDAYS =['Domingo', 'Segunda-feira', 'Terça-feira', 'Quarta-feira', 'Quinta-feira', 'Sexta-feira', 'Sábado'];
@@ -265,6 +265,7 @@ export class Game {
       throwGrenade: () => this.throwGrenade(),
       throwArtillery: () => this.throwArtillery(),
       knife: () => this.knife(),
+      bash: () => this.transport.send({ t: 'bash' }),
       reload: (ammo) => {
         if (this.me?.perks.includes('faisca')) this.transport.send({ t: 'reload', weapon: this.weapon.def.id, ammo });
       },
@@ -811,6 +812,7 @@ export class Game {
               ocupado: 'Já está em uso.',
               desligada: 'Sem energia: ligue o gerador da área.',
               unica: 'Você já carrega um cajado.',
+              aneis: 'Falta a 2ª etapa: gire os anéis da Escavação e acerte a esfera com este cajado.',
             };
             if (why[e.reason]) this.hud.notify(why[e.reason]!);
           }
@@ -1401,6 +1403,8 @@ export class Game {
       this.weapon.startAction('throw', 0.62, () => {});
     }
     const canAct = active && life === 'alive';
+    // escudo na mão (alternar): só com o escudo montado; a simulação confirma
+    if (this.tr && this.input.hit('shield') && canAct && (this.me?.shield ?? 0) > 0) this.transport.send({ t: 'shield', on: !this.me?.shieldHand });
     if (this.tr && this.input.hit('artillery') && canAct && (this.me?.artilharia ?? 0) > 0 && !this.weapon.busy) this.weapon.throwArtillery();
     this.hud.setCharge(life === 'alive' && !this.over ? this.weapon.chargeFrac : 0);
     if (!this.updateRevive(canAct) && !this.updateRepair(canAct) && !this.updateInteract(dt, canAct)) this.hud.prompt(null);
@@ -1865,7 +1869,8 @@ export class Game {
     this.weapon.mods.fire = perks.includes('gatilho') ? PERK_FX.gatilhoFireMult : 1;
     this.pc.mods.sprintSpeed = perks.includes('passo') ? PERK_FX.passoSpeedMult : 1;
     this.pc.mods.stamina = perks.includes('passo') ? PERK_FX.passoStaminaMult : 1;
-    this.pc.weaponMove = this.weapon.def.moveMult ?? 1;
+    this.weapon.shieldHand = !!this.me?.shieldHand;
+    this.pc.weaponMove = this.me?.shieldHand ? TRINCHEIRA.shieldHandMove : this.weapon.def.moveMult ?? 1;
     this.hud.setPerks(perks);
     for (const it of this.o.map.interactables) {
       if (it.kind !== 'perk') continue;

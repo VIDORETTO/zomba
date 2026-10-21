@@ -345,6 +345,10 @@ export class TrincheiraClient {
         }
         break;
       }
+      case 'aneis':
+        this.escav.onRingTurn(e.ring, e.pos);
+        this.snd.play('cajado-monta', new THREE.Vector3(this.c.T.ring.c[0], 0.5, this.c.T.ring.c[1]), 0.5);
+        break;
       case 'bebida': {
         // choque da Faísca (azul) e onda da Casca Grossa (laranja, com poeira e tremor)
         const hex = e.perk === 'faisca' ? 0x3ad8ff : 0xe0703a;
@@ -530,6 +534,7 @@ export class TrincheiraClient {
         const nm = `Cajado de ${ELEMENTS[el].name}`;
         if (s.st === 'mao' && s.owner === me.id && !s.awake) {
           if (!s.solved) return { text: `O enigma do <b>${nm}</b> ainda não foi resolvido<small>${this.puzzleHint(el)}</small>`, can: false, price: 0 };
+          if (TRINCHEIRA.ringsStep && !s.rings) return { text: `Falta a 2ª etapa do <b>${nm}</b><small>Na Escavação: alinhe os 4 anéis no símbolo de ${ELEMENTS[el].name} e acerte a esfera acesa com este cajado</small>`, can: false, price: 0 };
           return { text: `Pressione ${K} para colocar o <b>${nm}</b> no altar<small>Ele enche com 20 abates de qualquer jogador</small>`, can: true, price: 0 };
         }
         if (s.st === 'altar') {
@@ -553,6 +558,11 @@ export class TrincheiraClient {
         const ready = ch.some((v, i) => v >= GOALS[i] && !cl[i]);
         if (ready) return { text: `Pressione ${K} para retirar os prêmios do <b>Baú de Desafios</b>`, can: true, price: 0 };
         return { text: '<b>Baú de Desafios</b><small>Cumpra os desafios abaixo para abrir</small>', can: false, price: 0 };
+      }
+      case 'ring': {
+        const i = Number(it.id.replace('anel-', ''));
+        const sim = ['Fogo', 'Gelo', 'Vento', 'Raio'][tr.rings[i]] ?? '';
+        return { text: `Pressione ${K} para girar o <b>anel ${i + 1}</b> <small>Mostra o símbolo de ${sim}. Alinhe os 4 no elemento de um cajado com o enigma resolvido</small>`, can: true, price: 0 };
       }
       case 'missao':
         if (tr.missao.step !== 4) return null;
