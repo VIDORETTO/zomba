@@ -18,6 +18,8 @@ import type { TrCtx } from './ctx';
 import { FizzView } from './fizzView';
 import { ForjaView } from './forjaView';
 import { GeneratorView } from './generatorView';
+import { IgrejaView } from './igrejaView';
+import { LamaView } from './lamaView';
 import { MoundView } from './moundView';
 import { PartsView } from './partsView';
 import { SkyFx } from './skyFx';
@@ -61,6 +63,8 @@ export class TrincheiraClient {
   private readonly fizz: FizzView;
   private readonly forja: ForjaView;
   private readonly escav: EscavacaoView;
+  private readonly igreja: IgrejaView;
+  private readonly lama: LamaView;
   private readonly tank: TankView;
   private readonly colossus: ColossusView;
   private readonly weather: WeatherFx;
@@ -97,6 +101,8 @@ export class TrincheiraClient {
     this.fizz = new FizzView(this.c);
     this.forja = new ForjaView(this.c);
     this.escav = new EscavacaoView(this.c);
+    this.igreja = new IgrejaView(this.c);
+    this.lama = new LamaView(this.c);
     this.tank = new TankView(this.c);
     this.colossus = new ColossusView(this.c);
     this.weather = new WeatherFx(scene, opts.quality.particles, this.snd);
@@ -181,6 +187,11 @@ export class TrincheiraClient {
     this.fizz.update(tr, dt, t);
     this.forja.update(tr.forjaUp, dt);
     this.escav.update(tr, t);
+    this.igreja.update(t);
+    {
+      const fog = this.scene.fog as THREE.FogExp2 | null;
+      if (fog) this.lama.update(t, this.weather.rainAmount, fog.color, fog.density);
+    }
     this.tank.update(sample, tr, dt, t);
     this.colossus.update(tr, dt, t);
     this.mounds.update(tr, t);
@@ -561,7 +572,7 @@ export class TrincheiraClient {
   }
 
   dispose() {
-    for (const v of [this.weather, this.fx, this.escav, this.sky]) v.dispose();
+    for (const v of [this.weather, this.fx, this.escav, this.igreja, this.lama, this.sky, this.colossus]) v.dispose();
   }
 }
 

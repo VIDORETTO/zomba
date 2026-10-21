@@ -1032,3 +1032,10 @@ Veja `POLIMENTO.md`, seção 11, para o estado de cada ticket.
 - **C1:** o disparo normal de cajado desperto levanta o aliado caído (`TrincheiraSystems.staffRevive`; evento `previve` com `by: 'cajado'` e `from`, o id de quem atirou). Ataque carregado não reanima.
 - **C2:** 5 armas de 1918 (tabela em 4.10), `MapDef.startWeapon`, `MapDef.boxExtra`, `WeaponDef.pitch` e `moveMult`.
 - **C3:** 3 bebidas exclusivas da Fonte (6.2), `BASE_PERKS` e `FIZZ_PERKS`, mensagens `reload` e `land`.
+
+### Polimento S4: visual restante (2026-10-21)
+
+- **Novos arquivos do cliente:** `igrejaView.ts`, `lamaView.ts`; `skyFx.ts` e `escavacaoView.ts` já vinham do S2. `common.ts` ganhou `Merger`, `runeTexture` e `mergeBuffers`.
+- **Mapa:** `MaterialId` ganhou `rotWood`, `crackConcrete` e `brickDirty`; `Block.shade`; `TrincheiraData.wallMix`.
+- **Blindado:** peças nomeadas `blindado-*`; as placas caem com a vida do chefão.
+- **Colossos:** `ColossusView.farInfo()` e `fullVisible()` ajudam os testes.

@@ -3,28 +3,28 @@
   "margem": 0.1,
   "pontos": {
     "Posto (103, 50)": {
-      "calls": 408,
-      "tris": 59956
+      "calls": 450,
+      "tris": 78128
     },
     "Lama sul (30, 27)": {
-      "calls": 397,
-      "tris": 61951
+      "calls": 470,
+      "tris": 86266
     },
     "Escavação (-15, -22)": {
-      "calls": 381,
-      "tris": 62113
+      "calls": 448,
+      "tris": 86184
     },
     "Igreja (-84, 18)": {
-      "calls": 292,
-      "tris": 51434
+      "calls": 338,
+      "tris": 70336
     },
     "Quartel (2, -64)": {
-      "calls": 303,
-      "tris": 47210
+      "calls": 346,
+      "tris": 63222
     },
     "Câmara (165, 6)": {
-      "calls": 611,
-      "tris": 54356
+      "calls": 703,
+      "tris": 74532
     }
   }
 }

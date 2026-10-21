@@ -382,7 +382,7 @@ export function buildTrincheira(): MapDef {
   };
 
   // bloco girado ao longo de a->b: off0..off1 = distância para dentro da parede, ext = estica nas pontas
-  const seg = (a: P2, b: P2, off0: number, off1: number, y0: number, y1: number, mat: MaterialId, tint?: number, ext = 0) => {
+  const seg = (a: P2, b: P2, off0: number, off1: number, y0: number, y1: number, mat: MaterialId, tint?: number, ext = 0, shade?: number) => {
     const dx = b[0] - a[0], dz = b[1] - a[1];
     const len = Math.hypot(dx, dz);
     if (len < 0.05) return;
@@ -390,7 +390,7 @@ export function buildTrincheira(): MapDef {
     const o = (off0 + off1) / 2, w = (off1 - off0) / 2;
     const cx = (a[0] + b[0]) / 2 + nx * o, cz = (a[1] + b[1]) / 2 + nz * o;
     const hl = len / 2 + ext;
-    box(cx - w, y0, cz - hl, cx + w, y1, cz + hl, mat, false, { rot: [0, Math.atan2(dx, dz), 0], ...(tint !== undefined ? { tint } : {}) });
+    box(cx - w, y0, cz - hl, cx + w, y1, cz + hl, mat, false, { rot: [0, Math.atan2(dx, dz), 0], ...(tint !== undefined ? { tint } : {}), ...(shade !== undefined ? { shade } : {}) });
   };
   const along = (a: P2, b: P2, t: number): P2 => [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t];
   // estacas e postes a cada "step" metros ao longo do segmento
@@ -402,38 +402,72 @@ export function buildTrincheira(): MapDef {
       if (u < 1) fn(along(a, b, t), along(a, b, u));
     }
   };
+  // variação de brilho por bloco (ruído): de 1 - amt a 1 + amt, pelo lugar do bloco (vira cor de vértice no navegador)
+  const shadeAt = (amt: number, x: number, z: number) => Math.round((1 + (hash(Math.floor(x * 3), Math.floor(z * 3), 29) - 0.5) * 2 * amt) * 100) / 100;
+  // material e área de cada parede por estilo (conferência de variedade, ticket B5)
+  const wallMix: Record<string, Record<string, number>> = {};
+  // trecho de parede: soma na conta do estilo e põe a variação de brilho
+  const wseg = (style: Style, a: P2, b: P2, off0: number, off1: number, y0: number, y1: number, mat: MaterialId, tint?: number, ext = 0, jit = 0.14) => {
+    const len = Math.hypot(b[0] - a[0], b[1] - a[1]);
+    const m = (wallMix[style] ??= {});
+    m[mat] = (m[mat] ?? 0) + len * (y1 - y0);
+    seg(a, b, off0, off1, y0, y1, mat, tint, ext, jit > 0 ? shadeAt(jit, (a[0] + b[0]) / 2, (a[1] + b[1]) / 2) : undefined);
+  };
+  // percorre o segmento em painéis de ~`step` m (cada um pode ter um material diferente)
+  const panels = (a: P2, b: P2, step: number, fn: (p: P2, q: P2, r: number) => void) => {
+    const len = Math.hypot(b[0] - a[0], b[1] - a[1]);
+    const n = Math.max(1, Math.round(len / step));
+    for (let k = 0; k < n; k++) {
+      const p = along(a, b, k / n), q = along(a, b, (k + 1) / n);
+      fn(p, q, hash(Math.floor(p[0] * 2), Math.floor(p[1] * 2), 7));
+    }
+  };
   function wallPiece(style: Style, a: P2, b: P2) {
     switch (style) {
       case 'trench':
-        seg(a, b, 0, 0.22, 0, 2.05, 'woodDark', 0x7a6650, 0.15);
-        seg(a, b, -0.05, 0.75, 2.0, 2.45, 'sandbag', 0x9a8a6a, 0.3);
+        panels(a, b, 2.4, (p, q, r) => wseg(style, p, q, 0, 0.22, 0, 2.05, r < 0.5 ? 'woodDark' : r < 0.88 ? 'rotWood' : 'wood', 0x7a6650, 0.15));
+        wseg(style, a, b, -0.05, 0.75, 2.0, 2.45, 'sandbag', 0x9a8a6a, 0.3);
         every(a, b, 2.4, (p, q) => seg(p, q, -0.12, 0.12, 0, 2.6, 'wood', 0x6a5440));
         break;
-      case 'low':
-        seg(a, b, 0, 0.8, 0, 1.05, 'sandbag', 0x8e7e60, 0.3);
+      case 'low': {
+        // sacos de areia com mais volume: duas fileiras desencontradas e os sacos de cima, um a um
+        wseg(style, a, b, -0.05, 0.95, 0, 0.6, 'sandbag', 0x8e7e60, 0.3, 0.1);
+        wseg(style, a, b, 0.08, 0.82, 0.55, 1.0, 'sandbag', 0x978766, 0.25, 0.1);
+        every(a, b, 1.8, (p, q) => {
+          const s = hash(Math.floor(p[0] * 4), Math.floor(p[1] * 4), 5);
+          seg(p, q, 0.12 + s * 0.12, 0.72 + s * 0.1, 0.95, 1.2 + s * 0.08, 'sandbag', 0x8e7e60, 0, shadeAt(0.16, p[0], p[1]));
+        });
         every(a, b, 3.2, (p, q) => seg(p, q, 1.35, 1.45, 0, 1.35, 'woodDark'));
         seg(a, b, 1.38, 1.42, 0.55, 0.58, 'metal', 0x2a2622);
         seg(a, b, 1.38, 1.42, 1.0, 1.03, 'metal', 0x2a2622);
         break;
+      }
       case 'brick':
-        seg(a, b, 0, 0.45, 0, 4.6, 'brick', undefined, 0.2);
-        seg(a, b, -0.06, 0.55, 4.45, 4.75, 'trim', 0x8a8070, 0.25);
+        // Oficina: tijolo sujo (marrom desbotado, não vermelho vivo) com remendos de concreto, tábuas e tijolo escuro
+        panels(a, b, 3.2, (p, q, r) => {
+          if (r < 0.6) wseg(style, p, q, 0, 0.45, 0, 4.6, 'brickDirty', undefined, 0.2);
+          else if (r < 0.78) wseg(style, p, q, 0, 0.45, 0, 4.6, 'concrete', 0x8a857c, 0.2);
+          else if (r < 0.9) wseg(style, p, q, 0, 0.45, 0, 4.6, 'rotWood', 0x9a8a78, 0.2);
+          else wseg(style, p, q, 0, 0.45, 0, 4.6, 'brickDirty', 0x8a8076, 0.2);
+        });
+        wseg(style, a, b, -0.06, 0.55, 4.45, 4.75, 'trim', 0x8a8070, 0.25);
         break;
       case 'concrete':
-        seg(a, b, 0, 0.5, 0, 3.2, 'concrete', 0x9a958c, 0.25);
-        seg(a, b, -0.1, 0.6, 3.1, 3.4, 'concrete', 0x8a857c, 0.3);
+        panels(a, b, 3, (p, q, r) => wseg(style, p, q, 0, 0.5, 0, 3.2, r < 0.7 ? 'crackConcrete' : 'concrete', r < 0.7 ? 0xa09a90 : 0x9a958c, 0.25));
+        wseg(style, a, b, -0.1, 0.6, 3.1, 3.4, 'concrete', 0x8a857c, 0.3);
         break;
       case 'crypt':
-        seg(a, b, 0, 0.6, 0, 4.2, 'stone', 0x7c766c, 0.3);
+        panels(a, b, 3.4, (p, q, r) => wseg(style, p, q, 0, 0.6, 0, 4.2, r < 0.6 ? 'stone' : r < 0.85 ? 'crackConcrete' : 'concrete', 0x7c766c, 0.3));
         break;
       case 'house':
-        seg(a, b, 0, 0.42, 0, 0.6, 'stone', 0x857e72, 0.2);
-        seg(a, b, 0, 0.35, 0.6, 4.2, 'plaster', 0xb3a891, 0.2);
-        seg(a, b, -0.04, 0.38, 2.9, 3.1, 'woodDark', undefined, 0.2);
+        wseg(style, a, b, 0, 0.42, 0, 0.6, 'stone', 0x857e72, 0.2);
+        // reboco que caiu mostra o tijolo por baixo
+        panels(a, b, 2.8, (p, q, r) => wseg(style, p, q, 0, 0.35, 0.6, 4.2, r < 0.68 ? 'plaster' : 'brickDark', r < 0.68 ? 0xb3a891 : 0xa08e80, 0.2));
+        wseg(style, a, b, -0.04, 0.38, 2.9, 3.1, 'woodDark', undefined, 0.2);
         break;
       case 'church':
-        seg(a, b, 0, 0.7, 0, 8, 'stone', 0xa29a8a, 0.35);
-        seg(a, b, -0.08, 0.8, 7.7, 8.1, 'stone', 0x8a8274, 0.4);
+        panels(a, b, 4, (p, q, r) => wseg(style, p, q, 0, 0.7, 0, 8, r < 0.62 ? 'stone' : r < 0.86 ? 'brickDark' : 'crackConcrete', 0xa29a8a, 0.35));
+        wseg(style, a, b, -0.08, 0.8, 7.7, 8.1, 'stone', 0x8a8274, 0.4);
         every(a, b, 4.5, (p, q) => seg(p, along(p, q, 4), 0.7, 1.5, 0, 6, 'stone', 0x958d7e));
         break;
     }
@@ -464,9 +498,10 @@ export function buildTrincheira(): MapDef {
     }
   }
   // telhado em placas de 5 x 5 m; algumas caíram (dá para ver o céu)
+  // (a Igreja não tem placas: o telhado desabado dela é desenhado pelo navegador, só com vigas e buracos)
   const roofOf = (i: number) => {
     const zi = walk[i] ? zoneOf[i] : solid[i] ? owner[i] : -1;
-    return zi >= 0 && ROOF[zones[zi].style] ? zi : -1;
+    return zi >= 0 && ROOF[zones[zi].style] && zones[zi].style !== 'church' ? zi : -1;
   };
   for (let cz = 0; cz < GH; cz++) {
     let start = -1, cur = -1;
@@ -1071,6 +1106,7 @@ export function buildTrincheira(): MapDef {
     mounds, shovels, benches,
     tank: { path: tankPath, stops: tankStops, lever, leverNormal: leverN },
     ring: { c: [rcx, rcz], r: L.ring.r, hole: L.ring.hole },
+    wallMix,
     portals,
     chamber: { center: CC, hall: HALL, alcoves: alcoveData, plates },
     staffTable, chests, tombstones, domes, tabuaAltar, challengeChests, pickups, tankPart, windCrates, chamberRect,

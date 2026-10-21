@@ -8,7 +8,7 @@ import { chalkTexture, signTexture, type TexSet } from './textures';
 const SCALE: Record<MaterialId, number> = {
   asphalt: 6, sidewalk: 3, dirt: 5, concrete: 4, pavement: 6, brick: 3, brickDark: 3, plaster: 4,
   wood: 2.5, woodDark: 2.5, boards: 0, floorWood: 3, tile: 2, roof: 4, ceiling: 4,
-  metal: 3, rust: 2, glass: 0, glassLit: 0, trim: 2, paintYellow: 1, paintWhite: 1,
+  rotWood: 2.5, brickDirty: 3, crackConcrete: 4, metal: 3, rust: 2, glass: 0, glassLit: 0, trim: 2, paintYellow: 1, paintWhite: 1,
   carPaint: 4, tire: 1, lamp: 0, lava: 3, awning: 2, sandbag: 1.5, stone: 2.5, neon: 0, mud: 5, rune: 2.5, rivet: 2,
 };
 
@@ -28,6 +28,8 @@ const SKY_FLASH = new THREE.Color(0xc4d4ff);
 
 const NO_SHADOW = new Set<MaterialId>(['asphalt', 'pavement', 'dirt', 'paintYellow', 'paintWhite', 'lava', 'glass', 'glassLit', 'lamp', 'mud']);
 
+// direção do sol do céu (as poças da Trincheira refletem a mesma)
+export const SKY_SUN_DIR = new THREE.Vector3(-0.75, 0.32, 0.55).normalize();
 export const FOG_COLOR = 0x5c3c27;
 export const FOG_DENSITY = 0.032;
 
@@ -72,10 +74,10 @@ const HELL = {
 type AnyMat = THREE.MeshStandardMaterial | THREE.MeshLambertMaterial;
 
 // simple=true usa Lambert: bem mais barato por pixel, ideal para placas fracas ou sem aceleração.
-function makeMaterial(mat: MaterialId, tint: number | undefined, tex: TexSet, simple: boolean): AnyMat {
+function makeMaterial(mat: MaterialId, tint: number | undefined, tex: TexSet, simple: boolean, shaded = false): AnyMat {
   const color = new THREE.Color(tint ?? DEFAULT_TINT[mat] ?? 0xffffff);
   const map = tex[mat] ?? null;
-  const p: THREE.MeshStandardMaterialParameters = { color, map, roughness: 0.92, metalness: 0 };
+  const p: THREE.MeshStandardMaterialParameters = { color, map, roughness: 0.92, metalness: 0, ...(shaded ? { vertexColors: true } : {}) };
   switch (mat) {
     case 'glass':
       Object.assign(p, { roughness: 0.18, metalness: 0.5 });
@@ -134,7 +136,7 @@ function worldUVs(g: THREE.BufferGeometry, scale: number, ox: number, oy: number
 
 export function buildMapView(map: MapDef, tex: TexSet, scene: THREE.Scene, q: QualityConfig): MapView {
   const group = new THREE.Group();
-  type Batch = Map<string, { mat: MaterialId; tint?: number; geos: THREE.BufferGeometry[] }>;
+  type Batch = Map<string, { mat: MaterialId; tint?: number; shaded: boolean; geos: THREE.BufferGeometry[] }>;
   const byKey: Batch = new Map();
   // mapas grandes: blocos agrupados em pedaços de 64 m, para a placa de vídeo pular o que está longe
   const big = map.bounds.maxX - map.bounds.minX > 200 || map.bounds.maxZ - map.bounds.minZ > 200;
@@ -160,10 +162,17 @@ export function buildMapView(map: MapDef, tex: TexSet, scene: THREE.Scene, q: Qu
     if (b.rot) g.rotateX(b.rot[0]).rotateY(b.rot[1]).rotateZ(b.rot[2]);
     g.translate(cx, cy, cz);
     g.clearGroups();
+    // variação de brilho por bloco: vira cor de vértice (um material só para todos os tons)
+    const shaded = b.shade !== undefined;
+    if (shaded) {
+      const n = g.getAttribute('position').count;
+      const arr = new Float32Array(n * 3).fill(b.shade!);
+      g.setAttribute('color', new THREE.BufferAttribute(arr, 3));
+    }
     const chunk = big ? `${Math.floor(cx / CHUNK)},${Math.floor(cz / CHUNK)}` : '';
-    const key = `${b.mat}:${b.tint ?? ''}:${chunk}`;
+    const key = `${b.mat}:${b.tint ?? ''}:${chunk}${shaded ? ':s' : ''}`;
     let e = byKey.get(key);
-    if (!e) byKey.set(key, (e = { mat: b.mat, tint: b.tint, geos: [] }));
+    if (!e) byKey.set(key, (e = { mat: b.mat, tint: b.tint, shaded, geos: [] }));
     e.geos.push(g);
   }
 
@@ -175,7 +184,7 @@ export function buildMapView(map: MapDef, tex: TexSet, scene: THREE.Scene, q: Qu
     for (const e of batch.values()) {
       const geo = mergeGeometries(e.geos, false);
       e.geos.forEach((g) => g.dispose());
-      const m = makeMaterial(e.mat, e.tint, tex, q.simpleMaterials);
+      const m = makeMaterial(e.mat, e.tint, tex, q.simpleMaterials, e.shaded);
       materials.push(m);
       if (e.mat === 'lava') lavaMats.push(m);
       if (SNOWY.has(e.mat)) snowMats.push({ mat: m, base: m.color.clone(), amount: e.mat === 'dirt' || e.mat === 'mud' || e.mat === 'sandbag' ? 0.92 : e.mat === 'roof' ? 0.8 : 0.55 });
@@ -258,7 +267,7 @@ export function buildMapView(map: MapDef, tex: TexSet, scene: THREE.Scene, q: Qu
   }
 
   // céu: gradiente esfumaçado com um brilho de sol baixo atrás da névoa
-  const sunDir = new THREE.Vector3(-0.75, 0.32, 0.55).normalize();
+  const sunDir = SKY_SUN_DIR.clone();
   const skyMat = new THREE.ShaderMaterial({
     side: THREE.BackSide,
     depthWrite: false,

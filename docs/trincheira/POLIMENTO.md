@@ -950,16 +950,16 @@ Jogar 3 partidas até a rodada 20 ou mais, com registro, e ajustar a tabela 10 d
 
 **Aceite:** linha de base e FPS no Firefox anotados aqui; o teste passa.
 
-Linha de base medida em 2026-10-21 (qualidade "baixa" do navegador de teste da VPS, com os 6 geradores ligados, tempo limpo e rodada congelada). O arquivo `docs/trincheira/orcamento.json` guarda os mesmos números e é o que `tools/test-trincheira-visual.mjs` confere (margem de 10%). Para regravar depois de uma mudança de propósito: `node tools/test-trincheira-visual.mjs --gravar`. **Falta o usuário medir o FPS no Firefox** (tecla F3 no jogo mostra FPS, chamadas e triângulos). A Câmara é o ponto mais pesado em chamadas (611): é o primeiro candidato a lotes (B8).
+**Regravada no fim do S4** (depois do conteúdo novo de B1 a B9; os números do S1 eram 408 / 397 / 381 / 292 / 303 / 611 chamadas e 60 mil / 62 mil / 62 mil / 51 mil / 47 mil / 54 mil triângulos). O crescimento foi de +10% a +18% em chamadas e de +30% a +40% em triângulos: é o preço do conteúdo (a placa de vídeo real aguenta com folga, mas **o FPS no Firefox precisa ser conferido pelo usuário**: queda acima de 5% volta para esta lista como ticket de enxugar). Linha de base medida em 2026-10-21 (qualidade "baixa" do navegador de teste da VPS, com os 6 geradores ligados, tempo limpo e rodada congelada). O arquivo `docs/trincheira/orcamento.json` guarda os mesmos números e é o que `tools/test-trincheira-visual.mjs` confere (margem de 10%). Para regravar depois de uma mudança de propósito: `node tools/test-trincheira-visual.mjs --gravar`. **Falta o usuário medir o FPS no Firefox** (tecla F3 no jogo mostra FPS, chamadas e triângulos). A Câmara é o ponto mais pesado em chamadas (611): é o primeiro candidato a lotes (B8).
 
 | Ponto | Chamadas | Triângulos | FPS no Firefox |
 | --- | --- | --- | --- |
-| Posto (103, 50) | 408 | 59956 | |
-| Lama sul (30, 27) | 397 | 61951 | |
-| Escavação (-15, -22) | 381 | 62113 | |
-| Igreja (-84, 18) | 292 | 51434 | |
-| Quartel (2, -64) | 303 | 47210 | |
-| Câmara (165, 6) | 611 | 54356 | |
+| Posto (103, 50) | 450 | 78128 | |
+| Lama sul (30, 27) | 470 | 86266 | |
+| Escavação (-15, -22) | 448 | 86184 | |
+| Igreja (-84, 18) | 338 | 70336 | |
+| Quartel (2, -64) | 346 | 63222 | |
+| Câmara (165, 6) | 703 | 74532 | |
 
 ---
 
@@ -993,10 +993,12 @@ Pasta sugerida: `docs/trincheira/capturas/` (só capturas do nosso jogo).
 | A2 | `tr21-gerador-ligado` (e `capturas/a2-gerador-antes-8m.png`) | `capturas/a2-gerador-depois-8m.png`, `capturas/a2-gerador-depois-perto.png` |
 | B1 | `capturas/antes-tr05-escavacao.png`, `capturas/antes-tr06-forja.png` | `capturas/depois-b1-escavacao.png`, `capturas/depois-b1-escavacao-poco.png` |
 | B2 | `capturas/antes-tr04-lama-sul.png` | `capturas/depois-b2-ceu.png`, `capturas/depois-b2-relampago.png` |
-| B4 | `capturas/antes-tr07-igreja.png` | |
-| B5 | `capturas/antes-tr09-oficina.png`, `capturas/antes-tr10-casamata.png` | |
-| B7 | `e2-blindado` | |
-| B8 | `tr15-camara` | |
+| B3 | `capturas/antes-tr04-lama-sul.png` | `capturas/depois-b3-lama-poca.png`, `capturas/depois-b3-lama-chuva.png` |
+| B4 | `capturas/antes-tr07-igreja.png` | `capturas/depois-b4-igreja.png`, `capturas/depois-b4-igreja-altar.png`, `capturas/depois-tr07-igreja.png` |
+| B5 | `capturas/antes-tr09-oficina.png`, `capturas/antes-tr10-casamata.png` | `capturas/depois-tr09-oficina.png`, `capturas/depois-tr10-casamata.png` |
+| B6 | | `capturas/depois-b6-colossos-ao-longe.png` |
+| B7 | `e2-blindado` | `capturas/depois-b7-blindado.png`, `capturas/depois-b7-blindado-sem-placas.png` |
+| B8 | `tr15-camara` | `capturas/depois-tr15-camara.png`, `capturas/depois-b8-camara.png`, `capturas/depois-b8-camara-raio.png` |
 | B9 | | `capturas/depois-b9-lampadas.png` |
 | E1 | `e3-cruzados` | `capturas/e1-avisos-depois.png` |
 
@@ -1024,6 +1026,13 @@ Pasta sugerida: `docs/trincheira/capturas/` (só capturas do nosso jogo).
 | C2 | pronto, falta aprovação dos modelos | 2026-10-21 | `cano-longo` (+ Velha Senhora), `ferrolho`, `trincheira-smg`, `assalto-antigo`, `tripe`; sons pelo `pitch`; Tripé a 0,9 de velocidade e mira lenta. Dano por segundo dentro da faixa de preço (±20%) |
 | C3 | pronto | 2026-10-21 | `faisca`, `olho-frio`, `casca-grossa` só na Fonte (`MapDef.fizzExtra`). **Decisão nova:** a explosão do próprio jogador agora o fere na Trincheira (a Casca Grossa anula), porque antes não existia dano próprio |
 
+| B3 | pronto | 2026-10-21 | `lamaView.ts`: ~60 poças que refletem o céu (shader com o mesmo gradiente do céu, brilho do sol, ondas na chuva), crateras com água e aro de lama, tábuas jogadas; respingos da chuva em `weatherFx` (`lama-respingos`). Pegadas e esteiras já existiam e não mudaram |
+| B4 | pronto, falta aprovação das capturas | 2026-10-21 | `igrejaView.ts`: bancos (40% tombados), vigas e telhado desabado (o telhado em placas saiu do construtor da Igreja), escombros, sino caído, patamar do altar, 3 vitrais quebrados com raios de luz colorida |
+| B5 | pronto | 2026-10-21 | `rotWood`, `crackConcrete`, `brickDirty` (marrom sujo; o `brick` da Cidade não mudou). Paredes em painéis de materiais misturados; brilho por bloco por cor de vértice (`Block.shade`, sem material novo); sacos de areia em duas fileiras. `TrincheiraData.wallMix` confere a variedade (máximo 80%) |
+| B6 | pronto | 2026-10-21 | `ColossusFar`: 3 silhuetas de 4 chamadas, em laços a mais de 230 m; o próximo da fila espera; no aviso a silhueta anda até a borda e some quando o modelo completo entra |
+| B7 | pronto | 2026-10-21 | Armadura de placas em todo o corpo, mochila com tanque e mangueira, chama-piloto; as 3 placas (75/50/25%) e o visor viram cacos (`blindado-cacos`); `ZombieManager.bossHp` |
+| B8 | pronto, falta aprovação das capturas | 2026-10-21 | pedras com borda na cor da alcova mais perto, colunas de luz, anel de portal em cada alcova, runas e 8 pilares quebrados |
+
 **Observações do S1**
 
 - `test-rota.mjs` tem 1 falha constante (FPS, por software) e 2 verificações de tempo do ônibus que oscilam. Medido nos dois lados (com e sem as mudanças do S1): igual, não é regressão.
@@ -1033,6 +1042,11 @@ Pasta sugerida: `docs/trincheira/capturas/` (só capturas do nosso jogo).
 
 - O orçamento de desempenho subiu com o conteúdo novo (B1, B2, B9): até +8% em chamadas e +12% em triângulos nos pontos que enxergam a Escavação, dentro da margem de 10% depois de trocar as lâmpadas esféricas por octaedros. Linha de base mantida.
 - `test-box.mjs` falhou uma vez em 3 execuções (tempo, por software); o mesmo vale para `test-rota.mjs` (ver S1).
+
+**Observações do S4**
+
+- O B5 criou, sem querer, uma explosão de chamadas de desenho (840 a mais): cada tom de cor virava um material. A solução foi cor de vértice (`Block.shade`). Fica o aviso: variação por bloco nunca deve ir em `tint`.
+- A regravação do orçamento está descrita na seção 8 (F3).
 
 **Observações do S3**
 

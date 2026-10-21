@@ -272,6 +272,12 @@ export class Merger {
     this.add(mat, new THREE.CylinderGeometry(rt, rb, h, seg, 1, open), x, y, z, rx, 0, rz);
   }
 
+  // passa tudo o que outro Merger juntou para este, depois de transformado por `m` (bancos tombados, por exemplo)
+  absorb(other: Merger, m: THREE.Matrix4) {
+    for (const [mat, list] of other.parts) for (const g of list) this.geo(mat, g.applyMatrix4(m));
+    other.parts.clear();
+  }
+
   geo(mat: THREE.Material, g: THREE.BufferGeometry) {
     let list = this.parts.get(mat);
     if (!list) this.parts.set(mat, (list = []));
@@ -292,4 +298,70 @@ export class Merger {
     }
     return group;
   }
+}
+
+let runeStrip: THREE.CanvasTexture | null = null;
+// tira de runas (traços de glifos) em azul-claro sobre transparente
+export function runeTexture(): THREE.CanvasTexture {
+  if (runeStrip) return runeStrip;
+  const W = 1024, H = 64;
+  const c = document.createElement('canvas');
+  c.width = W;
+  c.height = H;
+  const ctx = c.getContext('2d')!;
+  let seed = 41;
+  const rnd = () => ((seed = (seed * 1664525 + 1013904223) >>> 0) / 4294967296);
+  ctx.strokeStyle = '#ffffff';
+  ctx.lineCap = 'round';
+  // linhas das bordas da faixa
+  ctx.lineWidth = 3;
+  ctx.beginPath();
+  ctx.moveTo(0, 5);
+  ctx.lineTo(W, 5);
+  ctx.moveTo(0, H - 5);
+  ctx.lineTo(W, H - 5);
+  ctx.stroke();
+  ctx.lineWidth = 4;
+  for (let k = 0; k < 16; k++) {
+    const x0 = k * 64 + 10, y0 = 14, w = 44, h = 36;
+    ctx.beginPath();
+    const n = 2 + Math.floor(rnd() * 3);
+    let px = x0 + rnd() * w, py = y0 + rnd() * h;
+    ctx.moveTo(px, py);
+    for (let i = 0; i < n; i++) {
+      px = x0 + rnd() * w;
+      py = y0 + rnd() * h;
+      ctx.lineTo(px, py);
+    }
+    ctx.stroke();
+    if (rnd() < 0.5) {
+      ctx.beginPath();
+      ctx.arc(x0 + w * rnd(), y0 + h * rnd(), 4 + rnd() * 4, 0, Math.PI * 2);
+      ctx.stroke();
+    }
+  }
+  runeStrip = new THREE.CanvasTexture(c);
+  runeStrip.wrapS = THREE.RepeatWrapping;
+  runeStrip.colorSpace = THREE.SRGBColorSpace;
+  return runeStrip;
+}
+
+// junta geometrias sem índice com os mesmos atributos (posição e cor)
+export function mergeBuffers(list: THREE.BufferGeometry[], withUv = false): THREE.BufferGeometry {
+  const parts = list.map((g) => (g.index ? g.toNonIndexed() : g));
+  const total = parts.reduce((a, g) => a + g.getAttribute('position').count, 0);
+  const pos = new Float32Array(total * 3), col = new Float32Array(total * 3), uv = new Float32Array(total * 2);
+  let o = 0;
+  for (const g of parts) {
+    const p = g.getAttribute('position'), cc = g.getAttribute('color'), u = g.getAttribute('uv');
+    pos.set(p.array as Float32Array, o * 3);
+    col.set(cc.array as Float32Array, o * 3);
+    if ((withUv || u) && u) uv.set(u.array as Float32Array, o * 2);
+    o += p.count;
+  }
+  const out = new THREE.BufferGeometry();
+  out.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+  out.setAttribute('color', new THREE.BufferAttribute(col, 3));
+  if (parts.every((g) => g.getAttribute('uv'))) out.setAttribute('uv', new THREE.BufferAttribute(uv, 2));
+  return out;
 }

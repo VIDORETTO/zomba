@@ -3,7 +3,7 @@ import { TRINCHEIRA } from '../../shared/constants';
 import type { GameEvent, TrRobot, TrincheiraSnap } from '../../shared/protocol';
 import { COLOSSI } from '../../shared/trincheira-info';
 import { colossusFeet, colossusPose, robotAxis, BODY_HEIGHT, FAR_STRIDE, type FootRect } from '../../shared/colossus';
-import { boxMesh, cylMesh, glowSprite, smooth } from './common';
+import { boxMesh, cylMesh, glowSprite, Merger, smooth } from './common';
 import type { TrCtx } from './ctx';
 
 type Id = 'atlas' | 'golias' | 'tita';
@@ -32,10 +32,172 @@ const KINDS: Id[] = ['atlas', 'golias', 'tita'];
 const S = 0.75;
 const EYE_LOCAL_Y = 15.8 * S;
 
+// ordem em que os colossos passam (a mesma da simulação): o próximo da fila espera fora de cena
+const ORDER: Id[] = ['atlas', 'golias', 'tita'];
+// laços das silhuetas: círculos em volta do centro do mapa, bem fora dele (mais de 150 m)
+const LOOP = { cx: 35, cz: 0, r: [236, 252, 244], speed: 3.4 };
+
+interface Sil {
+  id: Id;
+  root: THREE.Group;
+  legs: THREE.Mesh[];
+  eye: THREE.Sprite;
+  chimneys: THREE.Object3D[];
+  // ângulo no laço e fase da caminhada
+  ang: number;
+  phase: number;
+  // entrada: de onde saiu e quanto andou (0 a 1) até a borda do mapa
+  from: THREE.Vector2 | null;
+}
+
+// Silhuetas baratas (4 chamadas de desenho cada: corpo, duas pernas e o olho) que caminham em laços fora do mapa,
+// como robôs sempre à vista no horizonte. O colosso que vai passar sai do laço e anda até a borda do mapa durante o aviso.
+class ColossusFar {
+  readonly sil = new Map<Id, Sil>();
+  private lastId: Id | null = null;
+  private smokeT = 0;
+
+  constructor(private readonly c: TrCtx, ids: Id[]) {
+    const fog = new THREE.Color(c.map.fogColor ?? 0x6b6458);
+    ids.forEach((id, i) => this.sil.set(id, this.build(id, i, fog)));
+  }
+
+  private build(id: Id, i: number, fog: THREE.Color): Sil {
+    const root = new THREE.Group();
+    root.name = `colosso-silhueta-${id}`;
+    const col = new THREE.Color(BODY_COLOR[id]).lerp(fog, 0.45).multiplyScalar(0.55);
+    const mat = new THREE.MeshBasicMaterial({ color: col, fog: false });
+    const m = new Merger();
+    const s = S;
+    const add = (w: number, h: number, d: number, x: number, y: number, z: number) => m.box(mat, w * s, h * s, d * s, x * s, y * s, z * s);
+    add(8, 3.2, 5.5, 0, 0, 0);
+    add(9.5, 11, 6.5, 0, 7.4, 0);
+    add(10.4, 4, 7.2, 0, 11.4, 0);
+    add(4.4, 4.2, 4.4, 0, 15.6, 4 / s - 2.2);
+    add(4.8, 0.7, 4.8, 0, 17.9, 4 / s - 2.2);
+    for (const sx of [-1, 1]) {
+      add(3.8, 3.8, 3.8, sx * 6.6, 11.2, 0);
+      add(2.8, 16, 2.8, sx * 6.6, 3.8, 0);
+    }
+    for (const sx of [-1, 1]) add(1.4, 3, 1.4, sx * 3.3, 19.2, -2.6);
+    const body = m.build('silhueta-corpo', false);
+    body.position.y = BODY_HEIGHT - EYE_LOCAL_Y;
+    root.add(body);
+    // pernas: duas caixas que balançam
+    const legs: THREE.Mesh[] = [];
+    for (const sx of [-1, 1]) {
+      const g = new THREE.BoxGeometry(2.6, 15 * s, 2.8).translate(0, -7.5 * s, 0);
+      const leg = new THREE.Mesh(g, mat);
+      leg.position.set(sx * 2.2, BODY_HEIGHT - EYE_LOCAL_Y, 0);
+      root.add(leg);
+      legs.push(leg);
+    }
+    const eye = glowSprite(COLOSSI[id].eyeHex, 14, 0.9);
+    (eye.material as THREE.SpriteMaterial).fog = false;
+    eye.position.set(0, BODY_HEIGHT, 4.6);
+    root.add(eye);
+    const chimneys: THREE.Object3D[] = [];
+    for (const sx of [-1, 1]) {
+      const top = new THREE.Object3D();
+      top.position.set(sx * 3.3 * s, BODY_HEIGHT - EYE_LOCAL_Y + 19.2 * s, -2.6 * s);
+      root.add(top);
+      chimneys.push(top);
+    }
+    root.visible = false;
+    root.frustumCulled = false;
+    this.c.scene.add(root);
+    return { id, root, legs, eye, chimneys, ang: (i / 3) * Math.PI * 2 + 0.6, phase: i * 2, from: null };
+  }
+
+  private loopPos(sil: Sil): [number, number, number] {
+    const k = ORDER.indexOf(sil.id);
+    const r = LOOP.r[k];
+    return [LOOP.cx + Math.cos(sil.ang) * r, LOOP.cz + Math.sin(sil.ang) * r, sil.ang + Math.PI / 2];
+  }
+
+  // robot = colosso em cena (ou null); entry = onde o modelo completo começa (para a silhueta andar até lá no aviso)
+  update(dt: number, t: number, robot: TrRobot | null, entry: { x: number; z: number; yaw: number } | null) {
+    if (robot) this.lastId = robot.id;
+    const next = ORDER[(this.lastId ? ORDER.indexOf(this.lastId) + 1 : 0) % 3];
+    for (const sil of this.sil.values()) {
+      const inScene = robot && robot.id === sil.id;
+      let x: number, z: number, yaw: number;
+      let show = true;
+      if (inScene && robot!.phase === 'passos') show = false;
+      else if (inScene && robot!.phase === 'aviso' && entry) {
+        // sai do laço e anda até a borda do mapa durante o aviso
+        if (!sil.from) {
+          const [lx, lz] = this.loopPos(sil);
+          sil.from = new THREE.Vector2(lx, lz);
+        }
+        const k = smooth(Math.max(0, Math.min(1, 1 - robot!.warn / TRINCHEIRA.robotWarn)));
+        x = sil.from.x + (entry.x - sil.from.x) * k;
+        z = sil.from.y + (entry.z - sil.from.y) * k;
+        yaw = Math.atan2(entry.x - sil.from.x, entry.z - sil.from.y);
+        sil.phase += dt * 3.4;
+        this.put(sil, x, z, yaw, t);
+        sil.root.visible = true;
+        continue;
+      } else if (!robot && sil.id === next) show = false;
+      else if (robot && !inScene && sil.id === next) show = false;
+      if (!inScene) sil.from = null;
+      if (!show) {
+        sil.root.visible = false;
+        continue;
+      }
+      // laço: anda em círculo em volta do mapa
+      sil.ang += (LOOP.speed / LOOP.r[ORDER.indexOf(sil.id)]) * dt;
+      sil.phase += dt * LOOP.speed * 0.5;
+      [x, z, yaw] = this.loopPos(sil);
+      this.put(sil, x, z, yaw, t);
+      sil.root.visible = true;
+    }
+    // fumaça devagar e olho aceso
+    this.smokeT -= dt;
+    if (this.smokeT <= 0) {
+      this.smokeT = 1.6;
+      const v = new THREE.Vector3();
+      for (const sil of this.sil.values()) {
+        if (!sil.root.visible) continue;
+        for (const ch of sil.chimneys) {
+          ch.getWorldPosition(v);
+          this.c.fx.emit({ x: v.x, y: v.y, z: v.z, vx: 1.5, vy: 5, vz: 0, life: 7, size: 9, color: 0x3a3733, alpha: 0.3, grow: 0.5, dull: true });
+        }
+      }
+    }
+  }
+
+  private put(sil: Sil, x: number, z: number, yaw: number, t: number) {
+    sil.root.position.set(x, 0, z);
+    sil.root.rotation.y = yaw;
+    const sw = Math.sin(sil.phase) * 0.5;
+    sil.legs[0].rotation.x = sw;
+    sil.legs[1].rotation.x = -sw;
+    (sil.eye.material as THREE.SpriteMaterial).opacity = 0.75 + 0.15 * Math.sin(t * 2 + sil.ang);
+  }
+
+  info() {
+    return [...this.sil.values()].map((s) => ({ id: s.id, visible: s.root.visible, x: s.root.position.x, z: s.root.position.z, dist: Math.hypot(s.root.position.x - LOOP.cx, s.root.position.z - LOOP.cz) }));
+  }
+
+  // chamadas de desenho de uma silhueta (malhas visíveis: corpo, 2 pernas e o olho)
+  drawCalls() {
+    const s = [...this.sil.values()][0];
+    let n = 0;
+    s.root.traverse((o) => { if ((o as THREE.Mesh).isMesh || (o as THREE.Sprite).isSprite) n++; });
+    return n;
+  }
+
+  dispose() {
+    for (const s of this.sil.values()) s.root.removeFromParent();
+  }
+}
+
 // Colossos: robôs gigantes de aço rebitado que atravessam o mapa pisando nas pegadas. A pose (corpo, pé no ar, pé plantado, olho)
 // vem de `colossusPose`, a mesma função da simulação; as pernas são esticadas para o pé sempre alcançar a pegada.
 export class ColossusView {
   private readonly rigs = new Map<Id, Rig>();
+  private readonly far: ColossusFar;
   private active: Id | null = null;
   private exit: { id: Id; t: number; dir: 1 | -1; n: number } | null = null;
   private lastRobot: TrRobot | null = null;
@@ -50,6 +212,23 @@ export class ColossusView {
 
   constructor(private readonly c: TrCtx) {
     for (const id of KINDS) if (c.T.feet.some((f) => f.robot === id)) this.rigs.set(id, this.build(id));
+    this.far = new ColossusFar(c, KINDS.filter((id) => this.rigs.has(id)));
+  }
+
+  // para os testes: situação das silhuetas, chamadas de desenho de uma e qual modelo completo está à vista
+  farInfo() {
+    return this.far.info();
+  }
+  farDrawCalls() {
+    return this.far.drawCalls();
+  }
+  fullVisible(): Id | null {
+    for (const [id, r] of this.rigs) if (r.root.visible) return id;
+    return null;
+  }
+
+  dispose() {
+    this.far.dispose();
   }
 
   private feet(id: Id, dir: 1 | -1, extra = 0): FootRect[] {
@@ -165,6 +344,13 @@ export class ColossusView {
 
   update(tr: TrincheiraSnap, dt: number, t: number) {
     const robot = tr.robot;
+    // silhuetas dos colossos em laço; no aviso a do próximo anda até onde o modelo completo vai começar
+    let entry: { x: number; z: number; yaw: number } | null = null;
+    if (robot && robot.phase === 'aviso') {
+      const p0 = colossusPose(this.feet(robot.id, robot.dir), robot.id, robot.dir, 0, 'sobe', 0);
+      entry = { x: p0.x, z: p0.z, yaw: p0.yaw };
+    }
+    this.far.update(dt, t, robot, entry);
     let id: Id | null = null;
     let dir: 1 | -1 = 1;
     let step = 0;
@@ -211,6 +397,12 @@ export class ColossusView {
     if (!id) return;
     const r = this.rigs.get(id);
     if (!r) return;
+    // no aviso quem anda até a borda é a silhueta; o modelo completo aparece quando a passagem começa
+    if (robot && robot.phase === 'aviso') {
+      r.root.visible = false;
+      r.shadow.visible = false;
+      return;
+    }
     r.root.visible = true;
     this.pose(r, id, dir, step, sub, st, extra, dt, t, tr);
   }

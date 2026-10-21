@@ -20,6 +20,7 @@ export interface QRect {
 export interface Extra {
   rot?: Vec3;
   tint?: number;
+  shade?: number;
   hidden?: boolean;
   bulletThrough?: boolean;
   door?: string;

@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import type { Element, TrincheiraSnap } from '../../shared/protocol';
 import { ELEMENTS, ELEMENT_LIST } from '../../shared/trincheira-info';
-import { additive, glowSprite, Merger, solid } from './common';
+import { additive, glowSprite, Merger, runeTexture, solid } from './common';
 import type { TrCtx } from './ctx';
 
 // Escavação: o coração do mapa. Tudo aqui é só desenho (sem colisão): o poço em degraus, andaimes, guindaste, lonas com
@@ -30,52 +30,6 @@ function polarRing(rIn: number, rOut: number, seg: number, repeat: number, y = 0
   const n = g.getAttribute('normal');
   for (let i = 0; i < n.count; i++) n.setXYZ(i, 0, 1, 0);
   return g;
-}
-
-let runeStrip: THREE.CanvasTexture | null = null;
-// tira de runas (traços de glifos) em azul-claro sobre transparente
-function runeTexture(): THREE.CanvasTexture {
-  if (runeStrip) return runeStrip;
-  const W = 1024, H = 64;
-  const c = document.createElement('canvas');
-  c.width = W;
-  c.height = H;
-  const ctx = c.getContext('2d')!;
-  let seed = 41;
-  const rnd = () => ((seed = (seed * 1664525 + 1013904223) >>> 0) / 4294967296);
-  ctx.strokeStyle = '#ffffff';
-  ctx.lineCap = 'round';
-  // linhas das bordas da faixa
-  ctx.lineWidth = 3;
-  ctx.beginPath();
-  ctx.moveTo(0, 5);
-  ctx.lineTo(W, 5);
-  ctx.moveTo(0, H - 5);
-  ctx.lineTo(W, H - 5);
-  ctx.stroke();
-  ctx.lineWidth = 4;
-  for (let k = 0; k < 16; k++) {
-    const x0 = k * 64 + 10, y0 = 14, w = 44, h = 36;
-    ctx.beginPath();
-    const n = 2 + Math.floor(rnd() * 3);
-    let px = x0 + rnd() * w, py = y0 + rnd() * h;
-    ctx.moveTo(px, py);
-    for (let i = 0; i < n; i++) {
-      px = x0 + rnd() * w;
-      py = y0 + rnd() * h;
-      ctx.lineTo(px, py);
-    }
-    ctx.stroke();
-    if (rnd() < 0.5) {
-      ctx.beginPath();
-      ctx.arc(x0 + w * rnd(), y0 + h * rnd(), 4 + rnd() * 4, 0, Math.PI * 2);
-      ctx.stroke();
-    }
-  }
-  runeStrip = new THREE.CanvasTexture(c);
-  runeStrip.wrapS = THREE.RepeatWrapping;
-  runeStrip.colorSpace = THREE.SRGBColorSpace;
-  return runeStrip;
 }
 
 // símbolo do elemento em um quadrado (anéis de pedra): fogo = gota, gelo = losango, vento = espiral, raio = zigue-zague

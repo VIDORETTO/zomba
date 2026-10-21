@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import type { GameEvent, Element, TrincheiraSnap } from '../../shared/protocol';
 import { ELEMENTS } from '../../shared/trincheira-info';
-import { boxMesh, flatRing, glowSprite } from './common';
+import { beamTex, flatRing, glowSprite, Merger, mergeBuffers, ringTex, runeTexture, solid } from './common';
 import type { TrCtx } from './ctx';
 
 const EI: Record<Element, number> = { fogo: 0, gelo: 1, vento: 2, raio: 3 };
@@ -14,6 +14,10 @@ export class CamaraFx {
   private readonly dome: THREE.Mesh;
   private readonly stars: THREE.Points;
   private readonly stones: THREE.InstancedMesh;
+  private readonly stoneRim: THREE.InstancedMesh;
+  private readonly portalRings: THREE.Mesh[] = [];
+  private runesMesh!: THREE.Mesh;
+  private lightCols!: THREE.Mesh;
   private readonly hallRing: THREE.Mesh;
   private readonly slabGlow: THREE.Sprite[] = [];
   private readonly mouthGlow: THREE.Sprite[] = [];
@@ -55,7 +59,19 @@ export class CamaraFx {
     this.stones.frustumCulled = false;
     for (let i = 0; i < count; i++) this.stoneSeed.push(Math.random() * 100);
     this.stones.visible = false;
+    this.stones.name = 'camara-pedras';
     c.scene.add(this.stones);
+    // borda iluminada: um casco um pouco maior, aditivo, pela cor da alcova mais perto de cada pedra
+    this.stoneRim = new THREE.InstancedMesh(
+      new THREE.BoxGeometry(1, 1, 1),
+      new THREE.MeshBasicMaterial({ color: 0xffffff, side: THREE.BackSide, transparent: true, opacity: 0.55, blending: THREE.AdditiveBlending, depthWrite: false, fog: false }),
+      count,
+    );
+    this.stoneRim.name = 'camara-pedras-borda';
+    this.stoneRim.frustumCulled = false;
+    this.stoneRim.visible = false;
+    for (let i = 0; i < count; i++) this.stoneRim.setColorAt(i, new THREE.Color(0xffffff));
+    c.scene.add(this.stoneRim);
     this.hallRing = flatRing(0x9a7aff, c.T.chamber.hall - 1, 0.4);
     this.hallRing.position.set(cx, 0.08, cz);
     c.scene.add(this.hallRing);
@@ -80,7 +96,100 @@ export class CamaraFx {
       cg.position.set(a.crystal[0], 1.3, a.crystal[1]);
       c.scene.add(cg);
     }
-    void boxMesh;
+    this.buildDetails(c, cx, cz);
+  }
+
+  // cores das bordas das pedras (hex sem #), para os testes
+  stoneRimColors(): string[] {
+    const out: string[] = [];
+    const col = new THREE.Color();
+    for (let i = 0; i < this.stoneSeed.length; i++) {
+      this.stoneRim.getColorAt(i, col);
+      out.push(col.getHexString());
+    }
+    return out;
+  }
+
+  // pilares quebrados, runas das paredes, colunas de luz e os portais de volta de cada alcova
+  private buildDetails(c: TrCtx, cx: number, cz: number) {
+    const alcoves = c.T.chamber.alcoves;
+    const simple = c.q.simpleMaterials;
+    // pilares quebrados em volta do salão (alturas e topos diferentes)
+    {
+      const m = new Merger();
+      const stone = solid(c.tex, 'stone', 0x6a6678, simple);
+      for (let k = 0; k < 8; k++) {
+        const a = (k / 8) * Math.PI * 2 + Math.PI / 8;
+        const x = cx + Math.cos(a) * 9.3, z = cz + Math.sin(a) * 9.3;
+        const h = 1.6 + ((k * 37) % 7) * 0.55;
+        m.cyl(stone, 0.55, 0.65, h, 8, x, h / 2, z);
+        // topo lascado: um pedaço inclinado e outro caído no chão
+        m.box(stone, 0.8, 0.3, 0.7, x, h + 0.1, z, a, 0.35, 0.2);
+        m.box(stone, 0.9, 0.5, 0.6, x + Math.cos(a + 0.6) * 1.2, 0.25, z + Math.sin(a + 0.6) * 1.2, a * 2, 0.1, 0.3);
+      }
+      const g = m.build('camara-pilares');
+      c.scene.add(g);
+    }
+    // runas acesas na parede do fundo de cada alcova (duas faixas por alcova, na cor do elemento)
+    {
+      const geos: THREE.BufferGeometry[] = [];
+      for (const a of alcoves) {
+        const d = new THREE.Vector2(a.c[0] - cx, a.c[1] - cz).normalize();
+        const lat = new THREE.Vector2(-d.y, d.x);
+        const col = new THREE.Color(ELEMENTS[a.el].hex);
+        for (const sgn of [-1, 1]) {
+          const g = new THREE.PlaneGeometry(3, 0.75).toNonIndexed();
+          // faixa de runas na parede de trás (u = 4,7 m), olhando para o salão (-d)
+          g.rotateY(Math.atan2(-d.x, -d.y));
+          g.translate(a.c[0] + d.x * 4.65 + lat.x * sgn * 2.3, 2.3, a.c[1] + d.y * 4.65 + lat.y * sgn * 2.3);
+          const arr = new Float32Array(g.getAttribute('position').count * 3);
+          for (let i = 0; i < arr.length; i += 3) col.toArray(arr, i);
+          g.setAttribute('color', new THREE.BufferAttribute(arr, 3));
+          geos.push(g);
+        }
+      }
+      const rt = runeTexture().clone();
+      rt.repeat.set(3, 1);
+      rt.needsUpdate = true;
+      this.runesMesh = new THREE.Mesh(mergeBuffers(geos), new THREE.MeshBasicMaterial({ map: rt, vertexColors: true, transparent: true, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide, fog: false, opacity: 0.85 }));
+      this.runesMesh.name = 'camara-runas';
+      this.runesMesh.frustumCulled = false;
+      c.scene.add(this.runesMesh);
+    }
+    // colunas de luz caindo do céu, na cor de cada elemento (uma malha só, cor por vértice)
+    {
+      const geos: THREE.BufferGeometry[] = [];
+      alcoves.forEach((a, i) => {
+        const ang = (i / 4) * Math.PI * 2 + Math.PI / 4;
+        const geo = new THREE.CylinderGeometry(0.3, 0.55, 40, 10, 1, true).translate(0, 20, 0).toNonIndexed();
+        geo.translate(cx + Math.cos(ang) * 4.2, 0, cz + Math.sin(ang) * 4.2);
+        const col = new THREE.Color(ELEMENTS[a.el].hex);
+        const arr = new Float32Array(geo.getAttribute('position').count * 3);
+        for (let k = 0; k < arr.length; k += 3) col.toArray(arr, k);
+        geo.setAttribute('color', new THREE.BufferAttribute(arr, 3));
+        geos.push(geo);
+      });
+      const mat = new THREE.MeshBasicMaterial({ map: beamTex(), vertexColors: true, transparent: true, opacity: 0.25, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide, fog: false });
+      this.lightCols = new THREE.Mesh(mergeBuffers(geos, true), mat);
+      this.lightCols.name = 'camara-luz';
+      this.lightCols.frustumCulled = false;
+      this.lightCols.renderOrder = 2;
+      c.scene.add(this.lightCols);
+    }
+    // portal de volta em cada alcova: anel de luz de pé na pedra do portal, olhando para dentro da alcova
+    for (const a of alcoves) {
+      const d = new THREE.Vector2(a.c[0] - cx, a.c[1] - cz).normalize();
+      const lat = new THREE.Vector2(-d.y, d.x);
+      const n = new THREE.Vector2(a.c[0] - a.back[0], a.c[1] - a.back[1]).normalize();
+      const mat = new THREE.MeshBasicMaterial({ map: ringTex(), color: ELEMENTS[a.el].hex, transparent: true, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide, opacity: 0.8, fog: false });
+      const ring = new THREE.Mesh(new THREE.PlaneGeometry(2.6, 2.6), mat);
+      ring.name = `camara-portal-${a.el}`;
+      ring.position.set(a.back[0] + n.x * 0.1, 1.5, a.back[1] + n.y * 0.1);
+      ring.rotation.y = Math.atan2(n.x, n.y);
+      void lat;
+      c.scene.add(ring);
+      this.portalRings.push(ring);
+    }
   }
 
   update(tr: TrincheiraSnap, dt: number, t: number, cam: THREE.Vector3, scene: THREE.Scene) {
@@ -90,6 +199,8 @@ export class CamaraFx {
     this.dome.visible = this.inside;
     this.stars.visible = this.inside;
     this.stones.visible = this.inside;
+    this.stoneRim.visible = this.inside;
+    for (const o of [this.runesMesh, this.lightCols, ...this.portalRings]) o.visible = this.inside;
     if (this.inside) {
       // névoa roxa e céu escuro (reafirmado todo quadro: o mapa recalcula a névoa quando o clima muda)
       this.dim = 1;
@@ -119,6 +230,31 @@ export class CamaraFx {
         this.stones.setMatrixAt(i, this.m4);
       }
       this.stones.instanceMatrix.needsUpdate = true;
+      // borda: mesma posição, um pouco maior, na cor da alcova mais perto da pedra
+      const col = new THREE.Color();
+      const pos = new THREE.Vector3(), scl = new THREE.Vector3(), rq = new THREE.Quaternion();
+      for (let i = 0; i < this.stoneSeed.length; i++) {
+        this.stones.getMatrixAt(i, this.m4);
+        this.m4.decompose(pos, rq, scl);
+        let best = 0, bd = 1e9;
+        this.c.T.chamber.alcoves.forEach((al, k) => {
+          const dd = Math.hypot(pos.x - al.c[0], pos.z - al.c[1]);
+          if (dd < bd) { bd = dd; best = k; }
+        });
+        col.set(ELEMENTS[this.c.T.chamber.alcoves[best].el].hex);
+        this.stoneRim.setColorAt(i, col);
+        this.m4.compose(pos, rq, scl.multiplyScalar(1.12));
+        this.stoneRim.setMatrixAt(i, this.m4);
+      }
+      this.stoneRim.instanceMatrix.needsUpdate = true;
+      if (this.stoneRim.instanceColor) this.stoneRim.instanceColor.needsUpdate = true;
+      // runas e anéis de portal respiram
+      (this.runesMesh.material as THREE.MeshBasicMaterial).opacity = 0.6 + 0.25 * Math.sin(t * 1.4);
+      this.portalRings.forEach((r, i) => {
+        (r.material as THREE.MeshBasicMaterial).opacity = 0.7 + 0.2 * Math.sin(t * 2.5 + i);
+        r.rotation.z = t * 0.6 * (i % 2 ? 1 : -1);
+      });
+      (this.lightCols.material as THREE.MeshBasicMaterial).opacity = 0.2 + 0.06 * Math.sin(t * 0.8);
     }
     (this.hallRing.material as THREE.MeshBasicMaterial).opacity = 0.25 + 0.15 * Math.sin(t * 1.3);
     // portais

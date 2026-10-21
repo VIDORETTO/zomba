@@ -21,6 +21,11 @@ export interface BlindadoRig {
   flame: THREE.Group;
   // jatos da mochila-foguete
   pack: THREE.Group;
+  // mochila inteira (tanque de combustível e bocais) e a chama-piloto do lança-chamas
+  backpack: THREE.Group;
+  pilot: THREE.Mesh;
+  // placas de armadura que caem aos 75%, 50% e 25% da vida (só visual)
+  plates: { at: number; obj: THREE.Group; gone: boolean }[];
 }
 
 export const BLINDADO_SCALE = 1.5;
@@ -65,10 +70,52 @@ export function buildBlindado(tex: TexSet): BlindadoRig {
   // canos de vapor ao longo da coluna
   for (const x of [-0.16, 0.16]) part(h.torso, 0.05, 0.5, 0.05, x, 0.3, -0.27, brass, null, hits);
 
+  // armadura de placas rebitadas cobrindo o corpo todo: peitoral em duas camadas, saiotes, joelheiras, caneleiras e antebraços
+  part(h.torso, 0.5, 0.1, 0.1, 0, 0.62, 0.22, rust, 'body', hits);
+  part(h.torso, 0.34, 0.16, 0.08, 0, 0.12, 0.22, steel, 'body', hits);
+  for (const x of [-0.2, 0, 0.2]) part(h.hips, 0.14, 0.2, 0.05, x, -0.08, 0.13, steel, 'body', hits);
+  for (const x of [-0.2, 0, 0.2]) part(h.hips, 0.14, 0.2, 0.05, x, -0.08, -0.13, steel, 'body', hits);
+  for (const leg of [h.legL, h.legR]) {
+    part(leg.upper, 0.14, 0.1, 0.1, 0, -0.34, 0.1, brass, null, hits);
+    part(leg.lower, 0.15, 0.22, 0.05, 0, -0.14, 0.12, steel, 'limb', hits);
+    for (const y of [-0.06, -0.2]) part(leg.lower, 0.04, 0.04, 0.02, 0.05, y, 0.15, brass, null, hits);
+  }
+  for (const arm of [h.armL, h.armR]) {
+    part(arm.lower, 0.17, 0.26, 0.17, 0, -0.14, 0, steel, 'limb', hits);
+    part(arm.lower, 0.19, 0.04, 0.19, 0, -0.01, 0, brass, null, hits);
+  }
+  // pescoço blindado (gorjal)
+  part(h.torso, 0.3, 0.1, 0.3, 0, 0.7, 0, dark, 'body', hits);
+
+  // placas que se soltam com o dano (aos 75%, 50% e 25% da vida): ombreira esquerda, peitoral alto e quadril direito
+  const mkPlate = (name: string, at: number, build: (g: THREE.Group) => void, parent: THREE.Object3D) => {
+    const g = new THREE.Group();
+    g.name = name;
+    build(g);
+    parent.add(g);
+    return { at, obj: g, gone: false };
+  };
+  const plates = [
+    mkPlate('blindado-placa-75', 0.75, (g) => {
+      part(g, 0.36, 0.1, 0.34, 0, 0.1, 0, steel, 'body', hits);
+      part(g, 0.3, 0.04, 0.3, 0, 0.17, 0, brass, null, hits);
+      for (const x of [-0.12, 0.12]) part(g, 0.04, 0.04, 0.04, x, 0.2, 0.1, rust, null, hits);
+    }, h.armL.upper),
+    mkPlate('blindado-placa-50', 0.5, (g) => {
+      part(g, 0.5, 0.3, 0.06, 0, 0.5, 0.26, steel, 'body', hits);
+      for (const x of [-0.2, 0.2]) for (const y of [0.4, 0.6]) part(g, 0.04, 0.04, 0.03, x, y, 0.3, brass, null, hits);
+    }, h.torso),
+    mkPlate('blindado-placa-25', 0.25, (g) => {
+      part(g, 0.2, 0.3, 0.28, 0.28, 0.02, 0, steel, 'body', hits);
+      part(g, 0.04, 0.04, 0.04, 0.38, 0.1, 0.1, brass, null, hits);
+    }, h.hips),
+  ];
+
   // elmo fechado: o visor (placa que quebra) tem a fenda dos olhos acesa
   part(h.head, 0.3, 0.26, 0.32, 0, 0.16, 0, steel, 'head', hits);
   part(h.head, 0.3, 0.05, 0.32, 0, 0.3, 0, dark, 'head', hits);
   const helmet = new THREE.Group();
+  helmet.name = 'blindado-visor';
   h.head.add(helmet);
   part(helmet, 0.28, 0.16, 0.05, 0, 0.15, 0.17, dark, 'head', hits);
   part(helmet, 0.22, 0.035, 0.02, 0, 0.17, 0.2, flatMat(0x000000, null, 0xffa020, 5), null, hits);
@@ -76,6 +123,7 @@ export function buildBlindado(tex: TexSet): BlindadoRig {
 
   // braço esquerdo: lança-chamas (tubo, tanque e bico)
   const nozzle = new THREE.Group();
+  nozzle.name = 'blindado-lancachamas';
   nozzle.position.set(0, -0.3, 0.02);
   h.armL.lower.add(nozzle);
   part(nozzle, 0.1, 0.22, 0.1, 0, -0.04, 0, dark, 'limb', hits);
@@ -93,9 +141,16 @@ export function buildBlindado(tex: TexSet): BlindadoRig {
     flame.add(c);
   }
   flame.visible = false;
+  // chama-piloto: bico sempre aceso, pequeno
+  const pilotMat = new THREE.MeshBasicMaterial({ color: new THREE.Color(2.4, 1.1, 0.3), transparent: true, opacity: 0.85, depthWrite: false, blending: THREE.AdditiveBlending });
+  const pilot = new THREE.Mesh(new THREE.ConeGeometry(0.05, 0.22, 6, 1, true), pilotMat);
+  pilot.position.set(0, -0.3, 0.02);
+  pilot.rotation.x = Math.PI;
+  nozzle.add(pilot);
 
   // braço direito: garra de três dedos e a corrente enrolada
   const claw = new THREE.Group();
+  claw.name = 'blindado-garra';
   claw.position.set(0, -0.36, 0.03);
   h.armR.lower.add(claw);
   part(claw, 0.14, 0.08, 0.14, 0, 0, 0, dark, 'limb', hits);
@@ -136,22 +191,41 @@ export function buildBlindado(tex: TexSet): BlindadoRig {
   line.add(hook);
   line.visible = false;
 
-  // mochila-foguete: dois cilindros com bico e o jato
+  // mochila-foguete e tanque de combustível nas costas: dois bocais com jato, tanque grosso com cintas e mangueira até o braço
+  const backpack = new THREE.Group();
+  backpack.name = 'blindado-mochila';
+  h.torso.add(backpack);
+  const tank = new THREE.Mesh(new THREE.CylinderGeometry(0.17, 0.17, 0.5, 12), rust);
+  tank.position.set(0, 0.42, -0.4);
+  backpack.add(tank);
+  for (const y of [0.25, 0.4, 0.58]) {
+    const band = new THREE.Mesh(new THREE.CylinderGeometry(0.18, 0.18, 0.03, 12), brass);
+    band.position.set(0, y, -0.4);
+    backpack.add(band);
+  }
+  const cap = new THREE.Mesh(new THREE.SphereGeometry(0.17, 10, 6, 0, Math.PI * 2, 0, Math.PI / 2), brass);
+  cap.position.set(0, 0.67, -0.4);
+  backpack.add(cap);
+  // mangueira de combustível do tanque até o bico do lança-chamas (por cima do ombro esquerdo)
+  const hose = new THREE.Mesh(new THREE.TorusGeometry(0.2, 0.025, 6, 12, Math.PI), dark);
+  hose.position.set(-0.2, 0.62, -0.2);
+  hose.rotation.set(0, Math.PI / 2, Math.PI / 2 + 0.3);
+  backpack.add(hose);
   const pack = new THREE.Group();
   pack.position.set(0, 0.34, -0.3);
-  h.torso.add(pack);
+  backpack.add(pack);
   const pm = flameMat();
   for (const x of [-0.14, 0.14]) {
-    part(h.torso, 0.14, 0.42, 0.14, x, 0.32, -0.34, steel, null, hits);
-    part(h.torso, 0.1, 0.06, 0.1, x, 0.08, -0.34, brass, null, hits);
+    part(backpack, 0.14, 0.42, 0.14, x * 1.9, 0.32, -0.34, steel, null, hits);
+    part(backpack, 0.1, 0.06, 0.1, x * 1.9, 0.08, -0.34, brass, null, hits);
     const jet = new THREE.Mesh(new THREE.ConeGeometry(0.1, 1.0, 8, 1, true), pm);
-    jet.position.set(x, -0.5, -0.04);
+    jet.position.set(x * 1.9, -0.5, -0.04);
     pack.add(jet);
   }
   pack.visible = false;
 
   for (const m of hits) h.hitMeshes.push(m);
-  return { h, helmet, coil, line, lineBody, hook, flame, pack };
+  return { h, helmet, coil, line, lineBody, hook, flame, pack, backpack, pilot, plates };
 }
 
 const smooth = (x: number) => {

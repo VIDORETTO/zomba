@@ -293,6 +293,8 @@ export class ZombieManager {
   locate: (pid: string) => THREE.Vector3 | null = () => null;
   // Bispo imune (trocando de fase): a Game copia do estado da partida
   bispoShield = false;
+  // fração da vida do chefão vivo (o Blindado solta as placas aos 75%, 50% e 25%)
+  bossHp: number | null = null;
   // visual dos zumbis comuns: 'ww1' = soldados de 1918 (Trincheira). Ligue antes da partida começar.
   era: Era = 'padrao';
   // queimando ou congelado (camada de cor sobre o corpo), por zumbi
@@ -601,8 +603,43 @@ export class ZombieManager {
     const dir = new THREE.Vector3(Math.sin(v.yaw), 0, Math.cos(v.yaw));
     this.flyers.push({ obj: c, vel: new THREE.Vector3(-dir.x * 2 + (Math.random() - 0.5), 4.5, -dir.z * 2 + (Math.random() - 0.5)), spin: 7, t: 0 });
     helm.visible = false;
+    c.name = v instanceof BlindadoView ? 'blindado-visor-voando' : c.name;
+    if (v instanceof BlindadoView) this.shatter(c.position, 7, 0x6a6a70, 'blindado-cacos');
     const gone = new Set<THREE.Object3D>(helm.children);
     for (let i = v.h.hitMeshes.length - 1; i >= 0; i--) if (gone.has(v.h.hitMeshes[i])) v.h.hitMeshes.splice(i, 1);
+    this.fx.impact(c.position.clone(), 0, 1, 0);
+    this.audio.armorBreak(c.position);
+  }
+
+  // cacos de armadura: pedacinhos que voam para todos os lados e caem (só visual)
+  private shatter(at: THREE.Vector3, n: number, color: number, name: string) {
+    const mat = new THREE.MeshStandardMaterial({ color, roughness: 0.6, metalness: 0.5 });
+    for (let i = 0; i < n; i++) {
+      const m = new THREE.Mesh(new THREE.BoxGeometry(0.1 + Math.random() * 0.1, 0.04, 0.1 + Math.random() * 0.1), mat);
+      m.name = name;
+      m.position.copy(at);
+      this.group.add(m);
+      const a = Math.random() * Math.PI * 2;
+      this.flyers.push({ obj: m, vel: new THREE.Vector3(Math.cos(a) * (2 + Math.random() * 3), 3 + Math.random() * 3, Math.sin(a) * (2 + Math.random() * 3)), spin: 6 + Math.random() * 8, t: 0 });
+    }
+  }
+
+  // placa de armadura que se solta (aos 75%, 50% e 25% da vida do Blindado): cai como um pedaço e some dos alvos
+  private shedPlate(v: BlindadoView, plate: BlindadoRig['plates'][number]) {
+    const obj = plate.obj;
+    plate.gone = true;
+    obj.updateWorldMatrix(true, true);
+    const c = obj.clone();
+    c.name = 'blindado-placa-caida';
+    obj.matrixWorld.decompose(c.position, c.quaternion, c.scale);
+    this.group.add(c);
+    const dir = new THREE.Vector3(Math.sin(v.yaw), 0, Math.cos(v.yaw));
+    this.flyers.push({ obj: c, vel: new THREE.Vector3(dir.x * 1.5 + (Math.random() - 0.5) * 3, 3.5, dir.z * 1.5 + (Math.random() - 0.5) * 3), spin: 5, t: 0 });
+    obj.visible = false;
+    const gone = new Set<THREE.Object3D>();
+    obj.traverse((o) => gone.add(o));
+    for (let i = v.h.hitMeshes.length - 1; i >= 0; i--) if (gone.has(v.h.hitMeshes[i])) v.h.hitMeshes.splice(i, 1);
+    this.shatter(c.position, 4, 0x5f646a, 'blindado-cacos');
     this.fx.impact(c.position.clone(), 0, 1, 0);
     this.audio.armorBreak(c.position);
   }
@@ -817,6 +854,7 @@ export class ZombieManager {
       this.quake = Math.max(this.quake, 0.18 * Math.max(0, 1 - p.distanceTo(this.listener) / 18));
     }
     animateBlindado(v.rig, { phase: v.phase, speed: v.speed, t: this.t, anim: v.anim, animT: v.animT });
+    for (const pl of v.rig.plates) if (!pl.gone && this.bossHp !== null && this.bossHp <= pl.at && !v.dying) this.shedPlate(v, pl);
     // fogo do lança-chamas e jatos da mochila soltam brasas
     if (v.rig.flame.visible || v.rig.pack.visible) {
       v.h.root.updateMatrixWorld(true);

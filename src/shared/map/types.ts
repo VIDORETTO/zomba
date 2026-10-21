@@ -9,6 +9,10 @@ export type MaterialId =
   | 'pavement'
   | 'brick'
   | 'brickDark'
+  // Trincheira: madeira apodrecida e concreto rachado das paredes
+  | 'rotWood'
+  | 'brickDirty'
+  | 'crackConcrete'
   | 'plaster'
   | 'wood'
   | 'woodDark'
@@ -47,6 +51,8 @@ export interface Block {
   solid: boolean;
   rot?: Vec3;
   tint?: number;
+  // variação de brilho por bloco (ruído, 0,8 a 1,2): o navegador põe como cor de vértice, sem gerar material novo
+  shade?: number;
   hidden?: boolean;
   // barreira invisível das barricadas: bloqueia gente, mas tiros passam
   bulletThrough?: boolean;
@@ -276,6 +282,8 @@ export type Element4 = 'fogo' | 'gelo' | 'vento' | 'raio';
 
 // Dados fixos da Trincheira, montados pelo construtor do mapa (navegador e servidor têm os mesmos).
 export interface TrincheiraData {
+  // área (largura x altura em m²) de parede por estilo e material: confere a variedade das paredes (ticket B5)
+  wallMix?: Record<string, Record<string, number>>;
   // 6 geradores: centro, raio do círculo, nome da área
   gens: { x: number; z: number; r: number; name: string }[];
   // gerador de cada local da Fonte da Sorte (mesma ordem de MapDef.fizzSpots)

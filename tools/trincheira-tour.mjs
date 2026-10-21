@@ -36,6 +36,7 @@ const shots = [
   ['tr12-lama-norte', -45, -38, -Math.PI / 2, 0.02],
   ['tr13-cripta', 77, -3, 0, 0.05],
   ['tr14-oeste', -110, 22, 0, 0.05],
+  ['tr15-camara', 165, 6, Math.PI / 2, 0.1],
 ];
 for (const [name, x, z, yaw, pitch] of shots) {
   await page.evaluate(([x, z, yaw, pitch]) => { window.__game.transport.sim.zombies.clear(); window.__game.debugView(x, z, yaw, pitch); }, [x, z, yaw, pitch]);

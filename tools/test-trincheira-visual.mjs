@@ -293,6 +293,152 @@ await existem('Geradores: anel de progresso e cordões de lâmpadas existem na c
 await view(gx + 7, gz + 3, Math.PI / 2 + 0.5, 0.25, 2500);
 await shot('b9-lampadas');
 
+// B7: Blindado com cara de armadura a vapor
+{
+  await G(() => { const s = window.__game.transport.sim; s.zombies.clear(); s.tr.robot = null; s.state = 'intermission'; s.stateTimer = 1e9; window.__game.debugTr('blindado'); });
+  await page.waitForTimeout(4500);
+  await existem('Blindado: visor, mochila, lança-chamas, garra e as 3 placas existem na cena', ['blindado-visor', 'blindado-mochila', 'blindado-lancachamas', 'blindado-garra', 'blindado-placa-75', 'blindado-placa-50', 'blindado-placa-25']);
+  const vis = (n) => G((n) => { let r = null; window.__game.scene.traverse((o) => { if (o.name === n) r = o; }); if (!r) return null; let v = true; for (let o = r; o; o = o.parent) if (!o.visible) v = false; return v; }, n);
+  check('Blindado: o visor está inteiro e visível antes do golpe', (await vis('blindado-visor')) === true);
+  // olha o Blindado de perto, a partir do primeiro ângulo (a partir de `ang`) com linha de visão livre
+  const olhar = (ang, dist) => G(([ang, dist]) => {
+    const s = window.__game.transport.sim, z = [...s.zombies.values()].find((q) => q.kind === 7);
+    z.speed = 0; z.panzer.flameCD = 99; z.panzer.clawCD = 99;
+    for (let k = 0; k < 16; k++) {
+      const a = ang + (k * Math.PI) / 8;
+      const px = z.x + Math.cos(a) * dist, pz = z.z + Math.sin(a) * dist;
+      if (!s.world.lineOfSight(px, 1.5, pz, z.x, 1.8, z.z) || !s.world.lineOfSight(px, 0.5, pz, px + 0.01, 1.7, pz)) continue;
+      window.__game.debugView(px, pz, Math.atan2(-(z.x - px), -(z.z - pz)), 0.1);
+      return;
+    }
+  }, [ang, dist]);
+  await olhar(3.1, 6);
+  await page.waitForTimeout(1200);
+  await shot('b7-blindado');
+  const antes = await G(() => { let n = 0; window.__game.scene.traverse((o) => { if (o.name === 'blindado-cacos') n++; }); return n; });
+  // quebra o visor: 21% da vida em tiros na cabeça (o mesmo caminho das regras)
+  await G(() => {
+    const s = window.__game.transport.sim, p = s.players.get('local');
+    const z = [...s.zombies.values()].find((q) => q.kind === 7);
+    z.speed = 0; z.panzer.flameCD = 99; z.panzer.clawCD = 99;
+    s.damageZombie(z, z.panzer.maxHp * 0.21, p, 'head', false);
+  });
+  await page.waitForTimeout(700);
+  const depois = await G(() => { let n = 0; window.__game.scene.traverse((o) => { if (o.name === 'blindado-cacos') n++; }); return n; });
+  check('Blindado: depois do evento visor, o visor some e aparecem cacos', (await vis('blindado-visor')) === false && depois > antes, `cacos ${antes} → ${depois}`);
+  // as placas caem aos 75%, 50% e 25% da vida (só visual)
+  const placas = [];
+  for (const [pct, nome] of [[0.7, 'blindado-placa-75'], [0.45, 'blindado-placa-50'], [0.2, 'blindado-placa-25']]) {
+    const antesP = await vis(nome);
+    await G((pct) => {
+      const s = window.__game.transport.sim, z = [...s.zombies.values()].find((q) => q.kind === 7);
+      z.hp = z.panzer.maxHp * pct;
+    }, pct);
+    await page.waitForTimeout(700);
+    placas.push([nome, antesP, await vis(nome)]);
+  }
+  check('Blindado: as placas caem uma a uma aos 75%, 50% e 25% da vida', placas.every(([, a, b]) => a === true && b === false), JSON.stringify(placas));
+  await olhar(3.1, 6);
+  await page.waitForTimeout(1200);
+  await shot('b7-blindado-sem-placas');
+  await G(() => { const s = window.__game.transport.sim; s.zombies.clear(); });
+  await page.waitForTimeout(500);
+}
+
+// B4: interior da Igreja
+await existem('Igreja: bancos, vitrais, vigas, escombros e o sino caído existem na cena', ['igreja-bancos', 'igreja-vitral', 'igreja-vigas', 'igreja-escombros', 'igreja-sino', 'igreja-raios']);
+{
+  await view(-81.3, -8, Math.PI, 0.12, 2500);
+  await shot('b4-igreja');
+  await view(-81.3, 9, Math.PI, 0.2, 2500);
+  await shot('b4-igreja-altar');
+  await view(-84, 2, Math.PI, 0.45, 2500);
+  await shot('b4-igreja-teto');
+}
+
+// B5: texturas novas
+{
+  const r = await G(() => { const t = window.__game.o.tex; return ['rotWood', 'crackConcrete', 'rivet'].map((n) => [n, !!t[n] && !!t[n].image]); });
+  check('B5: madeira podre, concreto rachado e aço rebitado existem no conjunto de texturas', r.every(([, ok]) => ok), JSON.stringify(r));
+}
+await view(46, 16, 0, 0.05, 2200);
+await shot('b5-oficina');
+await view(68, -9, 0, 0.05, 2200);
+await shot('b5-casamata');
+
+// B3: lama molhada
+await existem('Lama: poças, crateras com água e tábuas jogadas existem na cena', ['lama-pocas', 'lama-crateras', 'lama-tabuas', 'lama-respingos']);
+{
+  const r = await G(() => {
+    const w = window.__game.tr.weather, cam = window.__game.camera.position;
+    const splash = () => { let o = null; window.__game.scene.traverse((x) => { if (x.name === 'lama-respingos') o = x; }); return o; };
+    w.setWeather('limpo');
+    for (let i = 0; i < 400; i++) w.update(0.1, 5000 + i * 0.1, cam);
+    const seco = splash().visible;
+    w.setWeather('chuva');
+    for (let i = 0; i < 400; i++) w.update(0.1, 5100 + i * 0.1, cam);
+    const chuva = splash().visible;
+    w.setWeather('limpo');
+    for (let i = 0; i < 900; i++) w.update(0.1, 5200 + i * 0.1, cam);
+    return { seco, chuva, depois: splash().visible };
+  });
+  check('Lama: os respingos só aparecem na chuva', r.seco === false && r.chuva === true && r.depois === false, JSON.stringify(r));
+  // as poças refletem o céu: de longe (ângulo raso) o tom puxa para o horizonte, de cima puxa para o alto
+  await view(30, 27, Math.PI / 2, -0.35, 2200);
+  await shot('b3-lama-poca');
+  await view(30, 27, Math.PI / 2, 0.02, 2200);
+  await shot('b3-lama-sul');
+}
+
+// B6: colossos sempre visíveis ao longe
+{
+  await G(() => { const s = window.__game.transport.sim; s.zombies.clear(); s.tr.robot = null; s.tr.robotPause = 9999; s.state = 'intermission'; s.stateTimer = 1e9; });
+  await page.waitForTimeout(1500);
+  const far = () => G(() => window.__game.tr.colossus.farInfo());
+  const f0 = await far();
+  const vis = f0.filter((x) => x.visible);
+  check('Colossos ao longe: sem colosso em cena, 2 silhuetas visíveis a mais de 150 m do centro', vis.length === 2 && vis.every((x) => x.dist > 150), JSON.stringify(f0));
+  await existem('Colossos ao longe: as silhuetas existem na cena', ['colosso-silhueta-atlas', 'colosso-silhueta-golias', 'colosso-silhueta-tita']);
+  const draws = await G(() => window.__game.tr.colossus.farDrawCalls());
+  check('Colossos ao longe: no máximo 4 chamadas de desenho por silhueta', draws <= 4, `${draws}`);
+  // as silhuetas andam: a posição muda com o tempo
+  const p0 = await G(() => window.__game.tr.colossus.farInfo().filter((x) => x.visible).map((x) => [x.x, x.z]));
+  await G(() => { const t = window.__game.tr; for (let i = 0; i < 100; i++) t.colossus.update(window.__game.buffer.latest.s.tr, 0.1, 100 + i * 0.1); });
+  const p1 = await G(() => window.__game.tr.colossus.farInfo().filter((x) => x.visible).map((x) => [x.x, x.z]));
+  check('Colossos ao longe: as silhuetas caminham (posição muda em 10 s)', p0.some((a, i) => Math.hypot(a[0] - p1[i][0], a[1] - p1[i][1]) > 5), JSON.stringify([p0[0], p1[0]]));
+  // passagem: o colosso que entra sai do laço e vira o modelo completo
+  const proximo = f0.find((x) => !x.visible)?.id ?? 'atlas';
+  await G((id) => window.__game.debugTr('colosso', id), proximo);
+  await page.waitForTimeout(4000);
+  const aviso = await far();
+  check('Colossos ao longe: no aviso a silhueta do próximo anda para a borda do mapa', aviso.find((x) => x.id === proximo)?.visible === true, JSON.stringify(aviso.find((x) => x.id === proximo)));
+  await page.waitForTimeout(7500);
+  const passando = await G(() => ({ fase: window.__game.transport.sim.tr.robot?.phase, info: window.__game.tr.colossus.farInfo(), cheio: window.__game.tr.colossus.fullVisible() }));
+  const meu = passando.info.find((x) => x.id === proximo);
+  check('Colossos ao longe: na passagem a silhueta do colosso em cena some e o modelo completo aparece', passando.fase === 'passos' && meu.visible === false && passando.cheio === proximo, JSON.stringify(passando));
+  await G(() => { const s = window.__game.transport.sim; s.tr.robot = null; s.tr.robotPause = 9999; });
+  // mira a câmera (no Posto) na primeira silhueta visível para a captura
+  await G(() => { const f = window.__game.tr.colossus.farInfo().find((x) => x.visible); const px = 103, pz = 50; window.__game.debugView(px, pz, Math.atan2(-(f.x - px), -(f.z - pz)), 0.09); });
+  await page.waitForTimeout(1800);
+  await shot('b6-colossos-ao-longe');
+}
+
+// B8: Câmara Antiga detalhada
+await existem('Câmara: pedras com borda, portais de volta, colunas de luz, runas e pilares quebrados existem na cena',
+  ['camara-pedras', 'camara-pedras-borda', 'camara-portal-fogo', 'camara-portal-gelo', 'camara-portal-vento', 'camara-portal-raio', 'camara-luz', 'camara-runas', 'camara-pilares']);
+{
+  // as pedras brilham na cor da alcova mais perto: com uma pedra perto da alcova do Fogo a borda dela é laranja
+  await view(165, 6, Math.PI / 2, 0.35, 2000);
+  const r = await G(() => window.__game.tr.camara.stoneRimColors());
+  check('Câmara: a borda de cada pedra tem a cor de uma das 4 alcovas', r.length >= 12 && r.every((c) => ['ff7a2a', '6ab8ff', 'ffe14a', 'b06aff'].includes(c)), JSON.stringify(r.slice(0, 4)));
+  await view(165, 6, Math.PI / 2, 0.35, 2600);
+  await G(() => window.__game.debugTr('portais'));
+  await view(165, 6, Math.PI / 2, 0.35, 2600);
+  await shot('b8-camara');
+  await view(165, -2, 0, 0.3, 2200);
+  await shot('b8-camara-raio');
+}
+
 // ---------------------------------------------------------------------------
 // F3: orçamento de desempenho (chamadas de desenho e triângulos por quadro, nos 6 pontos da tour)
 // ---------------------------------------------------------------------------

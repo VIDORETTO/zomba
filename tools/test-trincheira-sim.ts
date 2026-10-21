@@ -1300,6 +1300,25 @@ function missionToHarvest(players: number, plan: [number, El][]) {
   }
 }
 
+// --- B5: variedade de materiais nas paredes ---
+{
+  const mix = (map.trincheira as unknown as { wallMix?: Record<string, Record<string, number>> }).wallMix;
+  check('B5: o construtor registra o material de cada estilo de parede', !!mix && Object.keys(mix).length >= 6, mix ? Object.keys(mix).join(',') : 'sem wallMix');
+  const piores: string[] = [];
+  for (const [estilo, mats] of Object.entries(mix ?? {})) {
+    if (estilo === 'low') continue; // sacos de areia: a borda baixa é de um material só por natureza
+    const tot = Object.values(mats).reduce((a, b) => a + b, 0);
+    const [m, v] = Object.entries(mats).sort((a, b) => b[1] - a[1])[0];
+    if (v / tot > 0.8) piores.push(`${estilo}: ${m} ${(100 * v / tot).toFixed(0)}%`);
+  }
+  check('B5: nenhuma área usa só uma textura em mais de 80% das paredes', piores.length === 0, piores.join(' | '));
+  const tons = (mat: string) => new Set(map.blocks.filter((b) => b.mat === mat).map((b) => b.shade)).size;
+  check('B5: as paredes têm variação de cor por bloco (ruído): concreto rachado e madeira podre com 4 ou mais tons', tons('crackConcrete') >= 4 && tons('rotWood') >= 4, `${tons('crackConcrete')} e ${tons('rotWood')}`);
+  const nBrick = map.blocks.filter((b) => b.mat === 'brick').length;
+  const mixOf = (mix ?? {}).brick ?? {};
+  check('B5: o tijolo da Oficina é marrom sujo (brickDirty); o tijolo vermelho vivo da Cidade não aparece nas paredes', (mixOf.brickDirty ?? 0) > 0 && !mixOf.brick && nBrick === 0, `brickDirty ${(mixOf.brickDirty ?? 0).toFixed(0)} m², brick ${nBrick} blocos`);
+}
+
 // --- Escavação (B1): a decoração é só desenho, nada fecha o caminho ---
 {
   const s = mk();

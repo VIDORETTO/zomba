@@ -1550,6 +1550,7 @@ export class Game {
     if (sn?.bispo) this.hud.setBoss({ hp: sn.bispo.hp, armor: sn.bispo.shield }, 'O BISPO');
     else this.hud.setBoss(sn?.boss ?? null, this.o.map.boss === 'blindado' ? 'O BLINDADO' : 'O CARRASCO');
     this.zombies.bispoShield = !!sn?.bispo?.shield;
+    this.zombies.bossHp = sn?.boss?.hp ?? null;
     for (let i = this.warns.length - 1; i >= 0; i--) {
       const w = this.warns[i];
       w.t += dt;

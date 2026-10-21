@@ -290,6 +290,14 @@ export function buildTextures(): TexSet {
     t.pavement = finish(c);
   }
   t.brick = finish(bricks(512, [110, 104, 96], [[138, 62, 42], [120, 52, 36], [150, 74, 50], [104, 48, 34]], 5));
+  // tijolo sujo da Trincheira: marrom-acinzentado desbotado, com fuligem (o 'brick' da Cidade é mais vivo e continua igual)
+  {
+    const c = bricks(512, [92, 88, 82], [[112, 92, 80], [98, 80, 70], [124, 102, 88], [88, 74, 66]], 6);
+    const ctx = c.getContext('2d')!;
+    const rr = mulberry32(61);
+    blotches(ctx, 512, 22, 'rgba(24,20,18,0.28)', 14, 60, rr);
+    t.brickDirty = finish(c);
+  }
   t.brickDark = finish(bricks(512, [70, 66, 62], [[78, 40, 30], [66, 34, 28], [90, 50, 36], [58, 36, 30]], 6));
   {
     const s = 256;
@@ -306,6 +314,31 @@ export function buildTextures(): TexSet {
     blotches(ctx, s, 10, 'rgba(50,40,30,0.3)', 10, 50, rnd);
     t.ceiling = finish(c);
     t.trim = t.ceiling;
+  }
+  // madeira podre: tábuas escurecidas e esverdeadas, com manchas de umidade e rachaduras compridas
+  {
+    const c = planks(256, [78, 66, 48], 7, true, 21, 3);
+    const ctx = c.getContext('2d')!;
+    const rr = mulberry32(31);
+    blotches(ctx, 256, 14, 'rgba(40,52,34,0.35)', 12, 44, rr);
+    blotches(ctx, 256, 8, 'rgba(18,14,10,0.4)', 8, 26, rr);
+    cracks(ctx, 256, 10, 'rgba(10,8,6,0.8)', 1.4, rr);
+    t.rotWood = finish(c);
+  }
+  // concreto rachado: placas cinza-escuras com rachaduras grossas, bordas lascadas e manchas de ferrugem
+  {
+    const s = 256;
+    const [c, ctx] = canvas(s);
+    noiseFill(ctx, s, [118, 114, 108], 0.22, 5, 52);
+    const rr = mulberry32(53);
+    blotches(ctx, s, 10, 'rgba(60,46,34,0.28)', 10, 40, rr);
+    blotches(ctx, s, 8, 'rgba(18,18,18,0.3)', 12, 46, rr);
+    cracks(ctx, s, 18, 'rgba(14,13,12,0.9)', 2.2, rr);
+    cracks(ctx, s, 22, 'rgba(14,13,12,0.6)', 1.1, rr);
+    // vergalhões à mostra em alguns pontos
+    ctx.fillStyle = 'rgba(110,60,30,0.7)';
+    for (let i = 0; i < 6; i++) ctx.fillRect(rr() * s, rr() * s, 14 + rr() * 22, 2);
+    t.crackConcrete = finish(c);
   }
   t.wood = finish(planks(256, [118, 84, 56], 8, true, 9));
   t.woodDark = finish(planks(256, [72, 50, 34], 8, true, 10));
