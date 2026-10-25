@@ -240,6 +240,12 @@ export class TrHud {
 export class Hud {
   readonly root: HTMLElement;
   private readonly round: HTMLElement;
+  private readonly statsEl: HTMLElement;
+  private readonly leftVal: HTMLElement;
+  private readonly timeVal: HTMLElement;
+  private burnTimer: ReturnType<typeof setTimeout> | undefined;
+  private leftKey = '';
+  private timeKey = '';
   private readonly perksEl: HTMLElement;
   private perksKey = '';
   private readonly scores: HTMLElement;
@@ -303,6 +309,10 @@ export class Hud {
 
     this.perksEl = el('div', 'perks', this.root);
     this.round = el('div', 'round', this.root);
+    // canto de cima à direita: zumbis que faltam para acabar a rodada e há quanto tempo a partida corre
+    this.statsEl = el('div', 'stats', this.root);
+    this.leftVal = el('b', '', el('div', 'stat left', this.statsEl, '<span>Zumbis restantes</span>'));
+    this.timeVal = el('b', '', el('div', 'stat time', this.statsEl, '<span>Tempo de jogo</span>'));
     this.banner = el('div', 'banner hidden', this.root);
     this.bossBar = el('div', 'bossbar hidden', this.root);
     this.bossBar.innerHTML = '<span class="bossname">O CARRASCO</span><div class="bossfill"><i></i><b></b></div>';
@@ -347,6 +357,32 @@ export class Hud {
       void this.round.offsetWidth;
       this.round.classList.add('appear');
     }
+  }
+
+  // Zumbis que faltam para acabar a rodada (null entre rodadas) e tempo de partida em segundos.
+  setStats(left: number | null, secs: number) {
+    const l = left === null ? '—' : String(Math.max(0, left));
+    if (l !== this.leftKey) {
+      this.leftKey = l;
+      this.leftVal.textContent = l;
+      this.leftVal.parentElement!.classList.toggle('idle', left === null);
+    }
+    const t = Math.max(0, Math.floor(secs));
+    const h = Math.floor(t / 3600);
+    const m = Math.floor((t % 3600) / 60);
+    const sec = t % 60;
+    const txt = h > 0 ? `${h}:${String(m).padStart(2, '0')}:${String(sec).padStart(2, '0')}` : `${String(m).padStart(2, '0')}:${String(sec).padStart(2, '0')}`;
+    if (txt !== this.timeKey) {
+      this.timeKey = txt;
+      this.timeVal.textContent = txt;
+    }
+  }
+
+  // queimando: a borda da tela acende em laranja por um instante
+  burning() {
+    this.root.classList.add('burning');
+    clearTimeout(this.burnTimer);
+    this.burnTimer = setTimeout(() => this.root.classList.remove('burning'), 700);
   }
 
   // rodada infernal: contador em brasa e borda vermelha na tela
@@ -416,8 +452,35 @@ export class Hud {
     setTimeout(() => e.remove(), 1000);
   }
 
+  // Pistolas duplas: um pente por pistola (clique esquerdo = pistola da esquerda, clique direito = pistola da direita) e a reserva comum.
+  setAmmoDual(right: number, left: number, reserve: number, name: string, magSize: number) {
+    const L = this.last;
+    if (L.name !== name) this.weapon.textContent = L.name = name;
+    const key = `${right}|${left}`;
+    if (L.mag !== key) {
+      L.mag = key;
+      const cls = (n: number) => (n <= Math.ceil(magSize * 0.25) ? ' low' : '');
+      this.ammoMag.innerHTML = `<span class="dm${cls(left)}"><i>◀ clique esq.</i>${left}</span><span class="dm${cls(right)}"><i>clique dir. ▶</i>${right}</span>`;
+      this.ammoMag.classList.add('dual');
+      L.low = false;
+    }
+    if (L.res !== String(reserve)) this.ammoRes.textContent = L.res = String(reserve);
+    const resLow = reserve <= magSize;
+    if (L.resLow !== resLow) this.ammoRes.classList.toggle('low', (L.resLow = resLow));
+    let hint = '';
+    if (right === 0 && left === 0 && reserve === 0) hint = 'Sem munição';
+    else if ((right <= Math.ceil(magSize * 0.25) || left <= Math.ceil(magSize * 0.25)) && reserve > 0 && (right < magSize || left < magSize)) hint = `Pressione <b>${this.reloadKey}</b> para recarregar`;
+    if (this.hint.innerHTML !== hint) this.hint.innerHTML = hint;
+  }
+
   setAmmo(mag: number, reserve: number, name: string, magSize: number) {
     const L = this.last;
+    if (this.ammoMag.classList.contains('dual')) {
+      // voltou a uma arma comum: refaz o número simples
+      this.ammoMag.classList.remove('dual');
+      this.ammoMag.textContent = '';
+      L.mag = '';
+    }
     if (L.name !== name) this.weapon.textContent = L.name = name;
     if (L.mag !== String(mag)) this.ammoMag.textContent = L.mag = String(mag);
     if (L.res !== String(reserve)) this.ammoRes.textContent = L.res = String(reserve);

@@ -25,8 +25,9 @@ export interface BoxState {
   fireSale: boolean;
 }
 export type RoundState = 'waiting' | 'active' | 'intermission' | 'gameover';
-export type ZombieAnim = 'rise' | 'move' | 'attack' | 'tear' | 'climb' | 'slam' | 'chain' | 'charge' | 'cast';
-export type ZombieKind = 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8; // anda, corre, dispara, Cão Infernal, Carrasco, Vulto, Bispo, Blindado, Cruzado
+// leap = salto do Rastejador em cima do alvo; wall = escalando uma parede ou obstáculo
+export type ZombieAnim = 'rise' | 'move' | 'attack' | 'tear' | 'climb' | 'slam' | 'chain' | 'charge' | 'cast' | 'leap' | 'wall';
+export type ZombieKind = 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9; // anda, corre, dispara, Cão Infernal, Carrasco, Vulto, Bispo, Blindado, Cruzado, Rastejador
 
 export interface NetPlayer {
   id: string;
@@ -225,7 +226,7 @@ export type GameEvent =
   | { e: 'zattack'; zid: number }
   | { e: 'zrise'; zid: number; x: number; z: number }
   | { e: 'points'; pid: string; delta: number }
-  | { e: 'phurt'; pid: string; dmg: number; fromX: number; fromZ: number; lava: boolean }
+  | { e: 'phurt'; pid: string; dmg: number; fromX: number; fromZ: number; lava: boolean; fire?: boolean }
   | { e: 'pdown'; pid: string }
   // by: id de quem reanimou, ou 'cajado' (disparo do cajado desperto); from: quem atirou (só no caso do cajado)
   | { e: 'previve'; pid: string; by: string; from?: string }

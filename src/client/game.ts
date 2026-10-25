@@ -14,6 +14,7 @@ import { BOX, FORGE, GRENADE, KNIFE, SIGHTS, WEAPONS, ammoPrice, baseId, pelletO
 import type { Interactable } from '../shared/map/types';
 import { World } from '../shared/world';
 import type { AudioEngine, Surface } from './audio';
+import type { MusicKey } from './music';
 import { PlayerController } from './controller';
 import { FX } from './fx';
 import { Hud, type Marker } from './hud';
@@ -65,7 +66,7 @@ export interface Settings {
 }
 
 // Exposição de base do renderizador (o brilho das opções multiplica)
-export const EXPOSURE = 1.25;
+export const EXPOSURE = 1.12;
 
 type PauseTab = 'jogo' | 'video' | 'audio' | 'controles';
 const PAUSE_TABS: [PauseTab, string][] = [['jogo', 'Jogo'], ['video', 'Vídeo'], ['audio', 'Áudio'], ['controles', 'Controles']];
@@ -261,7 +262,7 @@ export class Game {
     };
 
     this.weapon = new WeaponView({
-      fire: (spread, charged) => this.fire(spread, charged),
+      fire: (spread, charged, hand) => this.fire(spread, charged, hand),
       throwGrenade: () => this.throwGrenade(),
       throwArtillery: () => this.throwArtillery(),
       knife: () => this.knife(),
@@ -320,6 +321,7 @@ export class Game {
 
   start() {
     this.audio.startAmbience();
+    this.audio.startMusic(this.o.map.id as MusicKey);
     if (this.tr) this.audio.startTrincheira();
     const d = new Date();
     const hh = String(d.getHours()).padStart(2, '0');
@@ -452,6 +454,7 @@ export class Game {
     }
     for (const id of [...this.world.openDoors]) if (!open.has(id)) this.world.openDoors.delete(id);
     this.hud.setRound(s.round);
+    this.hud.setStats(s.state === 'active' ? s.zombiesLeft : null, s.time);
     this.hud.setScores(s.players, this.transport.localId);
     if (me) {
       this.weapon.setInventory(me.weapons);
@@ -521,7 +524,10 @@ export class Game {
           break;
         case 'phurt':
           if (e.pid === local) {
-            this.audio.hurt();
+            if (e.fire) {
+              this.audio.burn();
+              this.hud.burning();
+            } else this.audio.hurt();
             let angle: number | null = null;
             if (!e.lava) {
               const dx = e.fromX - this.pc.pos.x;
@@ -577,6 +583,8 @@ export class Game {
         }
         case 'roundStart':
           this.hud.setRound(e.round);
+          this.audio.setMusicMood(e.hell ? 'hell' : 'tense');
+          this.audio.duckMusic(7, 0.25);
           if (e.hell) {
             this.audio.hellStart();
             this.hud.showBanner('RODADA INFERNAL');
@@ -589,6 +597,8 @@ export class Game {
           break;
         case 'roundEnd':
           this.hud.roundEnded();
+          this.audio.setMusicMood('calm');
+          this.audio.duckMusic(7, 0.25);
           if (this.tr) this.audio.trSound('vinheta-fim');
           else this.audio.roundEnd();
           if (e.hell) this.audio.hellEnd();
@@ -599,6 +609,7 @@ export class Game {
           const d = p.distanceTo(this.pc.pos);
           if (e.phase === 'spawn') {
             this.audio.bossBell();
+            this.audio.duckMusic(5, 0.3);
             this.hud.showBanner('O CARRASCO');
             this.hud.notify('<b>O Carrasco</b> chegou. Quebre o capacete e mire na cabeça.');
             this.shake = Math.max(this.shake, 1);
@@ -684,6 +695,7 @@ export class Game {
           const d = p.distanceTo(this.pc.pos);
           if (e.phase === 'spawn') {
             this.audio.bossBell();
+            this.audio.duckMusic(5, 0.3);
             this.audio.bispoVoice(p, 1.6);
             this.hud.showBanner('O BISPO');
             this.hud.notify('<b>O Bispo</b> subiu da lava. Derrote-o e ganhe todas as bebidas.');
@@ -984,7 +996,7 @@ export class Game {
 
   // ---------- combate ----------
 
-  private fire(spread: number, charged = false) {
+  private fire(spread: number, charged = false, hand = 0) {
     const def = this.weapon.def;
     // Olho Frio: dispersão 30% menor
     if (this.me?.perks.includes('olho-frio')) spread *= PERK_FX.olhoSpreadMult;
@@ -1037,10 +1049,13 @@ export class Game {
         return true;
       }).slice(0, def.pierce ?? 1);
       // arma forjada: rastro de brasa até o fim do tiro
-      if (def.upgraded) {
+      if (def.upgraded || def.dual) {
         const end = zhits.length ? zhits[zhits.length - 1].point : origin.clone().addScaledVector(dir, wh ? wh.t : Math.min(def.range, 40));
-        const muzzle = origin.clone().addScaledVector(fwd, 0.5).addScaledVector(right, 0.08).addScaledVector(up, -0.08);
-        this.fx.emberTracer(muzzle, end, !!wh || zhits.length > 0);
+        // pistolas duplas: o rastro sai da boca do cano da mão que atirou
+        const side = def.dual ? (hand === 1 ? -0.13 : 0.13) : 0.08;
+        const muzzle = origin.clone().addScaledVector(fwd, 0.5).addScaledVector(right, side).addScaledVector(up, -0.08);
+        if (def.upgraded) this.fx.emberTracer(muzzle, end, !!wh || zhits.length > 0);
+        else this.fx.dualTracer(muzzle, end, !!wh || zhits.length > 0, hand);
       }
       for (const zh of zhits) {
         const part = zh.object.userData.part as HitPart;
@@ -1071,7 +1086,8 @@ export class Game {
     }
     // o raio no meio da mira serve para acertar alvos de enigma e os olhos dos colossos (Trincheira)
     this.transport.send({ t: 'shoot', weapon: def.id, hits, ...(this.tr ? { ray: [origin.x, origin.y, origin.z, fwd.x, fwd.y, fwd.z] as [number, number, number, number, number, number] } : {}) });
-    this.audio.gunshot(undefined, def.sound ?? def.cls, def.pitch);
+    // a pistola da esquerda soa um pouco mais aguda: dá para ouvir as duas
+    this.audio.gunshot(undefined, def.sound ?? def.cls, hand === 1 ? (def.pitch ?? 1) * 1.08 : def.pitch);
     if (def.upgraded) this.audio.emberShot();
     const adsK = 1 - this.weapon.ads * 0.45;
     this.pc.pitch += (0.016 + Math.random() * 0.008) * def.recoil * adsK;
@@ -1933,7 +1949,8 @@ export class Game {
 
   private updateHud(dt: number, life: string) {
     const w = this.weapon;
-    this.hud.setAmmo(w.ammo, w.reserve, w.def.name, w.def.mag);
+    if (w.dual) this.hud.setAmmoDual(w.ammo, w.ammo2, w.reserve, w.def.name, w.def.mag);
+    else this.hud.setAmmo(w.ammo, w.reserve, w.def.name, w.def.mag);
     const px = (w.spread / Math.tan(THREE.MathUtils.degToRad(this.camera.fov) / 2)) * (window.innerHeight / 2);
     this.hud.setCrosshair(Math.max(6, px), w.ads < 0.5 && w.sprintT < 0.5 && life !== 'dead' && !this.over);
     this.hud.update(dt, this.me?.health ?? PLAYER.maxHealth, this.me?.maxHealth ?? PLAYER.maxHealth);
@@ -2213,6 +2230,7 @@ export class Game {
     if (this.over) return;
     this.over = true;
     if (import.meta.env.DEV) this.baixarRegistro();
+    this.audio.stopMusic();
     this.audio.gameOver();
     this.hud.downed(false);
     setTimeout(() => {
@@ -2349,6 +2367,7 @@ export class Game {
     this.input.dispose();
     this.transport.close();
     this.audio.stopAmbience();
+    this.audio.stopMusic();
     if (this.tr) {
       this.audio.stopTrincheira();
       this.audio.setWeather('limpo');

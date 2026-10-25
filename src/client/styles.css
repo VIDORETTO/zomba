@@ -316,6 +316,18 @@ input:focus { border-color: var(--blood-bright); }
 .ammo-nums { font-family: var(--serif); font-weight: 700; }
 .ammo-nums .mag { font-size: 44px; }
 .ammo-nums .mag.low { color: var(--blood-bright); }
+.ammo-nums .mag.dual { display: inline-flex; gap: 18px; vertical-align: bottom; }
+.ammo-nums .dm { position: relative; display: inline-block; padding-top: 14px; min-width: 96px; text-align: right; }
+.ammo-nums .dm i { position: absolute; top: 0; right: 0; font: 400 10px var(--sans, sans-serif); font-style: normal; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); white-space: nowrap; }
+.ammo-nums .dm.low { color: var(--blood-bright); }
+
+.stats { position: absolute; right: 24px; top: 30px; display: flex; flex-direction: column; gap: 6px; align-items: flex-end; text-shadow: 0 2px 3px #000; pointer-events: none; }
+.stat { display: flex; align-items: baseline; gap: 10px; padding: 4px 12px; background: rgba(0, 0, 0, 0.38); border-right: 3px solid var(--blood); }
+.stat span { font-size: 11px; letter-spacing: 0.14em; text-transform: uppercase; color: #cfc6b2; }
+.stat b { font: 700 26px var(--serif); color: #f2ece0; font-variant-numeric: tabular-nums; min-width: 2ch; text-align: right; }
+.stat.left b { color: #ff6a4a; }
+.stat.idle b { color: var(--muted); }
+.hud.hell .stat { border-right-color: #ff3a14; }
 .ammo-nums .sep { font-size: 24px; color: var(--muted); margin: 0 6px; }
 .ammo-nums .reserve { font-size: 24px; color: var(--muted); }
 .ammo-nums .reserve.low { color: #e8a040; }
@@ -383,8 +395,9 @@ input:focus { border-color: var(--blood-bright); }
 .bus-info em { font-style: normal; color: var(--muted); }
 .bus-info .bus-arrow { font-style: normal; color: #f0c27a; display: inline-block; transition: transform 0.1s linear; }
 .bus-info.leaving span { color: #f0c27a; animation: blink 0.9s ease-in-out infinite; }
-.marker.pu b { color: currentColor; font-size: 24px; text-shadow: 0 0 6px currentColor, 0 0 14px rgba(90, 255, 120, 0.8), 0 1px 2px #000; }
-.marker.pu span { font-size: 12px; opacity: 0.9; }
+.marker.pu { animation: none; padding: 3px 10px 4px; background: rgba(6, 6, 10, 0.78); border: 1px solid currentColor; border-radius: 5px; box-shadow: 0 0 10px rgba(0, 0, 0, 0.6); }
+.marker.pu b { color: currentColor; font-size: 24px; text-shadow: 0 0 8px currentColor, 0 1px 2px #000; }
+.marker.pu span { font-size: 13px; color: #f0eadb; opacity: 1; letter-spacing: 0.02em; }
 .marker.pu.edge b { font-size: 18px; }
 .marker.edge b { font-size: 22px; }
 
@@ -745,3 +758,8 @@ details.adv[open] { display: flex; flex-direction: column; gap: 6px; }
 .tr-radio h4 { margin: 0 0 6px; font: 700 11px var(--sans); letter-spacing: 0.3em; text-transform: uppercase; color: #c8a85a; }
 .tr-radio p { margin: 3px 0; font: 600 15px var(--serif); color: #e8e0cc; opacity: 0; animation: radioIn 0.8s ease-out forwards; }
 @keyframes radioIn { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
+
+.hud.burning::before { content: ''; position: absolute; inset: 0; pointer-events: none; box-shadow: inset 0 0 120px 30px rgba(255, 110, 20, 0.55); animation: burnPulse 0.7s ease-out; }
+@keyframes burnPulse { from { opacity: 1; } to { opacity: 0.2; } }
+/* Trincheira: o painel de geradores ocupa o canto de cima; as informações da rodada descem */
+.hud:has(.tr-gens) .stats { top: 78px; }

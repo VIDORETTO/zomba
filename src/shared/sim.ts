@@ -1,5 +1,5 @@
 import {
-  BARRICADE, BISPO, BLEEDOUT_TIME, BOSS, BUS, DOGS, VULTO, FIRST_ROUND_DELAY, INTERMISSION_TIME, LAVA_DAMAGE, LAVA_INTERVAL,
+  BARRICADE, BISPO, BLEEDOUT_TIME, BOSS, BUS, CRAWLER, DOGS, FIRE, VULTO, FIRST_ROUND_DELAY, INTERMISSION_TIME, LAVA_DAMAGE, LAVA_INTERVAL,
   PLAYER, POINTS, REVIVE_RANGE, REVIVE_TIME, TRINCHEIRA, ZOMBIE,
 } from './constants';
 import { ENTRY_BOARDS, entryPoints, type MapDef } from './map/types';
@@ -88,7 +88,35 @@ export interface SimZombie {
   frost?: number;
   frostPid?: string;
   extra?: boolean;
+  // IA dos andarilhos (zumbi comum, cão, vulto e rastejador)
+  ai?: ZAi;
 }
+
+// Estado da IA de um andarilho: alvo, cerco, desvio de quem está preso e movimento especial (salto / escalada).
+interface ZAi {
+  tid: string | null;
+  retarget: number;
+  // lado em que contorna o alvo ao cercar (-1 ou 1)
+  side: number;
+  steerT: number;
+  sdx: number;
+  sdz: number;
+  chkT: number;
+  chkX: number;
+  chkZ: number;
+  jam: number;
+  evadeT: number;
+  evx: number;
+  evz: number;
+  // recarga do salto e da escalada
+  cd: number;
+  climbT: number;
+  mv: ZMove | null;
+}
+
+type ZMove =
+  | { kind: 'climb'; stage: 0 | 1; t: number; y0: number; cx: number; cz: number; top: number; lx: number; lz: number; ly: number; tUp: number; tOver: number; sx: number; sz: number }
+  | { kind: 'leap'; stage: 0 | 1 | 2; t: number; sx: number; sy: number; sz: number; ex: number; ez: number };
 
 export interface PanzerState {
   maxHp: number;
@@ -152,6 +180,7 @@ const isDog = (z: { kind: ZombieKind }) => z.kind === 3;
 const isBoss = (z: { kind: ZombieKind }) => z.kind === 4;
 const isVulto = (z: { kind: ZombieKind }) => z.kind === 5;
 const isBispo = (z: { kind: ZombieKind }) => z.kind === 6;
+const isCrawler = (z: { kind: ZombieKind }) => z.kind === 9;
 // chefões: não morrem de Golpe Fatal nem da Bomba, não são atropelados nem engolidos
 const isChief = (z: { kind: ZombieKind }) => z.kind === 4 || z.kind === 6 || z.kind === 7;
 const isPanzer = (z: { kind: ZombieKind }) => z.kind === 7;
@@ -172,6 +201,12 @@ export class GameSim {
   private spawnTimer = 0;
   private nextZid = 1;
   private navTimer = 0;
+  // alvos usados na última busca do campo de caminho (a célula guarda a posição nesta lista)
+  private navTargets: SimPlayer[] = [];
+  // velocidade de cada jogador (m/s), estimada pelas posições que o navegador manda: os zumbis adivinham para onde ele vai
+  // jogadores queimando: tempo de queimadura que falta e tempo até o próximo dano
+  private readonly burn = new Map<string, { t: number; tick: number }>();
+  private readonly pvel = new Map<string, { x: number; z: number; t: number; vx: number; vz: number }>();
   private events: GameEvent[] = [];
   readonly boards: number[];
   private readonly occupant: (number | null)[];
@@ -253,6 +288,8 @@ export class GameSim {
     this.nav = new NavGrid(this.world, ZOMBIE.radius);
     this.boards = map.entries.map(() => ENTRY_BOARDS);
     this.occupant = map.entries.map(() => null);
+    // a Caixa Misteriosa nasce num lugar sorteado (se o mapa só tem um, é nele)
+    if (map.boxSpots.length > 1) this.box.loc = Math.floor(this.rng() * map.boxSpots.length);
     // só o local atual da caixa tem colisão
     map.boxSpots.forEach((_, i) => {
       if (i !== this.box.loc) this.world.openDoors.add(`box-spot-${i}`);
@@ -351,6 +388,8 @@ export class GameSim {
     this.tr?.onPlayerGone(p);
     this.players.delete(id);
     this.fogT.delete(id);
+    this.pvel.delete(id);
+    this.burn.delete(id);
     this.emit({ e: 'pleave', pid: id, name: p.name });
     this.checkGameOver();
   }
@@ -391,6 +430,7 @@ export class GameSim {
         }
         p.crouch = p.life === 'alive' && msg.crouch;
         p.speed = msg.speed;
+        this.trackVelocity(p);
         break;
       }
       case 'shoot': {
@@ -1079,7 +1119,7 @@ export class GameSim {
     by.revives++;
   }
 
-  private damagePlayer(p: SimPlayer, dmg: number, fromX: number, fromZ: number, lava: boolean, cause?: string) {
+  private damagePlayer(p: SimPlayer, dmg: number, fromX: number, fromZ: number, lava: boolean, cause?: string, fire = false) {
     if (p.life !== 'alive') return;
     // Trincheira: o Escudo de costas e a invulnerabilidade da saída da cabine
     if (this.tr) {
@@ -1088,7 +1128,7 @@ export class GameSim {
     }
     p.health -= dmg;
     p.lastHurt = this.time;
-    this.emit({ e: 'phurt', pid: p.id, dmg, fromX: r3(fromX), fromZ: r3(fromZ), lava });
+    this.emit({ e: 'phurt', pid: p.id, dmg, fromX: r3(fromX), fromZ: r3(fromZ), lava, ...(fire ? { fire: true } : {}) });
     if (p.health > 0) return;
     p.health = 0;
     p.life = 'downed';
@@ -1201,15 +1241,20 @@ export class GameSim {
     const roll = Math.random();
     const sprintChance = clamp((r - 6) * 0.1, 0, 0.6);
     const runChance = clamp((r - 1) * 0.16, 0, 0.95);
-    const kind: ZombieKind = roll < sprintChance ? 2 : roll < runChance ? 1 : 0;
-    const base = kind === 2 ? ZOMBIE.sprintSpeed : kind === 1 ? ZOMBIE.runSpeed : ZOMBIE.walkSpeed;
+    // Rastejador: sem braços, baixo e escalador; aparece a partir da rodada 3, cada vez mais
+    const crawlChance = r >= CRAWLER.firstRound ? Math.min(CRAWLER.maxChance, (r - CRAWLER.firstRound + 1) * CRAWLER.chancePerRound) : 0;
+    const crawl = Math.random() < crawlChance;
+    const kind: ZombieKind = crawl ? 9 : roll < sprintChance ? 2 : roll < runChance ? 1 : 0;
+    const base = crawl
+      ? CRAWLER.speed[0] + (CRAWLER.speed[1] - CRAWLER.speed[0]) * clamp((r - CRAWLER.firstRound) / 12, 0, 1)
+      : kind === 2 ? ZOMBIE.sprintSpeed : kind === 1 ? ZOMBIE.runSpeed : ZOMBIE.walkSpeed;
     let yaw = Math.random() * Math.PI * 2;
     if (ref.length) yaw = Math.atan2(ref[0].x - x, ref[0].z - z);
 
     const zb: SimZombie = {
       id: this.nextZid++,
       x, y: this.world.groundHeight(x, z, ZOMBIE.radius, 0.2), z, yaw,
-      hp: zombieHealth(r), kind, speed: base * (0.9 + Math.random() * 0.2),
+      hp: crawl ? Math.round(zombieHealth(r) * CRAWLER.healthMult) : zombieHealth(r), kind, speed: base * (0.9 + Math.random() * 0.2),
       anim: pick.entry < 0 ? 'rise' : 'move', t: 0, look: Math.floor(Math.random() * 1e6),
       attackT: 0, attackHit: false, losT: 0, los: false, bestNav: 0xffff, stuckT: 0,
       entry: pick.entry, phase: pick.entry < 0 ? 'none' : 'approach', phaseT: 0,
@@ -2429,6 +2474,33 @@ export class GameSim {
     if (at) this.powerups.push({ id: this.nextPid++, kind: 'maxammo', x: at[0], y: at[1], z: at[2], t: 0 });
   }
 
+  // Encostou numa chama do mapa? (corpo de pé: do chão até 1,7 m)
+  private touchesFire(p: SimPlayer): boolean {
+    for (const [fx, fy, fz] of this.world.map.fires) {
+      const r = fy < 0.5 ? FIRE.radiusGround : FIRE.radiusRaised;
+      if (Math.hypot(p.x - fx, p.z - fz) > r) continue;
+      if (p.y <= fy + 0.9 && p.y + 1.7 >= fy - 0.2) return true;
+    }
+    return false;
+  }
+
+  // Fogo queima: dano a cada 0,4 s enquanto encosta e um pouco menos por 1,8 s depois de sair.
+  private fireDamage(p: SimPlayer, dt: number) {
+    let st = this.burn.get(p.id);
+    if (!st) this.burn.set(p.id, (st = { t: 0, tick: 0 }));
+    const touching = this.touchesFire(p);
+    if (touching) st.t = FIRE.afterburn;
+    else st.t = Math.max(0, st.t - dt);
+    if (st.t <= 0) {
+      st.tick = 0;
+      return;
+    }
+    st.tick -= dt;
+    if (st.tick > 0) return;
+    st.tick = FIRE.interval;
+    this.damagePlayer(p, touching ? FIRE.damage : FIRE.afterburnDamage, p.x, p.z, true, 'fogo', true);
+  }
+
   private updatePlayers(dt: number) {
     for (const p of this.players.values()) {
       if (p.life === 'alive') {
@@ -2444,6 +2516,7 @@ export class GameSim {
         } else {
           p.lavaTimer = 0;
         }
+        this.fireDamage(p, dt);
       } else if (p.life === 'downed') {
         if (p.selfReviveT > 0) {
           p.selfReviveT -= dt;
@@ -2494,6 +2567,7 @@ export class GameSim {
     this.navTimer -= dt;
     if (this.navTimer <= 0) {
       this.navTimer = 0.25;
+      this.navTargets = targets;
       this.nav.update(targets, this.world.map.navRange ? Math.round(this.world.map.navRange / this.nav.cell) : undefined);
     }
     const all = [...this.zombies.values()];
@@ -2508,7 +2582,7 @@ export class GameSim {
       }
       const dog = isDog(z);
       if (z.anim === 'rise') {
-        if (z.t >= (dog ? DOGS.arriveTime : isBoss(z) || isPanzer(z) ? BOSS.riseTime : isBispo(z) ? BISPO.riseTime : isVulto(z) ? VULTO.riseTime : ZOMBIE.riseTime)) z.anim = 'move';
+        if (z.t >= (dog ? DOGS.arriveTime : isBoss(z) || isPanzer(z) ? BOSS.riseTime : isBispo(z) ? BISPO.riseTime : isVulto(z) ? VULTO.riseTime : isCrawler(z) ? CRAWLER.riseTime : ZOMBIE.riseTime)) z.anim = 'move';
         continue;
       }
       if (this.tr && z.kind === 7) {
@@ -2529,128 +2603,517 @@ export class GameSim {
       }
       // Trincheira: zumbi comum sobe no tanque lento (escalada de 1 s) e, no convés, é levado junto
       if (this.tr?.zombieTank(z, dt)) continue;
-      // medidas do tipo: zumbi ou cão
-      const C = isVulto(z) ? VULTO : dog ? DOGS : ZOMBIE;
+      this.updateWalker(z, dt, targets, all, bodies);
+    }
+  }
 
-      let tp: SimPlayer | null = null;
-      let td = Infinity;
-      for (const p of targets) {
-        const d = Math.hypot(p.x - z.x, p.z - z.z);
-        if (d < td) {
-          td = d;
-          tp = p;
+  // ---------- IA dos andarilhos (zumbi comum, cão, vulto, rastejador) ----------
+
+  // Estima a velocidade do jogador pelas posições que o navegador manda (os zumbis rápidos miram à frente).
+  private trackVelocity(p: SimPlayer) {
+    const o = this.pvel.get(p.id);
+    if (!o) {
+      this.pvel.set(p.id, { x: p.x, z: p.z, t: this.time, vx: 0, vz: 0 });
+      return;
+    }
+    const dt = this.time - o.t;
+    if (dt < 0.04) return;
+    const dx = p.x - o.x;
+    const dz = p.z - o.z;
+    if (Math.hypot(dx, dz) > 6) {
+      // teleporte
+      o.vx = 0;
+      o.vz = 0;
+    } else {
+      const k = 0.6;
+      o.vx += (clamp(dx / dt, -8, 8) - o.vx) * k;
+      o.vz += (clamp(dz / dt, -8, 8) - o.vz) * k;
+    }
+    o.x = p.x;
+    o.z = p.z;
+    o.t = this.time;
+  }
+
+  // Quem o zumbi persegue: o jogador para onde o caminho dele leva (o mais perto de verdade, não em linha reta
+  // através da parede); quem estiver colado nele tem preferência.
+  private walkerTarget(z: SimZombie, ai: ZAi, dt: number, targets: SimPlayer[]): SimPlayer | null {
+    if (!targets.length) return null;
+    ai.retarget -= dt;
+    const cur = ai.tid ? targets.find((p) => p.id === ai.tid) ?? null : null;
+    if (cur && ai.retarget > 0) return cur;
+    ai.retarget = 0.35 + Math.random() * 0.15;
+    let near = targets[0];
+    let nd = Infinity;
+    for (const p of targets) {
+      const d = Math.hypot(p.x - z.x, p.z - z.z);
+      if (d < nd) {
+        nd = d;
+        near = p;
+      }
+    }
+    const si = this.nav.sourceAt(z.x, z.z);
+    let pick: SimPlayer | undefined = si >= 0 ? this.navTargets[si] : undefined;
+    if (!pick || !targets.includes(pick)) pick = near;
+    if (near !== pick && nd < (cur === near ? 3.8 : 3) && Math.abs(near.y - z.y) < 1.5) pick = near;
+    ai.tid = pick.id;
+    return pick;
+  }
+
+  // O que acontece depois que o zumbi anda: paredes, chão, ônibus e tanque.
+  private settle(z: SimZombie, C: { radius: number; height: number }) {
+    this.world.collideCylinder(z, C.radius, C.height);
+    z.y = this.world.groundHeight(z.x, z.z, C.radius, z.y);
+    // o ônibus é sólido para os zumbis (só se entra pelas portas)
+    if (this.bus) {
+      busCollide(this.bus, z, C.radius);
+      z.y = Math.max(z.y, busGround(this.bus, z.x, z.z, C.radius, z.y, 0.5));
+    }
+    if (this.tr) {
+      // no convés o zumbi anda a altura do convés (o casco só o empurra por fora)
+      if (z.onTank) z.y = TANK_BODY.floorY;
+      busCollide(this.tr.tankPose(), z, C.radius, TANK_BODY);
+      this.tr.zombieDeckFix(z);
+    }
+  }
+
+  private updateWalker(z: SimZombie, dt: number, targets: SimPlayer[], all: SimZombie[], bodies: SimPlayer[]) {
+    const dog = isDog(z);
+    const crawl = isCrawler(z);
+    // medidas do tipo: zumbi, cão, vulto ou rastejador
+    const C = isVulto(z) ? VULTO : dog ? DOGS : crawl ? CRAWLER : ZOMBIE;
+    const ai = (z.ai ??= {
+      tid: null, retarget: 0, side: z.id % 2 ? 1 : -1, steerT: 0, sdx: 0, sdz: 0,
+      chkT: 0.5, chkX: z.x, chkZ: z.z, jam: 0, evadeT: 0, evx: 0, evz: 0,
+      cd: 1 + Math.random(), climbT: 0.5, mv: null,
+    });
+    ai.cd = Math.max(0, ai.cd - dt);
+
+    if (ai.mv) {
+      this.runMove(z, ai, ai.mv, C, dt, targets);
+      return;
+    }
+
+    const tp = this.walkerTarget(z, ai, dt, targets);
+    const td = tp ? Math.hypot(tp.x - z.x, tp.z - z.z) : Infinity;
+
+    if (z.anim === 'attack') {
+      z.attackT += dt;
+      if (tp) {
+        z.yaw = angleLerp(z.yaw, Math.atan2(tp.x - z.x, tp.z - z.z), Math.min(1, dt * 8));
+        // avança um pouco enquanto arma o golpe: acompanha quem recua um passo em vez de bater no ar
+        if (z.attackT < C.attackWindup && td > 0.8) {
+          const st = z.speed * 0.4 * dt;
+          z.x += ((tp.x - z.x) / td) * st;
+          z.z += ((tp.z - z.z) / td) * st;
+          this.settle(z, C);
         }
       }
+      if (!z.attackHit && z.attackT >= C.attackWindup) {
+        z.attackHit = true;
+        if (tp && td < C.attackHitRange && Math.abs(tp.y - z.y) < 1.5) {
+          this.damagePlayer(tp, C.damage, z.x, z.z, false);
+        }
+      }
+      if (z.attackT >= C.attackWindup + C.attackRecover) z.anim = 'move';
+      return;
+    }
 
-      if (z.anim === 'attack') {
-        z.attackT += dt;
-        if (tp) z.yaw = angleLerp(z.yaw, Math.atan2(tp.x - z.x, tp.z - z.z), Math.min(1, dt * 8));
-        if (!z.attackHit && z.attackT >= C.attackWindup) {
-          z.attackHit = true;
-          if (tp && td < C.attackHitRange && Math.abs(tp.y - z.y) < 1.5) {
-            this.damagePlayer(tp, C.damage, z.x, z.z, false);
+    if (!tp) return;
+
+    // só ataca o que dá para acertar: parede no meio (do outro lado de um muro fino) não conta
+    if (td < C.attackRange && Math.abs(tp.y - z.y) < 1.2 && this.world.lineOfSight(z.x, z.y + 0.9, z.z, tp.x, tp.y + 0.9, tp.z)) {
+      z.anim = 'attack';
+      z.attackT = 0;
+      z.attackHit = false;
+      this.emit({ e: 'zattack', zid: z.id });
+      return;
+    }
+
+    z.losT -= dt;
+    if (z.losT <= 0) {
+      z.losT = 0.2 + Math.random() * 0.1;
+      // vê o jogador E o caminho em linha reta está livre (tiro passa pela barricada, zumbi não)
+      const eye = dog ? 0.6 : crawl ? 0.5 : 1.2;
+      const k = td > 0.8 ? (td - 0.6) / td : 1;
+      z.los = td < ZOMBIE.directChaseRange
+        && this.world.lineOfSight(z.x, z.y + eye, z.z, tp.x, tp.y + 1.2, tp.z)
+        && this.nav.clear(z.x, z.z, z.x + (tp.x - z.x) * k, z.z + (tp.z - z.z) * k);
+      // no convés não há caminho a seguir: vai direto ao jogador
+      if (z.onTank) z.los = true;
+    }
+
+    // salto do Rastejador: arma, pula em cima do alvo e cai com o golpe
+    if (crawl && ai.cd <= 0 && z.anim === 'move' && z.los && td >= CRAWLER.leap.min && td <= CRAWLER.leap.max && Math.abs(tp.y - z.y) < 0.9) {
+      ai.mv = { kind: 'leap', stage: 0, t: 0, sx: z.x, sy: z.y, sz: z.z, ex: tp.x, ez: tp.z };
+      z.anim = 'leap';
+      this.emit({ e: 'zattack', zid: z.id });
+      return;
+    }
+
+    // escalar / pular obstáculo quando o caminho é muito mais longo que a reta (ou o alvo está num lugar alto)
+    const cl = crawl ? CRAWLER.climb : dog ? DOGS.vault : null;
+    if (cl && ai.cd <= 0 && z.anim === 'move' && td > C.attackRange + 0.3) {
+      ai.climbT -= dt;
+      if (ai.climbT <= 0) {
+        ai.climbT = 0.45 + Math.random() * 0.2;
+        const mv = this.planClimb(z, tp, td, C, cl, ai.jam >= 2);
+        if (mv) {
+          ai.mv = mv;
+          ai.jam = 0;
+          z.anim = 'move';
+          return;
+        }
+      }
+    }
+
+    let dx = tp.x - z.x;
+    let dz = tp.z - z.z;
+    if (z.los) {
+      // quem corre adivinha para onde o alvo vai e, de perto, abre o cerco cada um por um lado
+      const vel = this.pvel.get(tp.id);
+      if (vel && z.speed > 2 && td > 2.5) {
+        const lead = Math.min(ZOMBIE.leadMax, td / z.speed);
+        dx += vel.vx * lead;
+        dz += vel.vz * lead;
+      }
+      if (z.speed > 2 && td > 2 && td < ZOMBIE.flankRange) {
+        const a = ai.side * 0.5 * Math.min(1, (td - 2) / (ZOMBIE.flankRange - 2));
+        const ca = Math.cos(a);
+        const sa = Math.sin(a);
+        [dx, dz] = [dx * ca - dz * sa, dx * sa + dz * ca];
+      }
+    } else {
+      ai.steerT -= dt;
+      if (ai.steerT <= 0) {
+        ai.steerT = 0.1 + Math.random() * 0.05;
+        const d = this.nav.steer(z.x, z.z);
+        ai.sdx = d ? d[0] : 0;
+        ai.sdz = d ? d[1] : 0;
+      }
+      if (ai.sdx || ai.sdz) {
+        dx = ai.sdx;
+        dz = ai.sdz;
+      }
+    }
+    // jogador dentro do ônibus parado: o zumbi dá a volta e entra pela porta
+    const door = this.busDoorTarget(z, tp);
+    if (door) {
+      dx = door[0] - z.x;
+      dz = door[1] - z.z;
+    }
+    // preso numa quina ou atrás de outro zumbi: dá um passo de lado antes de insistir
+    if (ai.evadeT > 0) {
+      ai.evadeT -= dt;
+      dx = ai.evx;
+      dz = ai.evz;
+    }
+    const dl = Math.hypot(dx, dz) || 1;
+    // frio do Cajado de Gelo: até 70% mais lento
+    const slow = z.frost ? 1 - 0.7 * z.frost : 1;
+    let vx = (dx / dl) * z.speed * slow;
+    let vz = (dz / dl) * z.speed * slow;
+
+    // separação entre zumbis e para não entrar no jogador
+    let sx = 0;
+    let sz = 0;
+    for (const o of all) {
+      if (o === z) continue;
+      const ox = z.x - o.x;
+      const oz = z.z - o.z;
+      const d2 = ox * ox + oz * oz;
+      if (d2 > 0.56 || d2 < 1e-6) continue;
+      const d = Math.sqrt(d2);
+      sx += (ox / d) * (0.75 - d);
+      sz += (oz / d) * (0.75 - d);
+    }
+    for (const p of bodies) {
+      const ox = z.x - p.x;
+      const oz = z.z - p.z;
+      const d = Math.hypot(ox, oz);
+      if (d < 0.7 && d > 1e-4) {
+        sx += (ox / d) * (0.7 - d) * 2;
+        sz += (oz / d) * (0.7 - d) * 2;
+      }
+    }
+    vx += sx * 4;
+    vz += sz * 4;
+
+    const fx = z.x;
+    const fz = z.z;
+    const fy = z.y;
+    z.x += vx * dt;
+    z.z += vz * dt;
+    this.settle(z, C);
+    // empurrão da multidão contra parede fina não atravessa: fica onde estava
+    if (this.world.segmentBlocked(fx, fz, z.x, z.z, fy, C.radius, C.height)) {
+      z.x = fx;
+      z.z = fz;
+      z.y = fy;
+    }
+    z.yaw = angleLerp(z.yaw, Math.atan2(dx, dz), Math.min(1, dt * 6));
+
+    // Preso (anda menos de um quarto do que devia): na segunda vez desvia de lado; o Rastejador tenta escalar
+    ai.chkT -= dt;
+    if (ai.chkT <= 0) {
+      ai.chkT = 0.5;
+      const moved = Math.hypot(z.x - ai.chkX, z.z - ai.chkZ);
+      ai.chkX = z.x;
+      ai.chkZ = z.z;
+      const want = z.speed * slow * 0.5;
+      if (moved < want * 0.25 && td > 3 && ai.evadeT <= 0) {
+        ai.jam++;
+        if (ai.jam >= 2) this.evade(z, ai, dx / dl, dz / dl);
+      } else if (moved > want * 0.5) {
+        ai.jam = 0;
+      }
+    }
+
+    // Zumbi preso longe de todos: reaparece em outro ponto.
+    const nd = this.nav.distanceAt(z.x, z.z);
+    if (nd < z.bestNav - 1) {
+      z.bestNav = nd;
+      z.stuckT = 0;
+    } else {
+      z.stuckT += dt;
+    }
+    if (z.stuckT > ZOMBIE.walkerStuckTime && td > 18) {
+      if (dog) this.relocateDog(z);
+      else this.relocate(z);
+    } else if (z.stuckT > ZOMBIE.walkerStuckTime) {
+      z.stuckT = 0;
+      z.bestNav = nd;
+    }
+  }
+
+  // Passo de lado para quem está preso: vai para o lado mais livre (o preferido dele, se os dois estiverem).
+  private evade(z: SimZombie, ai: ZAi, hx: number, hz: number) {
+    const free = (sign: number) => !this.nav.isBlockedAt(z.x - hz * sign * 1.2, z.z + hx * sign * 1.2);
+    let sign = ai.side;
+    if (!free(sign)) sign = free(-sign) ? -sign : 0;
+    if (sign === 0) {
+      // encurralado dos dois lados: recua
+      ai.evx = -hx;
+      ai.evz = -hz;
+    } else {
+      ai.evx = -hz * sign + hx * 0.3;
+      ai.evz = hx * sign + hz * 0.3;
+    }
+    ai.evadeT = 0.6 + Math.random() * 0.3;
+    // da próxima vez tenta o outro lado, e os vizinhos não ficam todos no mesmo
+    if (Math.random() < 0.5) ai.side = -ai.side;
+  }
+
+  // Espaço livre para um cilindro (raio r, altura h) com a base em y?
+  private bodyFree(x: number, z: number, y: number, r: number, h: number): boolean {
+    for (const b of this.world.query(x - r, z - r, x + r, z + r)) {
+      if (b.max[1] <= y + 0.02 || b.min[1] >= y + h) continue;
+      const cx = clamp(x, b.min[0], b.max[0]);
+      const cz = clamp(z, b.min[2], b.max[2]);
+      if ((x - cx) * (x - cx) + (z - cz) * (z - cz) < r * r) return false;
+    }
+    return true;
+  }
+
+  // Altura mais baixa em que um corpo cabe de pé em (x,z): o chão, ou o topo de algo (caixote, muro), ou null.
+  private standY(x: number, z: number, r: number, h: number, limit: number): number | null {
+    const tops = [0];
+    for (const b of this.world.query(x - r, z - r, x + r, z + r)) {
+      if (b.max[1] > 0 && b.max[1] <= limit) tops.push(b.max[1]);
+    }
+    tops.sort((a, b) => a - b);
+    for (const y of tops) if (this.bodyFree(x, z, y, r, h)) return y;
+    return null;
+  }
+
+  // Altura do corpo ao passar por cima do obstáculo: sobe até o topo, atravessa e desce do outro lado.
+  private climbArcY(top: number, ly: number, k: number): number {
+    if (k < 0.55) return top;
+    const u = (k - 0.55) / 0.45;
+    return top + (ly - top) * u * u;
+  }
+
+  // O vão por cima do obstáculo está livre (sem teto por perto) do topo até o pouso?
+  private arcClear(cx: number, cz: number, lx: number, lz: number, top: number, ly: number, r: number, h: number): boolean {
+    const n = Math.max(3, Math.ceil(Math.hypot(lx - cx, lz - cz) / 0.2));
+    for (let i = 1; i <= n; i++) {
+      const u = i / n;
+      if (!this.bodyFree(cx + (lx - cx) * u, cz + (lz - cz) * u, this.climbArcY(top, ly, u), r, h)) return false;
+    }
+    return true;
+  }
+
+  // Procura um obstáculo que dá para passar por cima e que encurta (ou abre) o caminho até o jogador.
+  private planClimb(
+    z: SimZombie, tp: SimPlayer, td: number, C: { radius: number; height: number },
+    cl: { maxHeight: number; maxSpan: number; reach: number; speed: number }, force: boolean,
+  ): ZMove | null {
+    const r = C.radius;
+    const h = C.height;
+    const nd0 = this.nav.distanceAt(z.x, z.z);
+    const rem0 = nd0 >= 0xffff ? 1e3 : nd0 * this.nav.cell;
+    const elevated = tp.y - z.y > 0.9;
+    if (td > 26 || (elevated && td > 9)) return null;
+    // só vale o esforço se o caminho a pé for bem pior que a reta (ou o alvo estiver num lugar alto)
+    if (!force && !elevated && rem0 <= td * 1.4 + 2.5) return null;
+    const ux = (tp.x - z.x) / (td || 1);
+    const uz = (tp.z - z.z) / (td || 1);
+    let best: ZMove | null = null;
+    let bestScore = elevated ? 0.6 : 3;
+    for (let k = 0; k < 16; k++) {
+      const ang = (k / 16) * Math.PI * 2;
+      const dx = Math.sin(ang);
+      const dz = Math.cos(ang);
+      if (dx * ux + dz * uz < (force ? -0.2 : 0.3)) continue;
+      const hit = this.world.raycast(z.x, z.y + 0.35, z.z, dx, 0, dz, cl.reach + 7);
+      const b = hit?.block;
+      // portas compráveis e a barreira das barricadas não se escalam
+      if (!hit || !b || b.door || b.bulletThrough) continue;
+      const top = b.max[1];
+      const rise = top - z.y;
+      if (rise < 0.5 || rise > cl.maxHeight || hit.t > cl.reach + r) continue;
+      const dist = hit.t - r - 0.04;
+      const cx = z.x + dx * dist;
+      const cz = z.z + dz * dist;
+      // o caminho até a parede tem que estar livre
+      if (dist > 0.7 && !this.nav.clear(z.x, z.z, z.x + dx * (dist - 0.5), z.z + dz * (dist - 0.5))) continue;
+      for (let s = hit.t + 0.4; s <= hit.t + cl.maxSpan; s += 0.4) {
+        const lx = z.x + dx * s;
+        const lz = z.z + dz * s;
+        const ly = this.standY(lx, lz, r, h, z.y + cl.maxHeight + 0.5);
+        if (ly === null) continue;
+        let score: number;
+        if (elevated) {
+          const dTo = Math.hypot(lx - tp.x, lz - tp.z);
+          if (dTo > td - 0.8 || ly < tp.y - 0.8 || ly > tp.y + 0.3) continue;
+          score = td - dTo;
+        } else {
+          if (ly > z.y + 1.3) continue;
+          const ndl = this.nav.distanceAt(lx, lz);
+          if (ndl >= 0xffff) continue;
+          score = rem0 - (s + ndl * this.nav.cell);
+        }
+        if (score <= bestScore || !this.arcClear(cx, cz, lx, lz, top, ly, r, h)) continue;
+        bestScore = score;
+        best = {
+          kind: 'climb', stage: 0, t: 0, y0: z.y, cx, cz, top, lx, lz, ly,
+          tUp: Math.max(0.25, rise / cl.speed), tOver: Math.max(0.3, (s - hit.t + r) / (cl.speed * 1.6)),
+          sx: z.x, sz: z.z,
+        };
+      }
+    }
+    return best;
+  }
+
+  // Movimento especial em curso: escalada ou salto do Rastejador.
+  private runMove(z: SimZombie, ai: ZAi, mv: ZMove, C: { radius: number; height: number }, dt: number, targets: SimPlayer[]) {
+    mv.t += dt;
+    if (mv.kind === 'climb') {
+      if (mv.stage === 0) {
+        // anda reto até a parede
+        const dx = mv.cx - z.x;
+        const dz = mv.cz - z.z;
+        const d = Math.hypot(dx, dz);
+        z.yaw = angleLerp(z.yaw, Math.atan2(dx, dz), Math.min(1, dt * 10));
+        if (d > 0.12 && mv.t < 3) {
+          const st = Math.min(d, z.speed * dt * 1.15);
+          z.x += (dx / d) * st;
+          z.z += (dz / d) * st;
+          this.settle(z, C);
+          z.anim = 'move';
+          return;
+        }
+        if (d > 0.6) {
+          // não chegou (um zumbi na frente, por exemplo): desiste e tenta de novo daqui a pouco
+          ai.mv = null;
+          ai.cd = 1.5;
+          return;
+        }
+        mv.stage = 1;
+        mv.t = 0;
+        mv.sx = z.x;
+        mv.sz = z.z;
+        mv.y0 = z.y;
+        z.anim = 'wall';
+        z.yaw = Math.atan2(mv.lx - mv.sx, mv.lz - mv.sz);
+        return;
+      }
+      const total = mv.tUp + mv.tOver;
+      if (mv.t < mv.tUp) {
+        const k = mv.t / mv.tUp;
+        z.x = mv.sx;
+        z.z = mv.sz;
+        z.y = mv.y0 + (mv.top - mv.y0) * (k * k * (3 - 2 * k));
+      } else {
+        const k = Math.min(1, (mv.t - mv.tUp) / mv.tOver);
+        z.x = mv.sx + (mv.lx - mv.sx) * k;
+        z.z = mv.sz + (mv.lz - mv.sz) * k;
+        z.y = this.climbArcY(mv.top, mv.ly, k);
+      }
+      if (mv.t >= total) {
+        z.x = mv.lx;
+        z.z = mv.lz;
+        z.y = mv.ly;
+        ai.mv = null;
+        ai.cd = CRAWLER.climb.cooldown;
+        z.anim = 'move';
+        z.bestNav = 0xffff;
+        z.stuckT = 0;
+      }
+      return;
+    }
+
+    // salto
+    const L = CRAWLER.leap;
+    const tp = (ai.tid ? targets.find((p) => p.id === ai.tid) : undefined) ?? targets[0];
+    if (mv.stage === 0) {
+      if (tp) z.yaw = angleLerp(z.yaw, Math.atan2(tp.x - z.x, tp.z - z.z), Math.min(1, dt * 12));
+      if (mv.t >= L.windup) {
+        // sai mirando onde o alvo vai estar quando chegar
+        let ex = tp ? tp.x : z.x;
+        let ez = tp ? tp.z : z.z;
+        const vel = tp ? this.pvel.get(tp.id) : undefined;
+        if (vel) {
+          ex += vel.vx * L.air;
+          ez += vel.vz * L.air;
+        }
+        const d = Math.hypot(ex - z.x, ez - z.z) || 1;
+        const reach = Math.min(d, L.max + 0.8);
+        mv.sx = z.x;
+        mv.sy = z.y;
+        mv.sz = z.z;
+        mv.ex = z.x + ((ex - z.x) / d) * reach;
+        mv.ez = z.z + ((ez - z.z) / d) * reach;
+        mv.stage = 1;
+        mv.t = 0;
+      }
+      return;
+    }
+    if (mv.stage === 1) {
+      const k = Math.min(1, mv.t / L.air);
+      z.x = mv.sx + (mv.ex - mv.sx) * k;
+      z.z = mv.sz + (mv.ez - mv.sz) * k;
+      // bateu numa parede: cai ali mesmo
+      const wall = this.world.collideCylinder(z, C.radius, C.height);
+      z.y = this.world.groundHeight(z.x, z.z, C.radius, mv.sy) + Math.sin(Math.PI * k) * 0.9;
+      z.yaw = Math.atan2(mv.ex - mv.sx, mv.ez - mv.sz);
+      if (k >= 1 || wall) {
+        z.y = this.world.groundHeight(z.x, z.z, C.radius, mv.sy);
+        for (const p of targets) {
+          if (Math.hypot(p.x - z.x, p.z - z.z) < L.hitRange && Math.abs(p.y - z.y) < 1.4) {
+            this.damagePlayer(p, L.damage, z.x, z.z, false);
+            break;
           }
         }
-        if (z.attackT >= C.attackWindup + C.attackRecover) z.anim = 'move';
-        continue;
+        mv.stage = 2;
+        mv.t = 0;
+        z.anim = 'move';
       }
-
-      if (!tp) continue;
-
-      if (td < C.attackRange && Math.abs(tp.y - z.y) < 1.2) {
-        z.anim = 'attack';
-        z.attackT = 0;
-        z.attackHit = false;
-        this.emit({ e: 'zattack', zid: z.id });
-        continue;
-      }
-
-      let dx = tp.x - z.x;
-      let dz = tp.z - z.z;
-      z.losT -= dt;
-      if (z.losT <= 0) {
-        z.losT = 0.25 + Math.random() * 0.1;
-        z.los = td < ZOMBIE.directChaseRange && this.world.lineOfSight(z.x, z.y + (dog ? 0.6 : 1.2), z.z, tp.x, tp.y + 1.2, tp.z);
-        // no convés não há caminho a seguir: vai direto ao jogador
-        if (z.onTank) z.los = true;
-      }
-      if (!z.los) {
-        const d = this.nav.direction(z.x, z.z);
-        if (d) {
-          dx = d[0];
-          dz = d[1];
-        }
-      }
-      // jogador dentro do ônibus parado: o zumbi dá a volta e entra pela porta
-      const door = this.busDoorTarget(z, tp);
-      if (door) {
-        dx = door[0] - z.x;
-        dz = door[1] - z.z;
-      }
-      const dl = Math.hypot(dx, dz) || 1;
-      // frio do Cajado de Gelo: até 70% mais lento
-      const slow = z.frost ? 1 - 0.7 * z.frost : 1;
-      let vx = (dx / dl) * z.speed * slow;
-      let vz = (dz / dl) * z.speed * slow;
-
-      // separação entre zumbis e para não entrar no jogador
-      let sx = 0;
-      let sz = 0;
-      for (const o of all) {
-        if (o === z) continue;
-        const ox = z.x - o.x;
-        const oz = z.z - o.z;
-        const d2 = ox * ox + oz * oz;
-        if (d2 > 0.56 || d2 < 1e-6) continue;
-        const d = Math.sqrt(d2);
-        sx += (ox / d) * (0.75 - d);
-        sz += (oz / d) * (0.75 - d);
-      }
-      for (const p of bodies) {
-        const ox = z.x - p.x;
-        const oz = z.z - p.z;
-        const d = Math.hypot(ox, oz);
-        if (d < 0.7 && d > 1e-4) {
-          sx += (ox / d) * (0.7 - d) * 2;
-          sz += (oz / d) * (0.7 - d) * 2;
-        }
-      }
-      vx += sx * 4;
-      vz += sz * 4;
-
-      z.x += vx * dt;
-      z.z += vz * dt;
-      this.world.collideCylinder(z, C.radius, C.height);
-      z.y = this.world.groundHeight(z.x, z.z, C.radius, z.y);
-      // o ônibus é sólido para os zumbis (só se entra pelas portas)
-      if (this.bus) {
-        busCollide(this.bus, z, C.radius);
-        z.y = Math.max(z.y, busGround(this.bus, z.x, z.z, C.radius, z.y, 0.5));
-      }
-      if (this.tr) {
-        // no convés o zumbi anda a altura do convés (o casco só o empurra por fora)
-        if (z.onTank) z.y = TANK_BODY.floorY;
-        busCollide(this.tr.tankPose(), z, C.radius, TANK_BODY);
-        this.tr.zombieDeckFix(z);
-      }
-      z.yaw = angleLerp(z.yaw, Math.atan2(dx, dz), Math.min(1, dt * 6));
-
-      // Zumbi preso longe de todos: reaparece em outro ponto.
-      const nd = this.nav.distanceAt(z.x, z.z);
-      if (nd < z.bestNav - 1) {
-        z.bestNav = nd;
-        z.stuckT = 0;
-      } else {
-        z.stuckT += dt;
-      }
-      if (z.stuckT > ZOMBIE.stuckTime && td > 18) {
-        if (dog) this.relocateDog(z);
-        else this.relocate(z);
-      }
-      else if (z.stuckT > ZOMBIE.stuckTime) {
-        z.stuckT = 0;
-        z.bestNav = nd;
-      }
+      return;
+    }
+    // recupera o fôlego antes de voltar a andar
+    if (mv.t >= 0.4) {
+      ai.mv = null;
+      ai.cd = L.cooldown * (0.85 + Math.random() * 0.3);
     }
   }
 

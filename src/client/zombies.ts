@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { BISPO, BOSS, DOGS, TRINCHEIRA, VULTO, ZOMBIE } from '../shared/constants';
+import { BISPO, BOSS, CRAWLER, DOGS, TRINCHEIRA, VULTO, ZOMBIE } from '../shared/constants';
 import type { GameEvent, ZombieAnim, ZombieKind } from '../shared/protocol';
 import { angleLerp, clamp, lerp, mulberry32 } from '../shared/rng';
 import type { AudioEngine } from './audio';
@@ -18,7 +18,9 @@ const SHIRT = [0x86705a, 0xb2aa98, 0x5e7088, 0x963e34, 0x6c7a5e, 0xa49070, 0x555
 const PANTS = [0x46506a, 0x5e5040, 0x726a58, 0x404040, 0x5a6274, 0x76664f];
 const HAIR = [0x1a1410, 0x3a2a1a, 0x5a5048, 0x2a2420, 0x6a6058];
 
-const KIND_SPEED = [ZOMBIE.walkSpeed, ZOMBIE.runSpeed, ZOMBIE.sprintSpeed, 0, 0, VULTO.speed, BISPO.speed[0], 1.9, TRINCHEIRA.templarSpeed];
+const R_ = (a: number, b: number) => a + Math.random() * (b - a);
+
+const KIND_SPEED = [ZOMBIE.walkSpeed, ZOMBIE.runSpeed, ZOMBIE.sprintSpeed, 0, 0, VULTO.speed, BISPO.speed[0], 1.9, TRINCHEIRA.templarSpeed, CRAWLER.speed[1]];
 
 // Visual de 1918 (Trincheira): capotes de lã, capacetes redondos, máscaras de gás, bandoleiras e lama na roupa
 export type Era = 'padrao' | 'ww1';
@@ -41,6 +43,16 @@ class ZombieView {
   riseT = 0;
   attackT = 99;
   climbT = 0;
+  // Rastejador: tempo no salto e na escalada, e a pose atual (inclinação do corpo, avanço e altura), que vai suave de uma para outra
+  leapT = 0;
+  wallT = 0;
+  // sons: tempo até o próximo arranhão, último grunhido de dor e o lado da onda do passo (para soar um passo por ciclo)
+  sndT = 0;
+  painT = 0;
+  stepSign = 0;
+  cPitch = 1.38;
+  cZ = -0.82;
+  cLift = 0.22;
   groanT: number;
   dying = false;
   deathT = 0;
@@ -66,7 +78,7 @@ class ZombieView {
     const r = mulberry32(look);
     this.rnd = r;
     const pick = <T,>(a: T[]) => a[Math.floor(r() * a.length)];
-    const ww1 = era === 'ww1' && kind <= 2;
+    const ww1 = era === 'ww1' && (kind <= 2 || kind === 9);
     const skin = flatMat(pick(SKIN), tex.grime);
     const shirt = flatMat(ww1 ? pick(COAT) : pick(SHIRT), tex.grime);
     // Vulto: criatura pequena e escura da névoa, de olhos claros
@@ -88,10 +100,11 @@ class ZombieView {
       hair: ww1 ? null : r() < 0.7 ? flatMat(pick(HAIR)) : null,
       eyes: flatMat(0x000000, null, 0xffa030, 5),
       jaw: flatMat(0x4a2a24, tex.grime),
-      scale: 0.94 + r() * 0.12,
+      scale: kind === 9 ? 0.9 + r() * 0.08 : 0.94 + r() * 0.12,
       bulk: 0.9 + r() * 0.25,
     });
     if (ww1) this.dressWw1(r, tex, shirt);
+    if (kind === 9) this.maimArms(tex);
     for (const m of this.h.hitMeshes) m.userData.zid = id;
     this.limp = r() < 0.35 ? 0.4 + r() * 0.4 : 1;
     this.armStyle = r();
@@ -99,6 +112,23 @@ class ZombieView {
     this.groanT = 1 + r() * 5;
     this.fallDir = r() < 0.5 ? 1 : -1;
     this.deathStyle = Math.floor(r() * 3);
+  }
+
+  // Rastejador: sem braços. Os braços somem (e deixam de ser alvo) e ficam tocos de carne viva nos ombros.
+  private maimArms(tex: TexSet) {
+    const h = this.h;
+    const gone = new Set<THREE.Object3D>();
+    for (const a of [h.armL.upper, h.armR.upper]) {
+      a.visible = false;
+      a.traverse((o) => gone.add(o));
+    }
+    for (let i = h.hitMeshes.length - 1; i >= 0; i--) if (gone.has(h.hitMeshes[i])) h.hitMeshes.splice(i, 1);
+    const flesh = flatMat(0x6a2020, tex.grime, 0x180404, 0.4);
+    const bone = flatMat(0xc9c2ac);
+    for (const side of [-1, 1]) {
+      part(h.torso, 0.16, 0.18, 0.16, side * 0.25, 0.44, 0, flesh, 'body', h.hitMeshes);
+      part(h.torso, 0.05, 0.07, 0.05, side * 0.27, 0.34, 0.02, bone, null, h.hitMeshes);
+    }
   }
 
   // Equipamento de soldado de 1918 (genérico, sem insígnias): capacete redondo, boné ou máscara de gás,
@@ -275,6 +305,7 @@ function makeView(id: number, kind: ZombieKind, look: number, tex: TexSet, era: 
 function voicePitch(v: View): number {
   if (!(v instanceof ZombieView)) return 1;
   if (v.kind === 5) return 1.35;
+  if (v.kind === 9) return 1.15 + (((v.look * 7919) >>> 0) % 100) / 100 * 0.2;
   return 0.88 + (((v.look * 7919) >>> 0) % 100) / 100 * 0.24;
 }
 
@@ -319,7 +350,7 @@ export class ZombieManager {
       const dog = v instanceof DogView;
       const boss = v instanceof BossView || v instanceof BispoView || v instanceof BlindadoView;
       const rising = v.anim === 'rise' && (v instanceof BispoView ? v.animT < BISPO.riseTime * 0.7 : v instanceof BlindadoView ? v.animT < 2.4 * 0.8 : boss ? v.animT < BOSS.riseTime * 0.6 : v.riseT < (dog ? DOGS.arriveTime * 0.8 : ZOMBIE.riseTime * 0.6));
-      out.push({ id: v.id, x: p.x, y: p.y, z: p.z, rising, top: dog ? 0.6 : boss ? 2.3 : 1.25 });
+      out.push({ id: v.id, x: p.x, y: p.y, z: p.z, rising, top: dog ? 0.6 : boss ? 2.3 : v.kind === 9 ? 0.6 : 1.25 });
     }
     return out;
   }
@@ -334,6 +365,11 @@ export class ZombieManager {
     const v = this.views.get(id);
     if (!(v instanceof ZombieView)) return;
     v.flinch = Math.min(1.3, v.flinch * 0.4 + power);
+    // grunhido de dor (nem todo tiro, e não em rajada)
+    if (Math.random() < 0.4 && this.t - v.painT > 0.6) {
+      v.painT = this.t;
+      this.audio.zombiePain(v.h.root.position, voicePitch(v));
+    }
     v.flinchHead = part === 'head';
     if (dir) {
       // lado do tiro no espaço do zumbi
@@ -509,6 +545,14 @@ export class ZombieManager {
         if (anim === 'rise' && v.anim !== 'rise') v.riseT = 0;
         if (anim === 'attack' && v.anim !== 'attack') v.attackT = 0;
         if (anim === 'climb' && v.anim !== 'climb') v.climbT = 0;
+        if (v instanceof ZombieView) {
+          if (anim === 'leap' && v.anim !== 'leap') {
+            v.leapT = 0;
+            this.audio.crawlerLeap(v.h.root.position, voicePitch(v));
+          }
+          if (anim === 'wall' && v.anim !== 'wall') v.wallT = 0;
+          if (v.kind === 9 && anim === 'attack' && v.anim !== 'attack') this.audio.crawlerBite(v.h.root.position);
+        }
         if ((v instanceof BossView || v instanceof BispoView || v instanceof BlindadoView) && anim !== v.anim) v.animT = 0;
         v.anim = anim;
         const p = v.h.root.position;
@@ -558,7 +602,7 @@ export class ZombieManager {
           if (dog) this.audio.dogGrowl(v.h.root.position);
           else if (v.kind === 5) this.audio.vultoHiss(v.h.root.position);
           else if (v.kind === 8) this.audio.trSound('cruzado-grito', v.h.root.position, 0.7);
-          else this.audio.zombieGroan(v.h.root.position, v.kind, voicePitch(v));
+          else this.audio.zombieIdle(v.h.root.position, v.kind, voicePitch(v));
         }
       }
     }
@@ -723,6 +767,10 @@ export class ZombieManager {
     v.speed = lerp(v.speed, Math.min(inst, 7), 1 - Math.exp(-dt * 8));
     h.root.rotation.y = v.yaw;
 
+    if (v.kind === 9) {
+      this.animateCrawler(v, dt);
+      return;
+    }
     const kind = v.kind === 5 ? 2 : v.kind === 8 ? 0 : v.kind;
     const norm = clamp(v.speed / KIND_SPEED[v.kind], 0, 1.3);
     v.phase += dt * v.speed * (kind === 0 ? 2.9 : 2.1);
@@ -730,6 +778,12 @@ export class ZombieManager {
     const s = Math.sin(ph);
     const c = Math.cos(ph);
     const t = this.t + v.look * 0.001;
+    // passo arrastado: um por ciclo da perna, só dos que estão perto
+    const sg = Math.sign(s);
+    if (sg !== v.stepSign) {
+      v.stepSign = sg;
+      if (v.speed > 0.6 && v.anim === 'move' && p.distanceTo(this.listener) < 16) this.audio.zombieStep(p, kind === 0 ? 0.8 : 1.1);
+    }
 
     const legAmp = (kind === 0 ? 0.42 : kind === 1 ? 0.78 : 0.95) * norm;
     h.legL.upper.rotation.x = s * legAmp * v.limp;
@@ -834,6 +888,147 @@ export class ZombieManager {
     h.armR.lower.rotation.x = elbow;
     h.torso.rotation.x = lean;
     if (v.cape) animateCape(v.cape, v.speed, t);
+  }
+
+  // ---------- Rastejador ----------
+
+  // Deitado de bruços, sem braços: arrasta-se ondulando o corpo e empurrando com as pernas. Arma e salta em cima do
+  // alvo, morde de perto e escala paredes de pé, raspando as pernas na parede.
+  private animateCrawler(v: ZombieView, dt: number) {
+    const h = v.h;
+    const t = this.t + v.look * 0.001;
+    const moving = clamp(v.speed / CRAWLER.speed[1], 0, 1.3);
+    v.phase += dt * (2.5 + v.speed * 2.6);
+    const s = Math.sin(v.phase);
+    const c = Math.cos(v.phase);
+    // sons: raspa no chão a cada impulso e arranha a parede quando sobe
+    const near = h.root.position.distanceTo(this.listener) < 22;
+    const sg = Math.sign(s);
+    if (sg !== v.stepSign) {
+      v.stepSign = sg;
+      if (near && sg > 0 && v.speed > 0.8 && v.anim === 'move') this.audio.crawlerMove(h.root.position);
+    }
+    if (v.anim === 'wall' || v.anim === 'climb') {
+      v.sndT -= dt;
+      if (v.sndT <= 0 && near) {
+        v.sndT = R_(0.14, 0.26);
+        this.audio.crawlerScrabble(h.root.position);
+      }
+    }
+
+    // pose alvo: [inclinação do corpo, avanço, altura]
+    let pitch = 1.38;
+    let zoff = -0.82;
+    let lift = 0.22;
+    let torso = -0.35 + s * 0.08 * moving;
+    let neck = -0.95 + s * 0.1 * moving;
+    let kickL = s * 0.55 * moving + 0.12;
+    let kickR = -s * 0.55 * moving + 0.12;
+    let kneeL = 0.25 + Math.max(0, -c) * 0.9 * moving;
+    let kneeR = 0.25 + Math.max(0, c) * 0.9 * moving;
+    let twist = s * 0.3 * moving;
+    let riseDrop = 0;
+
+    if (v.anim === 'rise') {
+      v.riseT += dt;
+      const e = 1 - Math.pow(1 - clamp(v.riseT / CRAWLER.riseTime, 0, 1), 2);
+      riseDrop = -1.1 * (1 - e);
+      neck = -0.6 + Math.sin(this.t * 9) * 0.25;
+    }
+    if (v.anim === 'attack') {
+      // dá o bote com a cabeça: arma para trás, estica e morde
+      v.attackT += dt;
+      const a = v.attackT;
+      const wind = clamp(a / CRAWLER.attackWindup, 0, 1);
+      const strike = clamp((a - CRAWLER.attackWindup) / 0.12, 0, 1);
+      const back = clamp((a - CRAWLER.attackWindup - 0.12) / 0.4, 0, 1);
+      const k = strike * (1 - back);
+      zoff += -0.15 * wind * (1 - strike) + 0.55 * k;
+      torso = lerp(torso, -0.7, wind * (1 - strike)) + 1.0 * k;
+      neck = lerp(neck, -1.2, wind * (1 - strike)) + 0.9 * k;
+      pitch -= 0.1 * k;
+    } else {
+      v.attackT = 99;
+    }
+    if (v.anim === 'leap') {
+      v.leapT += dt;
+      const windup = CRAWLER.leap.windup;
+      if (v.leapT < windup) {
+        // agacha e arma as pernas
+        const k = clamp(v.leapT / windup, 0, 1);
+        lift = lerp(lift, 0.1, k);
+        pitch = lerp(pitch, 1.3, k);
+        torso = lerp(torso, -0.8, k);
+        neck = lerp(neck, -1.1, k);
+        kneeL = kneeR = lerp(kneeL, 1.5, k);
+        kickL = kickR = lerp(kickL, 0.9, k);
+        zoff += -0.12 * k;
+      } else {
+        // no ar: corpo esticado como uma flecha, boca aberta
+        pitch = 1.12;
+        lift = 0.4;
+        torso = 0.1;
+        neck = -0.45;
+        kneeL = kneeR = 0.15;
+        kickL = kickR = -0.2;
+        zoff += 0.15;
+      }
+    } else {
+      v.leapT = 0;
+    }
+    if (v.anim === 'wall' || v.anim === 'climb') {
+      // sobe de pé, agarrando a parede com as pernas e o tronco
+      v.wallT += dt;
+      const sc = Math.sin(t * 13);
+      pitch = 0.22 + Math.sin(t * 6.5) * 0.08;
+      zoff = -0.1;
+      lift = 0;
+      torso = -0.15 + sc * 0.2;
+      neck = -0.5;
+      kickL = -1.0 + sc * 0.7;
+      kickR = -1.0 - sc * 0.7;
+      kneeL = 1.2 + sc * 0.4;
+      kneeR = 1.2 - sc * 0.4;
+      twist = sc * 0.25;
+    } else {
+      v.wallT = 0;
+    }
+    if (v.anim === 'tear') {
+      // morde e puxa as tábuas da barricada
+      const s7 = Math.sin(this.t * 9 + v.look);
+      pitch = 0.75;
+      zoff = -0.45;
+      lift = 0.05;
+      torso = 0.1 + s7 * 0.35;
+      neck = -0.4 + s7 * 0.4;
+      twist = s7 * 0.15;
+    }
+
+    // pose atual vai suave até a pose alvo
+    const k = 1 - Math.exp(-dt * 11);
+    v.cPitch = lerp(v.cPitch, pitch, k);
+    v.cZ = lerp(v.cZ, zoff, k);
+    v.cLift = lerp(v.cLift, lift, k);
+
+    // tranco do tiro
+    const f = v.flinch;
+    if (f > 0.001) {
+      neck -= f * (v.flinchHead ? 0.9 : 0.3);
+      torso -= f * 0.35;
+      twist += v.flinchSide * f * 0.4;
+      v.flinch *= Math.exp(-dt * 7);
+    }
+
+    h.body.rotation.x = v.cPitch;
+    h.body.position.set(0, v.cLift + riseDrop + Math.abs(s) * 0.025 * moving, v.cZ - 0.1 * f);
+    h.hips.rotation.y = twist;
+    h.torso.rotation.set(torso, -twist * 0.8, v.limp < 1 ? 0.08 : 0);
+    h.neck.rotation.set(neck, 0, v.headTilt * 0.5 + Math.sin(t * 0.9) * 0.1);
+    h.head.rotation.y = Math.sin(t * 0.7) * 0.3 - twist * 0.3;
+    h.legL.upper.rotation.x = kickL * v.limp;
+    h.legR.upper.rotation.x = kickR;
+    h.legL.lower.rotation.x = kneeL;
+    h.legR.lower.rotation.x = kneeR;
   }
 
   // ---------- Blindado ----------
@@ -995,6 +1190,17 @@ export class ZombieManager {
         h.root.position.y = v.flingY;
         v.fling = null;
       }
+    }
+    if (v instanceof ZombieView && v.kind === 9 && !v.fling) {
+      // já está deitado: tomba de lado, as pernas dão um último chute e a cabeça cai
+      const k = clamp(v.deathT / 0.45, 0, 1);
+      h.root.rotation.z = v.fallDir * 0.95 * k * k;
+      h.body.position.y = lerp(h.body.position.y, 0.12, Math.min(1, dt * 9));
+      h.legL.upper.rotation.x = lerp(h.legL.upper.rotation.x, 0.5 + Math.sin(v.deathT * 18) * 0.3 * (1 - k), Math.min(1, dt * 12));
+      h.legR.upper.rotation.x = lerp(h.legR.upper.rotation.x, -0.2, Math.min(1, dt * 8));
+      h.neck.rotation.x = lerp(h.neck.rotation.x, -0.2, Math.min(1, dt * 6));
+      if (v.deathT > 6) h.root.position.y -= dt * 0.25;
+      return;
     }
     const style = v instanceof ZombieView && !v.fling ? v.deathStyle : 0;
     h.root.rotation.order = 'YXZ';

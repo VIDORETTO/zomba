@@ -26,6 +26,12 @@ export interface GunModel {
   mag: THREE.Object3D | null;
   magRest: THREE.Vector3;
   mag2: THREE.Object3D | null;
+  // pistolas duplas: ferrolho, janela de ejeção, boca do cano e grupo (para o coice) da pistola da mão esquerda
+  // (as de cima são as da direita); `hands` = [direita, esquerda]
+  moving2: THREE.Object3D | null;
+  eject2: THREE.Vector3 | null;
+  muzzle2: THREE.Vector3 | null;
+  hands: THREE.Group[] | null;
   // canos que basculam (escopeta de dois canos, lança-granadas) ou tambor que sai de lado (revólver)
   hinge: THREE.Object3D | null;
   hingeOpen: number;
@@ -66,7 +72,7 @@ type Parts = Pick<GunModel, 'group' | 'muzzle' | 'sightY' | 'hip' | 'adsZ' | 'st
 function finish(p: Parts): GunModel {
   const left = p.left ?? null;
   return {
-    moving: null, moveDist: 0, cycle: false, mag: null, mag2: null, hinge: null, hingeOpen: 0, hingeAxis: 'x',
+    moving: null, moveDist: 0, cycle: false, mag: null, mag2: null, moving2: null, eject2: null, muzzle2: null, hands: null, hinge: null, hingeOpen: 0, hingeAxis: 'x',
     spinner: null, reloadItem: null, breechEject: null, loadFrom: null, loadHold: null, sightX: 0,
     charge: null, port: null, eject: null, rail: null, stock: [],
     ...p,
@@ -321,24 +327,31 @@ function sniper(m: GunMats): GunModel {
 
 function dualpistol(m: GunMats): GunModel {
   const g = new THREE.Group();
-  const slides = new THREE.Group();
-  g.add(slides);
   const mags: THREE.Object3D[] = [];
+  const slides: THREE.Group[] = [];
+  const hands: THREE.Group[] = [];
+  // cada pistola é um grupo próprio (direita primeiro): tem ferrolho, pente e coice independentes
   for (const side of [1, -1]) {
-    const x = side * 0.13;
-    box(slides, 0.032, 0.032, 0.2, x, 0, 0, m.steel);
-    box(g, 0.029, 0.02, 0.17, x, -0.025, -0.012, m.dark);
-    box(g, 0.031, 0.112, 0.048, x, -0.08, 0.06, m.wood, -0.22);
-    mags.push(box(g, 0.022, 0.1, 0.034, x, -0.088, 0.062, m.black, -0.22));
+    const h = new THREE.Group();
+    h.position.x = side * 0.13;
+    g.add(h);
+    hands.push(h);
+    const slide = new THREE.Group();
+    h.add(slide);
+    slides.push(slide);
+    box(slide, 0.032, 0.032, 0.2, 0, 0, 0, m.steel);
+    box(h, 0.029, 0.02, 0.17, 0, -0.025, -0.012, m.dark);
+    box(h, 0.031, 0.112, 0.048, 0, -0.08, 0.06, m.wood, -0.22);
+    mags.push(box(h, 0.022, 0.1, 0.034, 0, -0.088, 0.062, m.black, -0.22));
     if (withArms) {
-      box(g, 0.05, 0.075, 0.075, x, -0.085, 0.07, m.glove);
-      limb(g, V(x, -0.12, 0.1), V(x + side * 0.08, -0.26, 0.42), 0.07, m.sleeve);
+      box(h, 0.05, 0.075, 0.075, 0, -0.085, 0.07, m.glove);
+      limb(h, V(0, -0.12, 0.1), V(side * 0.08, -0.26, 0.42), 0.07, m.sleeve);
     }
   }
   return finish({
-    group: g, moving: slides, moveDist: 0.035, mag: mags[0], mag2: mags[1], style: 'dual',
-    eject: V(0.15, 0.02, 0),
-    muzzle: V(0.13, 0.002, -0.17), sightY: 0.04,
+    group: g, moving: slides[0], moving2: slides[1], moveDist: 0.035, mag: mags[0], mag2: mags[1], style: 'dual', hands,
+    eject: V(0.15, 0.02, 0), eject2: V(-0.15, 0.02, 0),
+    muzzle: V(0.13, 0.002, -0.17), muzzle2: V(-0.13, 0.002, -0.17), sightY: 0.04,
     hip: V(0, -0.12, -0.42), adsZ: -0.38,
   });
 }

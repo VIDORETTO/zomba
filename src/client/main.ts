@@ -233,6 +233,7 @@ const TIPS: { text: string; map?: string }[] = [
   { text: 'No solo, o Segundo Fôlego custa só 500 pontos e deixa você levantar sozinho.' },
   { text: 'A Forja deixa qualquer arma mais forte por 5.000 pontos.' },
   { text: 'Com a Mula você carrega uma terceira arma.' },
+  { text: 'Pistolas duplas não miram: o clique esquerdo atira com a pistola da esquerda e o direito com a da direita, cada uma com seu pente.' },
   { text: 'Os itens que caem dos zumbis piscam antes de sumir. Pegue logo.' },
   { text: 'Na Liquidação, a Caixa custa só 10 pontos por 30 segundos.' },
   { text: 'Você ganha 2 granadas (G) a cada rodada, até o máximo de 4.' },

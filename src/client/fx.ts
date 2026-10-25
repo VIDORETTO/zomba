@@ -559,6 +559,36 @@ export class FX {
     }
   }
 
+  // Pistolas duplas: rastro de cada tiro, da boca do cano até onde acertou. A da direita é quente (dourada) e a da
+  // esquerda é fria (azul-clara), para os dois tiros se distinguirem na hora; faíscas da mesma cor onde pega.
+  dualTracer(a: THREE.Vector3, b: THREE.Vector3, hit: boolean, hand: number) {
+    const [r, g, bl] = hand === 1 ? [0.7, 2.2, 4] : [4, 2.6, 0.7];
+    const len = a.distanceTo(b);
+    const n = Math.min(40, Math.ceil(len / 0.5));
+    for (let i = 0; i < n; i++) {
+      const u = (i + Math.random() * 0.5) / n;
+      this.add.spawn({
+        x: a.x + (b.x - a.x) * u, y: a.y + (b.y - a.y) * u, z: a.z + (b.z - a.z) * u,
+        vx: 0, vy: 0, vz: 0, life: R(0.06, 0.12), size: 0.06, size1: 0.015, r, g, b: bl, alpha: 0.9, alpha1: 0,
+      });
+    }
+    // fagulhas saindo do cano
+    for (let i = 0; i < 4; i++) {
+      this.add.spawn({
+        x: a.x, y: a.y, z: a.z, vx: R(-0.8, 0.8) + (hand === 1 ? -0.6 : 0.6), vy: R(0, 1.2), vz: R(-0.8, 0.2),
+        life: R(0.08, 0.2), size: R(0.04, 0.08), size1: 0.01, r, g, b: bl, alpha: 1, alpha1: 0, drag: 3,
+      });
+    }
+    if (hit) {
+      for (let i = 0; i < 6; i++) {
+        this.add.spawn({
+          x: b.x, y: b.y, z: b.z, vx: R(-1.5, 1.5), vy: R(0, 2), vz: R(-1.5, 1.5),
+          life: R(0.12, 0.28), size: R(0.08, 0.18), size1: 0.02, r, g, b: bl, alpha: 1, alpha1: 0, drag: 3,
+        });
+      }
+    }
+  }
+
   rayTrail(a: THREE.Vector3, b: THREE.Vector3) {
     const n = Math.max(1, Math.ceil(a.distanceTo(b) / 0.3));
     for (let i = 0; i < n; i++) {

@@ -117,6 +117,38 @@ export class World {
     return hit;
   }
 
+  // O passo (a -> b) de um corpo de raio r atravessa um bloco que o barra? Serve para um empurrão de multidão
+  // não jogar o zumbi para o outro lado de uma parede fina.
+  segmentBlocked(ax: number, az: number, bx: number, bz: number, feetY: number, r: number, h: number, step = PLAYER.stepHeight): boolean {
+    const m = r * 0.45;
+    const dx = bx - ax;
+    const dz = bz - az;
+    for (const b of this.query(Math.min(ax, bx) - r, Math.min(az, bz) - r, Math.max(ax, bx) + r, Math.max(az, bz) + r)) {
+      if (b.max[1] <= feetY + step || b.min[1] >= feetY + h) continue;
+      let t0 = 0;
+      let t1 = 1;
+      let ok = true;
+      for (let axis = 0; axis < 2 && ok; axis++) {
+        const o = axis === 0 ? ax : az;
+        const d = axis === 0 ? dx : dz;
+        const lo = (axis === 0 ? b.min[0] : b.min[2]) - m;
+        const hi = (axis === 0 ? b.max[0] : b.max[2]) + m;
+        if (Math.abs(d) < 1e-9) {
+          if (o < lo || o > hi) ok = false;
+        } else {
+          let ta = (lo - o) / d;
+          let tb = (hi - o) / d;
+          if (ta > tb) [ta, tb] = [tb, ta];
+          t0 = Math.max(t0, ta);
+          t1 = Math.min(t1, tb);
+          if (t0 > t1) ok = false;
+        }
+      }
+      if (ok) return true;
+    }
+    return false;
+  }
+
   // Bloqueia a cabeça ao pular contra um teto.
   ceiling(x: number, z: number, r: number, feetY: number, h: number): number {
     let c = Infinity;

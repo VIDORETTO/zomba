@@ -2,37 +2,37 @@ import * as THREE from 'three';
 import { POWERUP, POWERUPS, type PowerupKind } from '../shared/powerups';
 import type { Snapshot } from '../shared/protocol';
 
+// Emblema do item: disco escuro com aro e símbolo na cor própria do item (cada um tem a sua cor, para se distinguirem de longe).
 function iconTexture(kind: PowerupKind): THREE.Texture {
   const d = POWERUPS[kind];
   const c = document.createElement('canvas');
   c.width = c.height = 128;
   const ctx = c.getContext('2d')!;
+  ctx.fillStyle = 'rgba(8,8,12,0.92)';
+  ctx.beginPath();
+  ctx.arc(64, 64, 58, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.strokeStyle = d.color;
+  ctx.lineWidth = 9;
+  ctx.beginPath();
+  ctx.arc(64, 64, 54, 0, Math.PI * 2);
+  ctx.stroke();
   ctx.fillStyle = d.color;
-  ctx.strokeStyle = 'rgba(0,0,0,0.6)';
-  ctx.lineWidth = 6;
   if (kind === 'sangue') {
     // gota de sangue
     ctx.beginPath();
-    ctx.moveTo(64, 14);
-    ctx.bezierCurveTo(98, 56, 108, 74, 100, 92);
-    ctx.bezierCurveTo(92, 114, 36, 114, 28, 92);
-    ctx.bezierCurveTo(20, 74, 30, 56, 64, 14);
+    ctx.moveTo(64, 26);
+    ctx.bezierCurveTo(90, 58, 96, 70, 90, 84);
+    ctx.bezierCurveTo(84, 100, 44, 100, 38, 84);
+    ctx.bezierCurveTo(32, 70, 38, 58, 64, 26);
     ctx.closePath();
-    ctx.stroke();
     ctx.fill();
-    ctx.fillStyle = 'rgba(255,255,255,0.35)';
-    ctx.beginPath();
-    ctx.ellipse(48, 82, 7, 14, 0.4, 0, Math.PI * 2);
-    ctx.fill();
-    const t = new THREE.CanvasTexture(c);
-    t.colorSpace = THREE.SRGBColorSpace;
-    return t;
+  } else {
+    ctx.font = "900 58px 'Segoe UI Symbol', 'Segoe UI', Georgia, sans-serif";
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(d.glyph, 64, 68);
   }
-  ctx.font = "900 72px 'Segoe UI Symbol', 'Segoe UI', Georgia, sans-serif";
-  ctx.textAlign = 'center';
-  ctx.textBaseline = 'middle';
-  ctx.strokeText(d.glyph, 64, 68);
-  ctx.fillText(d.glyph, 64, 68);
   const t = new THREE.CanvasTexture(c);
   t.colorSpace = THREE.SRGBColorSpace;
   return t;
@@ -94,39 +94,40 @@ export class PowerupView {
   private readonly group = new THREE.Group();
   readonly items = new Map<number, Item>();
   private readonly mats = new Map<PowerupKind, THREE.MeshBasicMaterial>();
-  private readonly glowMat: THREE.SpriteMaterial;
-  private readonly beamMat: THREE.MeshBasicMaterial;
-  private readonly ringMat: THREE.MeshBasicMaterial;
-  // Sangue Morto brilha em vermelho
-  private readonly red: { glow: THREE.SpriteMaterial; beam: THREE.MeshBasicMaterial; ring: THREE.MeshBasicMaterial };
+  // brilho, coluna de luz e anel de cada item na cor dele
+  private readonly tints = new Map<PowerupKind, { glow: THREE.SpriteMaterial; beam: THREE.MeshBasicMaterial; ring: THREE.MeshBasicMaterial }>();
+  private readonly glowTex = glowTexture();
+  private readonly beamTex = beamTexture();
+  private readonly ringTex = ringTexture();
   private readonly geo = new THREE.PlaneGeometry(1.05, 1.05);
-  private readonly beamGeo = new THREE.CylinderGeometry(0.32, 0.32, 16, 12, 1, true).translate(0, 8, 0);
+  private readonly beamGeo = new THREE.CylinderGeometry(0.2, 0.2, 16, 12, 1, true).translate(0, 8, 0);
   private readonly ringGeo = new THREE.PlaneGeometry(2.6, 2.6).rotateX(-Math.PI / 2);
   // item novo no chão (a Game toca um som)
   onSpawn: ((kind: PowerupKind, pos: THREE.Vector3) => void) | null = null;
   private first = true;
 
   constructor(scene: THREE.Scene) {
-    const green = new THREE.Color(0.35, 1.4, 0.45);
-    this.glowMat = new THREE.SpriteMaterial({ map: glowTexture(), color: green, blending: THREE.AdditiveBlending, depthWrite: false, transparent: true });
-    this.beamMat = new THREE.MeshBasicMaterial({ map: beamTexture(), color: green, blending: THREE.AdditiveBlending, transparent: true, depthWrite: false, side: THREE.DoubleSide, fog: false, opacity: 0.55 });
-    this.ringMat = new THREE.MeshBasicMaterial({ map: ringTexture(), color: green, blending: THREE.AdditiveBlending, transparent: true, depthWrite: false, opacity: 0.8 });
-    const redC = new THREE.Color(1.6, 0.12, 0.1);
-    this.red = {
-      glow: this.glowMat.clone(),
-      beam: this.beamMat.clone(),
-      ring: this.ringMat.clone(),
-    };
-    this.red.glow.color.copy(redC);
-    this.red.beam.color.copy(redC);
-    this.red.ring.color.copy(redC);
     scene.add(this.group);
+  }
+
+  private tint(kind: PowerupKind) {
+    let t = this.tints.get(kind);
+    if (!t) {
+      const col = new THREE.Color(POWERUPS[kind].color).multiplyScalar(1.15);
+      t = {
+        glow: new THREE.SpriteMaterial({ map: this.glowTex, color: col, blending: THREE.AdditiveBlending, depthWrite: false, transparent: true }),
+        beam: new THREE.MeshBasicMaterial({ map: this.beamTex, color: col, blending: THREE.AdditiveBlending, transparent: true, depthWrite: false, side: THREE.DoubleSide, fog: false, opacity: 0.3 }),
+        ring: new THREE.MeshBasicMaterial({ map: this.ringTex, color: col, blending: THREE.AdditiveBlending, transparent: true, depthWrite: false, opacity: 0.8 }),
+      };
+      this.tints.set(kind, t);
+    }
+    return t;
   }
 
   private mat(kind: PowerupKind) {
     let m = this.mats.get(kind);
     if (!m) {
-      m = new THREE.MeshBasicMaterial({ map: iconTexture(kind), color: new THREE.Color(1.8, 1.8, 1.8), transparent: true, side: THREE.DoubleSide, depthWrite: false });
+      m = new THREE.MeshBasicMaterial({ map: iconTexture(kind), transparent: true, side: THREE.DoubleSide, depthWrite: false });
       this.mats.set(kind, m);
     }
     return m;
@@ -141,10 +142,10 @@ export class PowerupView {
       if (!it) {
         const g = new THREE.Group();
         const icon = new THREE.Mesh(this.geo, this.mat(p.kind));
-        const tint = p.kind === 'sangue' ? this.red : null;
-        const glow = new THREE.Sprite(tint ? tint.glow : this.glowMat);
-        const beam = new THREE.Mesh(this.beamGeo, tint ? tint.beam : this.beamMat);
-        const ring = new THREE.Mesh(this.ringGeo, tint ? tint.ring : this.ringMat);
+        const tint = this.tint(p.kind);
+        const glow = new THREE.Sprite(tint.glow);
+        const beam = new THREE.Mesh(this.beamGeo, tint.beam);
+        const ring = new THREE.Mesh(this.ringGeo, tint.ring);
         ring.position.y = 0.04;
         beam.renderOrder = 2;
         g.add(beam, ring, icon, glow);
@@ -158,7 +159,7 @@ export class PowerupView {
       it.icon.position.y = 1.1 + Math.sin(t * 2.5 + p.id) * 0.14;
       it.icon.rotation.y = t * 2;
       it.glow.position.y = it.icon.position.y;
-      it.glow.scale.setScalar(1.9 + pulse * 0.7);
+      it.glow.scale.setScalar(1.3 + pulse * 0.45);
       it.ring.scale.setScalar(0.85 + pulse * 0.3);
       it.ring.rotation.y = t * 0.8;
       it.beam.scale.set(1, 0.92 + pulse * 0.08, 1);
@@ -176,10 +177,18 @@ export class PowerupView {
 
   dispose() {
     this.group.removeFromParent();
-    for (const m of [...this.mats.values(), this.glowMat, this.beamMat, this.ringMat, this.red.glow, this.red.beam, this.red.ring]) {
+    for (const m of this.mats.values()) {
       m.map?.dispose();
       m.dispose();
     }
+    for (const t of this.tints.values()) {
+      t.glow.dispose();
+      t.beam.dispose();
+      t.ring.dispose();
+    }
+    this.glowTex.dispose();
+    this.beamTex.dispose();
+    this.ringTex.dispose();
     this.geo.dispose();
     this.beamGeo.dispose();
     this.ringGeo.dispose();

@@ -8,10 +8,10 @@ const GRADE_SHADER = {
   uniforms: {
     tDiffuse: { value: null as THREE.Texture | null },
     time: { value: 0 },
-    sat: { value: 0.92 },
-    contrast: { value: 1.1 },
+    sat: { value: 0.78 },
+    contrast: { value: 1.2 },
     shadowTint: { value: new THREE.Vector3(1.02, 1, 0.96) },
-    vignette: { value: 0.38 },
+    vignette: { value: 0.5 },
     grain: { value: 0.035 },
     fade: { value: 1 },
   },
@@ -41,8 +41,8 @@ const GRADE_SHADER = {
 export function gradePass(map: MapDef): ShaderPass {
   const pass = new ShaderPass(GRADE_SHADER);
   const rota = !!map.fogRoadColor;
-  pass.uniforms.sat.value = rota ? 0.86 : 0.92;
-  pass.uniforms.contrast.value = rota ? 1.06 : 1.1;
-  pass.uniforms.shadowTint.value.set(rota ? 0.97 : 1.02, 1.0, rota ? 1.04 : 0.96);
+  pass.uniforms.sat.value = rota ? 0.7 : 0.78;
+  pass.uniforms.contrast.value = rota ? 1.14 : 1.2;
+  pass.uniforms.shadowTint.value.set(rota ? 0.94 : 0.96, 0.98, 1.06);
   return pass;
 }

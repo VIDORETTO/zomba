@@ -308,24 +308,43 @@ export function createBuilder(seed: number) {
     const hz = nx !== 0 ? width / 2 : depth / 2;
     return { x0: x - hx, x1: x + hx, z0: z - hz, z1: z + hz, fx: x + nx * (depth / 2), fz: z + nz * (depth / 2) };
   }
+  // Máquina de bebida: corpo escuro (a cor só aparece no brilho, para não estourar), faixas verticais e vitrine acesas na
+  // cor da bebida, e uma coroa no alto com a letra da bebida bem grande, que se lê de longe no escuro.
   function machine(perk: PerkId, x: number, z: number, nx: number, nz: number) {
     const def = PERKS[perk];
     const color = parseInt(def.color.slice(1), 16);
+    const shade = (k: number) => (((((color >> 16) & 255) * k) << 16) | ((((color >> 8) & 255) * k) << 8) | ((color & 255) * k)) >>> 0;
+    const dark = shade(0.32);
     const f = facing(x, z, nx, nz, 1.2, 0.8);
-    box(f.x0, 0, f.z0, f.x1, 2.2, f.z1, 'carPaint', true, { tint: color });
-    box(f.x0 - 0.05, 0, f.z0 - 0.05, f.x1 + 0.05, 0.14, f.z1 + 0.05, 'metal', false, { tint: 0x2a2a2a });
-    box(f.x0 - 0.04, 2.2, f.z0 - 0.04, f.x1 + 0.04, 2.36, f.z1 + 0.04, 'trim', false, { tint: color });
-    // vitrine com garrafas iluminadas e a faixa de luz no alto
+    box(f.x0, 0, f.z0, f.x1, 2.2, f.z1, 'carPaint', true, { tint: dark });
+    box(f.x0 - 0.05, 0, f.z0 - 0.05, f.x1 + 0.05, 0.14, f.z1 + 0.05, 'metal', false, { tint: 0x1c1c1c });
+    box(f.x0 - 0.04, 2.2, f.z0 - 0.04, f.x1 + 0.04, 2.3, f.z1 + 0.04, 'metal', false, { tint: 0x1c1c1c });
+    // cabeça mais alta com a coroa
+    box(f.x0 - 0.02, 2.3, f.z0 - 0.02, f.x1 + 0.02, 3.0, f.z1 + 0.02, 'carPaint', false, { tint: dark });
+    box(f.x0 - 0.05, 3.0, f.z0 - 0.05, f.x1 + 0.05, 3.1, f.z1 + 0.05, 'trim', false, { tint: color });
+    // vitrine acesa e as duas faixas de luz nas laterais da frente
     const g = facing(f.fx, f.fz, nx, nz, 0.84, 0.04);
-    box(g.x0, 0.55, g.z0, g.x1, 1.2, g.z1, 'glassLit', false);
+    box(g.x0, 0.55, g.z0, g.x1, 1.2, g.z1, 'neon', false, { tint: shade(0.8) });
+    const ax = Math.abs(nz);
+    const az = Math.abs(nx);
+    for (const side of [-1, 1]) {
+      const st = facing(f.fx + side * 0.54 * ax, f.fz + side * 0.54 * az, nx, nz, 0.07, 0.05);
+      box(st.x0, 0.2, st.z0, st.x1, 2.2, st.z1, 'neon', false, { tint: color });
+    }
     const l = facing(f.fx, f.fz, nx, nz, 1.0, 0.06);
     box(l.x0, 2.02, l.z0, l.x1, 2.1, l.z1, 'neon', false, { tint: color });
+    // nome da bebida (placa escura com letras na cor dela) e a letra grande na coroa
     signs.push({
       pos: [f.fx + nx * 0.035, 1.58, f.fz + nz * 0.035],
-      w: 1.04, h: 0.42, normal: [nx, nz], text: def.name.toUpperCase(),
-      fg: '#ffffff', bg: def.color, glow: true,
+      w: 1.04, h: 0.36, normal: [nx, nz], text: def.name.toUpperCase(),
+      fg: def.color, bg: '#0b0b0e', glow: true,
     });
-    lights.push({ pos: [f.fx + nx * 0.7, 1.9, f.fz + nz * 0.7], color, intensity: 5, distance: 5, kind: 'machine', perk: true });
+    signs.push({
+      pos: [f.fx + nx * 0.04, 2.65, f.fz + nz * 0.04],
+      w: 1.04, h: 0.66, normal: [nx, nz], text: def.icon,
+      fg: def.color, bg: '#0b0b0e', glow: true,
+    });
+    lights.push({ pos: [f.fx + nx * 0.7, 1.9, f.fz + nz * 0.7], color, intensity: 14, distance: 8, kind: 'machine', perk: true });
     interactables.push({ id: `perk-${perk}`, kind: 'perk', perk, use: [f.fx + nx * 0.9, f.fz + nz * 0.9], y: 0 });
   }
   function ammoCrate(x: number, z: number, nx: number, nz: number) {

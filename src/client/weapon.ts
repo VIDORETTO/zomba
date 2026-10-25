@@ -25,7 +25,8 @@ export type WeaponSound = 'dry' | 'magOut' | 'magIn' | 'slide' | 'knifeSwing' | 
 
 export interface WeaponCallbacks {
   // charged = ataque carregado do cajado desperto (segurou o gatilho até a carga encher); false/ausente nos demais disparos
-  fire(spread: number, charged?: boolean): void;
+  // hand: nas pistolas duplas, 0 = pistola da direita (clique direito), 1 = da esquerda (clique esquerdo)
+  fire(spread: number, charged?: boolean, hand?: number): void;
   knife(): void;
   throwGrenade(): void;
   // Granada de Artilharia (chamado no instante do arremesso; opcional: sem ele nada é lançado)
@@ -71,6 +72,8 @@ interface Optic {
 interface Slot {
   def: WeaponDef;
   ammo: number;
+  // pistolas duplas: pente da pistola da esquerda (o `ammo` é o da direita); a reserva é uma só
+  ammo2: number;
   reserve: number;
   model: GunModel;
   optic: Optic | null;
@@ -147,6 +150,14 @@ export class WeaponView {
   private fireCD = 0;
   private shotBuffer = 0;
   private kick = 0;
+  // pistolas duplas: a pistola da esquerda tem tempo de recarga do tiro, fila, coice, clarão e ferrolho próprios
+  private fireCD2 = 0;
+  private shotBuffer2 = 0;
+  private readonly handKick = [0, 0];
+  private flashT2 = 0;
+  private slideBack2 = 0;
+  private slideLocked2 = false;
+  private readonly flash2: THREE.Mesh;
   private swayX = 0;
   private swayY = 0;
   private flashT = 0;
@@ -246,6 +257,8 @@ export class WeaponView {
       );
       this.flash.add(side);
     }
+    this.flash2 = this.flash.clone();
+    this.flash2.visible = false;
     for (let i = 0; i < 12; i++) {
       const s = new THREE.Sprite(new THREE.SpriteMaterial({ map: this.smokeTex, color: 0xb8b0a6, transparent: true, depthWrite: false, opacity: 0 }));
       s.visible = false;
@@ -408,6 +421,13 @@ export class WeaponView {
   get reserve() {
     return this.slot.reserve;
   }
+  // pente da pistola da esquerda (só as pistolas duplas)
+  get ammo2() {
+    return this.slot.ammo2;
+  }
+  get dual() {
+    return !!this.def.dual;
+  }
   get weaponIds(): string[] {
     return this.slots.map((s) => s.def.id);
   }
@@ -426,7 +446,7 @@ export class WeaponView {
         const model = buildGun(def.id, def.upgraded ? this.camoMats : this.mats);
         model.group.visible = false;
         this.root.add(model.group);
-        s = { def, ammo: def.mag, reserve: def.reserve, model, optic: null };
+        s = { def, ammo: def.mag, ammo2: def.mag, reserve: def.reserve, model, optic: null };
       }
       keep.delete(id);
       this.slots.push(s);
@@ -451,7 +471,14 @@ export class WeaponView {
     const mdl = this.slot.model;
     mdl.group.add(this.flash);
     this.flash.position.copy(mdl.muzzle);
-    this.slideLocked = false;
+    // pistolas duplas: cada cano tem o seu clarão
+    this.flash2.removeFromParent();
+    if (mdl.muzzle2) {
+      mdl.group.add(this.flash2);
+      this.flash2.position.copy(mdl.muzzle2);
+    }
+    this.slideLocked = this.slideLocked2 = false;
+    this.shotBuffer2 = 0;
   }
 
   // mira montada na arma da mão (ponto vermelho ou luneta 2×)
@@ -548,7 +575,7 @@ export class WeaponView {
   // Volta ao começo (renascer): só a pistola, cheia.
   reset() {
     this.setInventory([this.startId]);
-    this.slot.ammo = this.def.mag;
+    this.slot.ammo = this.slot.ammo2 = this.def.mag;
     this.slot.reserve = this.def.reserve;
     this.setState('raise');
   }
@@ -566,12 +593,12 @@ export class WeaponView {
   }
 
   get full() {
-    return this.ammo === this.def.mag && this.reserve === this.def.reserve;
+    return this.ammo === this.def.mag && (!this.def.dual || this.ammo2 === this.def.mag) && this.reserve === this.def.reserve;
   }
 
   isFull(id: string) {
     const s = this.slots.find((x) => x.def.id === id);
-    return !!s && s.ammo === s.def.mag && s.reserve === s.def.reserve;
+    return !!s && s.ammo === s.def.mag && (!s.def.dual || s.ammo2 === s.def.mag) && s.reserve === s.def.reserve;
   }
 
   // Ação que ocupa as mãos (caixote, bebida, granada): abaixa a arma e chama done() ao terminar.
@@ -587,45 +614,59 @@ export class WeaponView {
   // Munição Cheia: enche todas as armas
   refillAll() {
     for (const s of this.slots) {
-      s.ammo = s.def.mag;
+      s.ammo = s.ammo2 = s.def.mag;
       s.reserve = s.def.reserve;
     }
-    this.slideLocked = false;
+    this.slideLocked = this.slideLocked2 = false;
   }
 
   refill(id?: string) {
     const s = id ? this.slots.find((x) => x.def.id === id) : this.slot;
     if (!s) return;
-    s.ammo = s.def.mag;
+    s.ammo = s.ammo2 = s.def.mag;
     s.reserve = s.def.reserve;
-    if (s === this.slot) this.slideLocked = false;
+    if (s === this.slot) this.slideLocked = this.slideLocked2 = false;
   }
 
-  // Um tiro: gasta a bala, coice, clarão, cápsula e avisa a Game.
-  private shootOnce(charged = false) {
+  // Um tiro: gasta a bala, coice, clarão, cápsula e avisa a Game. hand: 0 = direita, 1 = esquerda (pistolas duplas).
+  private shootOnce(charged = false, hand = 0) {
     const def = this.def;
     const mdl = this.slot.model;
-    this.slot.ammo--;
-    this.fireCD = def.fireDelay * this.mods.fire;
-    this.kick = Math.min(1.6, this.kick + Math.min(1.2, 0.35 + def.recoil * 0.45));
-    this.flashT = 0.045;
-    this.flash.rotation.z = Math.random() * Math.PI;
-    this.flash.scale.setScalar((0.8 + Math.random() * 0.5) * (def.cls === 'shotgun' ? 1.6 : def.cls === 'rifle' ? 1.25 : 1));
-    this.puffSmoke(def.cls === 'shotgun' ? 1.6 : 1);
-    this.slideBack = 1;
+    const left = hand === 1;
+    if (left) this.slot.ammo2--;
+    else this.slot.ammo--;
+    const cd = def.fireDelay * this.mods.fire;
+    if (left) this.fireCD2 = cd;
+    else this.fireCD = cd;
+    const k = Math.min(1.2, 0.35 + def.recoil * 0.45);
+    // cada pistola da dupla dá o próprio coice; as outras armas, o coice da arma toda
+    if (def.dual) this.handKick[hand] = Math.min(1.6, this.handKick[hand] + k);
+    else this.kick = Math.min(1.6, this.kick + k);
+    const fl = left ? this.flash2 : this.flash;
+    if (left) this.flashT2 = 0.045;
+    else this.flashT = 0.045;
+    fl.rotation.z = Math.random() * Math.PI;
+    fl.scale.setScalar((0.8 + Math.random() * 0.5) * (def.cls === 'shotgun' ? 1.6 : def.cls === 'rifle' ? 1.25 : 1));
+    this.puffSmoke(def.cls === 'shotgun' ? 1.6 : 1, fl);
+    if (left) this.slideBack2 = 1;
+    else this.slideBack = 1;
     if (mdl.cycle) this.cycleT = 0;
-    else if (!mdl.spinner) this.ejectCasing(def.cls === 'shotgun');
+    else if (!mdl.spinner) this.ejectCasing(def.cls === 'shotgun', hand);
     if (mdl.spinner) this.spinTo += Math.PI / 3;
-    if (this.ammo === 0 && def.cls === 'pistol') this.slideLocked = true;
-    this.cb.fire(this.spread, charged);
+    if (def.cls === 'pistol') {
+      if (left) {
+        if (this.slot.ammo2 === 0) this.slideLocked2 = true;
+      } else if (this.slot.ammo === 0) this.slideLocked = true;
+    }
+    this.cb.fire(this.spread, charged, hand);
   }
 
   // fiapo de fumaça na boca do cano: sobe devagar e some
-  private puffSmoke(k: number) {
+  private puffSmoke(k: number, from: THREE.Object3D = this.flash) {
     const it = this.smoke[this.smokeNext];
     this.smokeNext = (this.smokeNext + 1) % this.smoke.length;
-    this.flash.updateWorldMatrix(true, false);
-    this.flash.getWorldPosition(it.s.position);
+    from.updateWorldMatrix(true, false);
+    from.getWorldPosition(it.s.position);
     it.t = 0;
     it.life = 0.7 + Math.random() * 0.5;
     it.v.set((Math.random() - 0.5) * 0.04, 0.06 + Math.random() * 0.05, -0.18 - Math.random() * 0.1);
@@ -641,8 +682,9 @@ export class WeaponView {
   }
 
   private startReload() {
-    if (this.reserve <= 0 || this.ammo >= this.def.mag) return;
-    this.reloadEmpty = this.ammo === 0;
+    const dual = !!this.def.dual;
+    if (this.reserve <= 0 || (this.ammo >= this.def.mag && (!dual || this.slot.ammo2 >= this.def.mag))) return;
+    this.reloadEmpty = this.ammo === 0 || (dual && this.slot.ammo2 === 0);
     if (this.slot.model.style === 'pump') {
       // um cartucho por vez: quanto mais faltar, mais demora
       this.reloadShells = Math.min(this.def.mag - this.ammo, this.reserve);
@@ -653,7 +695,7 @@ export class WeaponView {
     this.reloadScale = this.mods.reload;
     this.reloadLen *= this.reloadScale;
     this.setState('reload');
-    this.cb.reload?.(this.ammo);
+    this.cb.reload?.(this.ammo + (this.def.dual ? this.slot.ammo2 : 0));
   }
 
   // sai da recarga no meio (tiro na escopeta de repetição): a mão volta suave
@@ -841,15 +883,17 @@ export class WeaponView {
   }
 
   // cápsula voando para a direita (ou o cartucho vermelho da escopeta)
-  private ejectCasing(shotgun: boolean) {
+  private ejectCasing(shotgun: boolean, hand = 0) {
     const mdl = this.slot.model;
-    if (!mdl.eject || this.debris.length > 40) return;
+    const eject = hand === 1 ? mdl.eject2 : mdl.eject;
+    if (!eject || this.debris.length > 40) return;
     const pool = shotgun ? this.shellPool : this.brassPool;
     const obj = pool.pop() ?? new THREE.Mesh(shotgun ? this.shellGeo : this.brassGeo, shotgun ? this.shellMat : this.brassMat);
-    this.toView(mdl.eject, obj.position);
+    this.toView(eject, obj.position);
     obj.rotation.set(0, Math.random() * 3, 0);
     const r = Math.random();
-    this.addDebris(obj, new THREE.Vector3(0.55 + r * 0.3, 0.5 + r * 0.3, 0.12), new THREE.Vector3(14, 6, 9), 0.55, pool);
+    // a pistola da esquerda joga a cápsula para o lado dela
+    this.addDebris(obj, new THREE.Vector3((hand === 1 ? -1 : 1) * (0.55 + r * 0.3), 0.5 + r * 0.3, 0.12), new THREE.Vector3(14, 6, 9), 0.55, pool);
   }
 
   // brasas saltando do corpo da arma (arma recém-forjada)
@@ -1017,21 +1061,27 @@ export class WeaponView {
     }
     this.stateT += dt;
     this.fireCD -= dt;
+    this.fireCD2 -= dt;
     this.shotBuffer -= dt;
+    this.shotBuffer2 -= dt;
     this.cycleT += dt;
     this.updateDebris(dt);
     const def = this.def;
 
     if (active) {
       if (def.charge) this.updateCharge(dt, input);
-      else if (input.hit('fire') || (def.auto && input.held('fire'))) this.shotBuffer = def.auto ? 0.05 : 0.2;
+      else if (def.dual) {
+        // pistolas duplas (sem mira): clique esquerdo atira com a pistola da esquerda, clique direito com a da direita
+        if (input.hit('fire') || (def.auto && input.held('fire'))) this.shotBuffer2 = def.auto ? 0.05 : 0.2;
+        if (input.hit('aim') || (def.auto && input.held('aim'))) this.shotBuffer = def.auto ? 0.05 : 0.2;
+      } else if (input.hit('fire') || (def.auto && input.held('fire'))) this.shotBuffer = def.auto ? 0.05 : 0.2;
       for (let k = 0; k < this.slots.length; k++) {
         if (input.hit(WEAPON_KEYS[k]) && this.state !== 'action') this.switchTo(this.slots[k].def.id);
       }
       if ((input.hit('nextWeapon') || input.hit('prevWeapon')) && this.state !== 'action') this.cycle(input.hit('nextWeapon') ? 1 : -1);
     }
     if (!active || !def.charge) this.charging = false;
-    const wantAds = active && input.held('aim') && !this.busy && !pc.sprinting;
+    const wantAds = active && !def.dual && input.held('aim') && !this.busy && !pc.sprinting;
     this.ads = clamp(this.ads + (wantAds ? 1 : -1) * (dt / def.adsTime), 0, 1);
     this.sprintT = lerp(this.sprintT, pc.sprinting ? 1 : 0, 1 - Math.exp(-dt * 12));
 
@@ -1066,7 +1116,17 @@ export class WeaponView {
       } else {
         this.cb.sound('dry');
         this.fireCD = 0.25;
-        this.startReload();
+        // na dupla, o pente vazio de uma mão só recarrega sozinho quando a outra também esvaziou
+        if (!def.dual || this.slot.ammo2 <= 0) this.startReload();
+      }
+    }
+    if (def.dual && this.shotBuffer2 > 0 && canShoot && this.fireCD2 <= 0) {
+      this.shotBuffer2 = 0;
+      if (this.slot.ammo2 > 0) this.shootOnce(false, 1);
+      else {
+        this.cb.sound('dry');
+        this.fireCD2 = 0.25;
+        if (this.ammo <= 0) this.startReload();
       }
     }
 
@@ -1115,11 +1175,21 @@ export class WeaponView {
       const mdl = this.slot.model;
       const E = this.reloadEmpty;
       const fill = () => {
+        if (def.dual) {
+          // reserva única dividida entre os dois pentes: enche primeiro o mais vazio
+          while (this.slot.reserve > 0 && (this.slot.ammo < def.mag || this.slot.ammo2 < def.mag)) {
+            if (this.slot.ammo <= this.slot.ammo2 && this.slot.ammo < def.mag) this.slot.ammo++;
+            else if (this.slot.ammo2 < def.mag) this.slot.ammo2++;
+            else this.slot.ammo++;
+            this.slot.reserve--;
+          }
+          return;
+        }
         const take = Math.min(def.mag - this.ammo, this.reserve);
         this.slot.ammo += take;
         this.slot.reserve -= take;
       };
-      const release = () => (this.slideLocked = false);
+      const release = () => (this.slideLocked = this.slideLocked2 = false);
       switch (mdl.style) {
         case 'mag':
           if (E) {
@@ -1244,11 +1314,14 @@ export class WeaponView {
     pos.x -= pc.crouchT * 0.008 * (1 - adsE);
 
     this.kick *= Math.exp(-dt * 13);
+    this.handKick[0] *= Math.exp(-dt * 13);
+    this.handKick[1] *= Math.exp(-dt * 13);
     pos.z += this.kick * (long ? 0.05 : 0.04);
     pos.y += this.kick * 0.006;
     rot.x += this.kick * (long ? 0.09 : 0.17) * (1 - adsE * 0.5);
 
     if (!this.slideLocked) this.slideBack = Math.max(0, this.slideBack - dt * 16);
+    if (!this.slideLocked2) this.slideBack2 = Math.max(0, this.slideBack2 - dt * 16);
     // escopeta de repetição e fuzil de precisão: a peça vai e volta logo depois do tiro
     let moveZ = mdl.cycle ? bump(this.cycleT, 0.12, 0.25, 0.32, 0.48) * mdl.moveDist : this.slideBack * mdl.moveDist;
     let hingeX = 0;
@@ -1315,6 +1388,14 @@ export class WeaponView {
       }
     }
     if (mdl.moving) mdl.moving.position.z = (mdl.moving.userData.restZ ??= mdl.moving.position.z) + moveZ;
+    if (mdl.moving2) mdl.moving2.position.z = (mdl.moving2.userData.restZ ??= mdl.moving2.position.z) + this.slideBack2 * mdl.moveDist;
+    // pistolas duplas: cada uma sobe e recua com o próprio coice
+    if (mdl.hands) {
+      mdl.hands.forEach((h, i) => {
+        h.position.z = this.handKick[i] * 0.045;
+        h.rotation.x = this.handKick[i] * 0.2;
+      });
+    }
     if (mdl.hinge) mdl.hinge.rotation[mdl.hingeAxis] = hingeX;
     // tambor gira uma câmara por tiro
     if (mdl.spinner) mdl.spinner.rotation.y += (this.spinTo - mdl.spinner.rotation.y) * (1 - Math.exp(-dt * 30));
@@ -1427,7 +1508,9 @@ export class WeaponView {
     this.ember.offset.set(t * 0.03, t * 0.017);
     (this.flash.material as THREE.MeshBasicMaterial).color.setRGB(2.5, this.def.upgraded ? 0.9 : 2.2, this.def.upgraded ? 0.6 : 1.8);
     this.flashT -= dt;
+    this.flashT2 -= dt;
     this.flash.visible = this.flashT > 0;
+    this.flash2.visible = this.flashT2 > 0;
     for (const it of this.smoke) {
       if (!it.s.visible) continue;
       it.t += dt;
@@ -1440,6 +1523,8 @@ export class WeaponView {
       it.s.scale.setScalar((0.02 + u * 0.07) * it.s.userData.k);
       (it.s.material as THREE.SpriteMaterial).opacity = 0.14 * (1 - u) * Math.min(1, it.t * 20);
     }
-    this.flashLight.intensity = this.flashT > 0 ? 2.5 : 0;
+    // a luz do clarão acompanha a pistola que atirou (as duas juntas: no meio)
+    this.flashLight.position.x = this.flashT > 0 && this.flashT2 > 0 ? 0 : this.flashT2 > 0 ? -0.13 : this.slot.model.hands ? 0.13 : 0.1;
+    this.flashLight.intensity = this.flashT > 0 || this.flashT2 > 0 ? (this.flashT > 0 && this.flashT2 > 0 ? 3.4 : 2.5) : 0;
   }
 }

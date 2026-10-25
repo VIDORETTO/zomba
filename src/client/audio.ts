@@ -1,5 +1,7 @@
 import * as THREE from 'three';
-import { TrAudio, type TrSound, type Weather4 } from './trSound';
+import { TrAudio, type AudioKit, type TrSound, type Weather4 } from './trSound';
+import { Soundtrack, makeImpulse, type MusicKey, type MusicMood } from './music';
+import { ZombieAudio } from './zombieSound';
 
 // Sons sintetizados com Web Audio, com gravações CC0 (public/sfx, ver tools/build-sfx.mjs) para tiros,
 // passos, tábuas, impactos e as vozes dos zumbis. Se uma gravação não carregar, o som sintetizado toca no lugar.
@@ -39,15 +41,31 @@ export class AudioEngine {
   private readonly tailT = new Map<string, number>();
 
   private tr!: TrAudio;
+  private zs!: ZombieAudio;
+  private kit!: AudioKit;
+  private score: Soundtrack | null = null;
+  // ruído rosa de 8 s sem emenda, para o vento
+  private readonly loopBuf: AudioBuffer;
+  // eco curto de ambiente aberto (sons posicionais mandam uma parte para cá) e abafamento do som com pouca vida
+  private readonly reverbIn: GainNode;
+  private readonly muffle: BiquadFilterNode;
+  private muffleK = 0;
+  private ambTimer: ReturnType<typeof setTimeout> | null = null;
+  private ambGain: GainNode | null = null;
 
   constructor() {
     this.ctx = new AudioContext();
     this.master = this.ctx.createGain();
     this.master.gain.value = 0.8;
     const comp = this.ctx.createDynamicsCompressor();
-    comp.threshold.value = -14;
-    comp.ratio.value = 4;
-    this.master.connect(comp).connect(this.ctx.destination);
+    // compressor mais macio e um filtro que abafa o som quando a vida está baixa
+    comp.threshold.value = -12;
+    comp.knee.value = 14;
+    comp.ratio.value = 5;
+    comp.attack.value = 0.004;
+    comp.release.value = 0.22;
+    this.muffle = this.filter('lowpass', 20000, 0.5);
+    this.master.connect(this.muffle).connect(comp).connect(this.ctx.destination);
     this.sfx = this.gain(1, this.master);
     this.music = this.gain(0.55, this.master);
     this.amb = this.gain(0.5, this.master);
@@ -56,6 +74,12 @@ export class AudioEngine {
     this.noise = this.ctx.createBuffer(1, len, this.ctx.sampleRate);
     const d = this.noise.getChannelData(0);
     for (let i = 0; i < len; i++) d[i] = Math.random() * 2 - 1;
+    this.loopBuf = this.makeLoopNoise(8);
+    // eco curto de ambiente aberto
+    const verb = this.ctx.createConvolver();
+    verb.buffer = makeImpulse(this.ctx, 1.9, 3);
+    this.reverbIn = this.gain(1, verb);
+    verb.connect(this.gain(0.55, this.master));
 
     this.shaper = this.ctx.createWaveShaper();
     const curve = new Float32Array(1024);
@@ -66,13 +90,14 @@ export class AudioEngine {
     this.shaper.curve = curve;
     this.shaper.connect(this.sfx);
     this.loadSamples();
-    this.tr = new TrAudio({
+    const kit: AudioKit = {
       ctx: this.ctx, sfx: this.sfx, music: this.music, amb: this.amb,
       now: () => this.now,
       gain: (v, to) => this.gain(v, to),
       env: (g, t, peak, a, d) => this.env(g, t, peak, a, d),
       noiseSrc: (t, dur) => this.noiseSrc(t, dur),
       noiseBuffer: this.noise,
+      loopBuffer: this.loopBuf,
       filter: (type, f, q) => this.filter(type, f, q),
       osc: (type, f, t, dur) => this.osc(type, f, t, dur),
       out: (pos, ref, to) => this.out(pos, ref, to),
@@ -82,7 +107,38 @@ export class AudioEngine {
       pad: (fr, t, dur, vol, cut) => this.pad(fr, t, dur, vol, cut),
       boom: (t, vol) => this.boom(t, vol),
       listener: this.lastListener,
-    });
+    };
+    this.tr = new TrAudio(kit);
+    this.zs = new ZombieAudio(kit);
+    this.kit = kit;
+  }
+
+  // Ruído rosa (mais grave que o branco, como vento de verdade) que fecha o laço sem estalo: as pontas se fundem.
+  private makeLoopNoise(secs: number): AudioBuffer {
+    const sr = this.ctx.sampleRate;
+    const n = Math.floor(sr * secs);
+    const x = Math.floor(sr * 0.6);
+    const raw = new Float32Array(n + x);
+    let b0 = 0, b1 = 0, b2 = 0, b3 = 0, b4 = 0, b5 = 0, b6 = 0;
+    for (let i = 0; i < raw.length; i++) {
+      const w = Math.random() * 2 - 1;
+      b0 = 0.99886 * b0 + w * 0.0555179;
+      b1 = 0.99332 * b1 + w * 0.0750759;
+      b2 = 0.969 * b2 + w * 0.153852;
+      b3 = 0.8665 * b3 + w * 0.3104856;
+      b4 = 0.55 * b4 + w * 0.5329522;
+      b5 = -0.7616 * b5 - w * 0.016898;
+      raw[i] = (b0 + b1 + b2 + b3 + b4 + b5 + b6 + w * 0.5362) * 0.11;
+      b6 = w * 0.115926;
+    }
+    const buf = this.ctx.createBuffer(1, n, sr);
+    const d = buf.getChannelData(0);
+    for (let i = 0; i < n; i++) d[i] = raw[i];
+    for (let i = 0; i < x; i++) {
+      const k = (i / x) * (Math.PI / 2);
+      d[i] = raw[i] * Math.sin(k) + raw[n + i] * Math.cos(k);
+    }
+    return buf;
   }
 
   // ---------- Trincheira ----------
@@ -207,6 +263,7 @@ export class AudioEngine {
   }
 
   // Saída posicional (HRTF) quando há posição; senão vai direto (sons do próprio jogador).
+  // Longe, o ar come o brilho do som (filtro que fecha com a distância) e uma parte vai para o eco de ambiente aberto.
   private out(pos?: THREE.Vector3, ref = 2.5, to: AudioNode = this.sfx): AudioNode {
     if (!pos) return to;
     const p = this.ctx.createPanner();
@@ -222,7 +279,15 @@ export class AudioEngine {
     } else {
       p.setPosition(pos.x, pos.y, pos.z);
     }
-    p.connect(to);
+    const d = pos.distanceTo(this.lastListener);
+    if (d > 9) {
+      const lp = this.filter('lowpass', Math.max(1400, 16000 / (1 + (d - 9) / 12)), 0.5);
+      p.connect(lp).connect(to);
+    } else {
+      p.connect(to);
+    }
+    // eco de ambiente aberto: cresce com a distância (som de perto é seco)
+    p.connect(this.gain(Math.min(0.3, 0.03 + d * 0.006), this.reverbIn));
     return p;
   }
 
@@ -527,8 +592,30 @@ export class AudioEngine {
     s.connect(f).connect(g2);
   }
 
+  // queimadura: chiado de fogo e um grunhido abafado
+  burn() {
+    const t = this.now;
+    const n = this.noiseSrc(t, 0.5);
+    const f = this.filter('bandpass', 2400, 0.8);
+    f.frequency.exponentialRampToValueAtTime(900, t + 0.45);
+    const g = this.gain(0, this.sfx);
+    this.env(g, t, 0.5, 0.01, 0.45);
+    n.connect(f).connect(g);
+    const o = this.osc('sine', 120, t, 0.25);
+    o.frequency.exponentialRampToValueAtTime(60, t + 0.2);
+    const og = this.gain(0, this.sfx);
+    this.env(og, t, 0.5, 0.004, 0.2);
+    o.connect(og);
+  }
+
   // batimento cardíaco quando a vida está baixa (k de 0 a 1)
   heartbeat(dt: number, k: number) {
+    // pouca vida: o som abafa (zumbido de ouvido) e volta ao normal ao se recuperar
+    const q = Math.round(k * 20) / 20;
+    if (q !== this.muffleK) {
+      this.muffleK = q;
+      this.muffle.frequency.setTargetAtTime(20000 - q * 17500, this.now, 0.35);
+    }
     if (k <= 0) {
       this.heartT = 0;
       return;
@@ -591,6 +678,8 @@ export class AudioEngine {
   }
 
   zombieAttack(pos: THREE.Vector3, pitch = 1) {
+    // às vezes um rosnado de garganta por cima, para o bote não soar sempre igual
+    if (Math.random() < 0.3) this.zs.snarl(pos, pitch);
     if (this.sample('z-attack', this.out(pos, 2.5), 0.45, pitch * R(0.95, 1.08))) return;
     const f = R(150, 210);
     this.voice(pos, f, f * 0.65, 0.45, 0.9, 0.8);
@@ -1031,7 +1120,7 @@ export class AudioEngine {
     this.stopHellDrone();
     const t = this.now;
     const g = this.gain(0, this.music);
-    g.gain.linearRampToValueAtTime(0.07, t + 3);
+    g.gain.linearRampToValueAtTime(0.035, t + 3);
     const lp = this.filter('lowpass', 260, 0.8);
     lp.connect(g);
     const nodes: AudioScheduledSourceNode[] = [];
@@ -1046,7 +1135,7 @@ export class AudioEngine {
     const lfo = this.ctx.createOscillator();
     lfo.frequency.value = 1.1;
     const lg = this.ctx.createGain();
-    lg.gain.value = 0.035;
+    lg.gain.value = 0.015;
     lfo.connect(lg).connect(g.gain);
     lfo.start();
     nodes.push(lfo);
@@ -1353,33 +1442,216 @@ export class AudioEngine {
     this.voice(pos, f, f * 1.3, R(0.3, 0.5), 0.5, 1.0);
   }
 
+  // Ambiente: só vento macio (ruído rosa em laço de 8 s, com a força e o tom balançando bem devagar) e, de tempos
+  // em tempos, algum som solto ao longe. Antes era um chiado branco de 2 s em laço mais um zumbido fixo de 41 Hz,
+  // que cansavam o ouvido.
   startAmbience() {
     this.stopAmbience();
     const t = this.now;
     const s = this.ctx.createBufferSource();
-    s.buffer = this.noise;
+    s.buffer = this.loopBuf;
     s.loop = true;
-    const f = this.filter('bandpass', 380, 0.6);
-    const g = this.gain(0.0, this.amb);
-    g.gain.linearRampToValueAtTime(0.35, t + 3);
-    const lfo = this.ctx.createOscillator();
-    lfo.frequency.value = 0.07;
-    const lg = this.ctx.createGain();
-    lg.gain.value = 0.2;
-    lfo.connect(lg).connect(g.gain);
-    s.connect(f).connect(g);
-    s.start();
-    lfo.start();
-    const drone = this.ctx.createOscillator();
-    drone.frequency.value = 41;
-    const dg = this.gain(0.06, this.amb);
-    drone.connect(dg);
-    drone.start();
-    this.ambNodes = [s, lfo, drone];
+    const hp = this.filter('highpass', 90, 0.5);
+    const lp = this.filter('lowpass', 650, 0.4);
+    const g = this.gain(0, this.amb);
+    g.gain.linearRampToValueAtTime(0.17, t + 5);
+    const mod = (rate: number, depth: number, to: AudioParam) => {
+      const lfo = this.ctx.createOscillator();
+      lfo.frequency.value = rate;
+      const lg = this.ctx.createGain();
+      lg.gain.value = depth;
+      lfo.connect(lg).connect(to);
+      lfo.start();
+      return lfo;
+    };
+    // rajadas lentas e o filtro abrindo e fechando em outro ritmo, para o vento nunca repetir
+    const l1 = mod(0.047, 0.06, g.gain);
+    const l2 = mod(0.031, 230, lp.frequency);
+    s.connect(hp).connect(lp).connect(g);
+    s.start(t, Math.random() * 6);
+    this.ambNodes = [s, l1, l2];
+    this.ambGain = g;
+    this.scheduleAmbEvent(6000);
   }
 
   stopAmbience() {
-    for (const n of this.ambNodes) (n as OscillatorNode).stop();
+    for (const n of this.ambNodes) {
+      try {
+        (n as OscillatorNode).stop();
+      } catch {
+        // já parou
+      }
+    }
     this.ambNodes = [];
+    this.ambGain = null;
+    if (this.ambTimer) clearTimeout(this.ambTimer);
+    this.ambTimer = null;
+  }
+
+  private scheduleAmbEvent(first?: number) {
+    this.ambTimer = setTimeout(() => {
+      this.ambEvent();
+      this.scheduleAmbEvent();
+    }, first ?? R(8000, 20000));
+  }
+
+  // Um som solto ao longe, de um lado qualquer: gemido, rangido, metal, porta batendo ou uma rajada de vento.
+  private ambEvent() {
+    const L = this.lastListener;
+    const a = R(0, Math.PI * 2);
+    const d = R(30, 58);
+    const pos = new THREE.Vector3(L.x + Math.sin(a) * d, 1.5, L.z + Math.cos(a) * d);
+    const r = Math.random();
+    if (r < 0.3) this.zs.wail(pos, R(0.85, 1.15));
+    else if (r < 0.46) this.creak(pos);
+    else if (r < 0.58) this.crow(pos);
+    else if (r < 0.72) this.distantClang(pos);
+    else if (r < 0.84) this.distantThud(pos);
+    else this.windGust();
+  }
+
+  private windGust() {
+    const g = this.ambGain;
+    if (!g) return;
+    const t = this.now;
+    g.gain.cancelScheduledValues(t);
+    g.gain.setTargetAtTime(0.3, t, 1.2);
+    g.gain.setTargetAtTime(0.17, t + 3.5, 2.2);
+  }
+
+  // rangido de metal ou madeira velha
+  private creak(pos: THREE.Vector3) {
+    const t = this.now;
+    const dst = this.out(pos, 4);
+    const dur = R(0.7, 1.3);
+    const o = this.osc('sawtooth', R(150, 210), t, dur);
+    o.frequency.linearRampToValueAtTime(R(230, 330), t + dur * 0.5);
+    o.frequency.linearRampToValueAtTime(R(120, 170), t + dur);
+    const lfo = this.osc('sine', R(14, 22), t, dur);
+    const lg = this.ctx.createGain();
+    lg.gain.value = 14;
+    lfo.connect(lg).connect(o.frequency);
+    const bp = this.filter('bandpass', R(500, 800), 6);
+    const g = this.gain(0, dst);
+    this.env(g, t, 0.55, dur * 0.3, dur * 0.7);
+    o.connect(bp).connect(g);
+  }
+
+  // pancada de metal ao longe, com ressonância
+  private distantClang(pos: THREE.Vector3) {
+    const t = this.now;
+    const dst = this.out(pos, 4);
+    const f = R(260, 420);
+    for (const [m, v, dec] of [[1, 1, 1.6], [2.76, 0.5, 1.0], [5.4, 0.25, 0.6]] as [number, number, number][]) {
+      const o = this.osc('sine', f * m, t, dec);
+      const g = this.gain(0, dst);
+      this.env(g, t, 0.5 * v, 0.003, dec);
+      o.connect(g);
+    }
+    this.click(R(900, 1400), 2, 0.03, 0.4, 0, pos);
+  }
+
+  // batida surda de porta ou portão ao longe
+  private distantThud(pos: THREE.Vector3) {
+    const t = this.now;
+    const dst = this.out(pos, 4);
+    const o = this.osc('sine', R(70, 95), t, 0.4);
+    o.frequency.exponentialRampToValueAtTime(38, t + 0.3);
+    const g = this.gain(0, dst);
+    this.env(g, t, 0.9, 0.006, 0.3);
+    o.connect(g);
+    const n = this.noiseSrc(t, 0.2);
+    const ng = this.gain(0, dst);
+    this.env(ng, t, 0.3, 0.004, 0.15);
+    n.connect(this.filter('lowpass', 700, 0.7)).connect(ng);
+    if (Math.random() < 0.5) {
+      // eco da segunda batida
+      const o2 = this.osc('sine', 80, t + 0.45, 0.3);
+      o2.frequency.exponentialRampToValueAtTime(36, t + 0.7);
+      const g2 = this.gain(0, dst);
+      this.env(g2, t + 0.45, 0.5, 0.006, 0.25);
+      o2.connect(g2);
+    }
+  }
+
+  // ---------- trilha sonora ----------
+
+  // Trilha de fundo (baixa, sintetizada na hora). key = mapa; o clima muda com a partida.
+  startMusic(key: MusicKey) {
+    this.stopMusic();
+    this.score = new Soundtrack(this.kit, key);
+  }
+
+  stopMusic() {
+    this.score?.stop();
+    this.score = null;
+  }
+
+  setMusicMood(m: MusicMood) {
+    this.score?.setMood(m);
+  }
+
+  // a trilha abaixa por alguns segundos (vinhetas, rugidos, explosões)
+  duckMusic(secs: number, to = 0.35) {
+    this.score?.duck(secs, to);
+  }
+
+  // ---------- vozes extras dos zumbis ----------
+
+  // Voz de repouso de um zumbi: mistura as gravações (gemido e rosnado) com rosnado, gorgolejo, grito, e o
+  // chiado do Rastejador, conforme o tipo (0 anda, 1 corre, 2 dispara, 9 rastejador).
+  zombieIdle(pos: THREE.Vector3, kind: number, pitch = 1) {
+    const r = Math.random();
+    if (kind === 9) {
+      if (r < 0.55) this.zs.rasp(pos, pitch);
+      else if (r < 0.75) this.zs.gurgle(pos, pitch * 1.2);
+      else if (r < 0.9) this.zs.snarl(pos, pitch * 1.3);
+      else this.zombieGroan(pos, 1, pitch * 1.15);
+      return;
+    }
+    if (kind === 2) {
+      if (r < 0.4) this.zs.scream(pos, pitch);
+      else if (r < 0.65) this.zs.snarl(pos, pitch);
+      else this.zombieGroan(pos, 2, pitch);
+      return;
+    }
+    if (kind === 1) {
+      if (r < 0.28) this.zs.snarl(pos, pitch);
+      else if (r < 0.4) this.zs.scream(pos, pitch * 0.9);
+      else this.zombieGroan(pos, 1, pitch);
+      return;
+    }
+    if (r < 0.2) this.zs.gurgle(pos, pitch);
+    else if (r < 0.32) this.zs.snarl(pos, pitch * 0.9);
+    else this.zombieGroan(pos, 0, pitch);
+  }
+
+  zombiePain(pos: THREE.Vector3, pitch = 1) {
+    this.zs.pain(pos, pitch);
+  }
+
+  zombieStep(pos: THREE.Vector3, loud = 1) {
+    this.zs.step(pos, loud);
+  }
+
+  // zumbi bem longe, ouvido de fundo (usado na névoa e entre prédios)
+  zombieFar(pos: THREE.Vector3, pitch = 1) {
+    this.zs.wail(pos, pitch);
+  }
+
+  crawlerMove(pos: THREE.Vector3) {
+    this.zs.scrape(pos);
+  }
+
+  crawlerScrabble(pos: THREE.Vector3) {
+    this.zs.scrabble(pos);
+  }
+
+  crawlerLeap(pos: THREE.Vector3, pitch = 1) {
+    this.zs.screech(pos, pitch);
+  }
+
+  crawlerBite(pos: THREE.Vector3) {
+    this.zs.bite(pos);
   }
 }

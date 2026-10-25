@@ -45,6 +45,34 @@ export const ZOMBIE = {
   sprintSpeed: 4.7,
   directChaseRange: 14,
   stuckTime: 10,
+  // zumbi comum, cão, vulto e rastejador sem avançar no campo de caminho: reaparece depois disto
+  walkerStuckTime: 6,
+  // IA: quantos metros antes do alvo eles abrem o cerco (cada um por um lado) e até onde adivinham o movimento
+  flankRange: 7,
+  leadMax: 0.55,
+};
+
+// Rastejador: zumbi sem braços que se arrasta rente ao chão, salta em cima do alvo e escala paredes baixas.
+export const CRAWLER = {
+  radius: 0.3,
+  height: 0.7,
+  attackRange: 1.05,
+  attackHitRange: 1.5,
+  attackWindup: 0.4,
+  attackRecover: 0.55,
+  damage: 45,
+  // vida em relação à de um zumbi comum da rodada
+  healthMult: 0.65,
+  speed: [2.3, 3.1],
+  riseTime: 1.3,
+  // começa a aparecer nesta rodada; a chance sobe até o teto
+  firstRound: 3,
+  chancePerRound: 0.03,
+  maxChance: 0.22,
+  // salto em cima do alvo: de quantos metros, tempo de armar, tempo no ar e recarga
+  leap: { min: 2.0, max: 4.6, windup: 0.4, air: 0.42, cooldown: 3.2, damage: 55, hitRange: 1.5 },
+  // escalada: altura máxima do obstáculo (m), distância máxima do salto por cima, alcance até a parede e recarga
+  climb: { maxHeight: 3.4, maxSpan: 5.5, reach: 8, speed: 2.4, cooldown: 1.2 },
 };
 
 // Rodada infernal: só Cães Infernais, que surgem em raios de fogo perto dos jogadores.
@@ -73,6 +101,8 @@ export const DOGS = {
   spawnMin: 7,
   spawnMax: 15,
   spawnDelay: 1.1,
+  // o cão salta por cima de cercas e muros baixos (altura máxima, comprimento do salto, até onde vai até o obstáculo)
+  vault: { maxHeight: 1.3, maxSpan: 3.4, reach: 5, speed: 4.5 },
   maxAlive: 8,
   // ao morrer explode em fogo
   blastRadius: 1.7,
@@ -284,6 +314,18 @@ export const TRINCHEIRA = {
 
 export const LAVA_DAMAGE = 12;
 export const LAVA_INTERVAL = 0.5;
+
+// Fogo aceso no mapa (barris, fogueiras, carros e carroças em chamas): encostar queima de verdade.
+// Depois de sair do fogo a pessoa continua queimando por alguns segundos (dano menor).
+export const FIRE = {
+  // alcance horizontal: chama no chão (fogueira, com ring de pedras) e chama no alto de barril ou carro
+  radiusGround: 1.0,
+  radiusRaised: 0.75,
+  damage: 12,
+  interval: 0.4,
+  afterburn: 1.8,
+  afterburnDamage: 6,
+};
 export const REVIVE_TIME = 3;
 export const REVIVE_RANGE = 2.0;
 export const BLEEDOUT_TIME = 30;

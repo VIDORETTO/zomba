@@ -122,7 +122,7 @@ export const WEAPONS: Record<string, WeaponDef> = {
   },
   dualpistol: {
     ...base, id: 'dualpistol', name: 'Pistolas duplas', source: 'box', cls: 'pistol', cost: 0, dual: true,
-    damage: 70, fireDelay: 0.09, auto: false, mag: 20, reserve: 160,
+    damage: 70, fireDelay: 0.09, auto: false, mag: 12, reserve: 168,
     reloadTime: 2.3, reloadEmptyTime: 2.6, range: 70, falloffStart: 22, minDamageMult: 0.6, adsTime: 0.16, recoil: 0.8,
   },
   autoshotgun: {

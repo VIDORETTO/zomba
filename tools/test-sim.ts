@@ -314,26 +314,32 @@ check('mapa tem 6 máquinas e 3 caixotes', map.interactables.filter((i) => i.kin
 
 // --- Caixa Misteriosa ---
 {
-  check('mapa tem 7 locais da caixa (começa no Banco)', map.boxSpots.length === 7 && map.boxSpots[0].name === 'Banco');
+  check('mapa tem 7 locais da caixa', map.boxSpots.length === 7 && map.boxSpots[0].name === 'Banco');
   const s = new GameSim(map, false);
   s.addPlayer('a', 'A', 0);
   s.addPlayer('b', 'B', 1);
   s.start();
   const a = s.players.get('a')!;
   const w = raw(s).world;
-  check('só o local atual da caixa tem colisão', !w.openDoors.has('box-spot-0') && w.openDoors.has('box-spot-1'));
+  const b0 = s.box.loc;
+  const bid = `box-${b0}`;
+  check('só o local atual da caixa tem colisão', !w.openDoors.has(`box-spot-${b0}`) && w.openDoors.has(`box-spot-${(b0 + 1) % 7}`));
+  // o local inicial é sorteado: em 40 partidas aparecem vários locais diferentes
+  const starts = new Set<number>();
+  for (let i = 0; i < 40; i++) starts.add(new GameSim(map, true).box.loc);
+  check('a caixa nasce em locais sortudos diferentes', starts.size >= 4, `${starts.size} locais em 40 partidas`);
   a.points = 50000;
-  goTo(s, 'a', 'box-0');
-  s.handle('a', { t: 'interact', id: 'box-0', weapon: 'pistol' });
+  goTo(s, 'a', bid);
+  s.handle('a', { t: 'interact', id: bid, weapon: 'pistol' });
   check('girar custa 950', a.points === 49050 && s.box.state === 'spinning');
   for (let i = 0; i < 20 * 4.2; i++) s.tick(0.05);
   check('depois de 4 s oferece uma arma', s.box.state === 'offer' && !!s.box.weapon && s.box.weapon !== 'pistol', String(s.box.weapon));
-  goTo(s, 'b', 'box-0');
+  goTo(s, 'b', bid);
   s.players.get('b')!.points = 5000;
-  s.handle('b', { t: 'interact', id: 'box-0', weapon: 'pistol' });
+  s.handle('b', { t: 'interact', id: bid, weapon: 'pistol' });
   check('só quem girou pode pegar', s.box.state === 'offer');
   const offered = s.box.weapon!;
-  s.handle('a', { t: 'interact', id: 'box-0', weapon: 'pistol' });
+  s.handle('a', { t: 'interact', id: bid, weapon: 'pistol' });
   check('pega a arma da caixa', a.weapons.includes(offered) && s.box.state === 'idle');
 
   // nunca repete arma que o jogador tem
@@ -346,13 +352,13 @@ check('mapa tem 6 máquinas e 3 caixotes', map.interactables.filter((i) => i.kin
   const rnd = Math.random;
   Math.random = () => 0.01;
   const before = a.points;
-  s.handle('a', { t: 'interact', id: 'box-0', weapon: 'pistol' });
+  s.handle('a', { t: 'interact', id: bid, weapon: 'pistol' });
   Math.random = rnd;
   for (let i = 0; i < 20 * 4.2; i++) s.tick(0.05);
   check('Corvo devolve os pontos', a.points === before && s.box.state === 'moving');
   for (let i = 0; i < 20 * 6.5; i++) s.tick(0.05);
-  check('caixa reaparece em outro local', s.box.state === 'idle' && s.box.loc !== 0, `local ${s.box.loc}`);
-  check('colisão acompanha a caixa', w.openDoors.has('box-spot-0') && !w.openDoors.has(`box-spot-${s.box.loc}`));
+  check('caixa reaparece em outro local', s.box.state === 'idle' && s.box.loc !== b0, `local ${s.box.loc}`);
+  check('colisão acompanha a caixa', w.openDoors.has(`box-spot-${b0}`) && !w.openDoors.has(`box-spot-${s.box.loc}`));
 }
 
 // --- projéteis das armas da caixa ---
@@ -443,8 +449,9 @@ check('mapa tem 6 máquinas e 3 caixotes', map.interactables.filter((i) => i.kin
   check('Liquidação: caixa por 10', s.box.fireSale);
   const ax = s.players.get('a')!;
   const before = ax.points;
-  goTo(s, 'a', 'box-0');
-  s.handle('a', { t: 'interact', id: 'box-0', weapon: 'pistol' });
+  const fid = `box-${s.box.loc}`;
+  goTo(s, 'a', fid);
+  s.handle('a', { t: 'interact', id: fid, weapon: 'pistol' });
   check('girar na Liquidação custa 10', before - ax.points === 10);
 
   // sorteio: até 4 por rodada, nunca repete o anterior
@@ -1321,6 +1328,37 @@ check('mapa tem 6 máquinas e 3 caixotes', map.interactables.filter((i) => i.kin
     }
     check(`C3: ${id} nunca sorteia as bebidas novas (Bebida Grátis, 600 sorteios)`, NOVAS.every((n) => !seen.has(n)) && seen.size === 6, [...seen].join(','));
   }
+}
+
+// --- fogo queima ---
+{
+  const s = new GameSim(map, true);
+  s.addPlayer('a', 'A', 0);
+  s.start();
+  const a = s.players.get('a')!;
+  const [fx, fy, fz] = map.fires[0];
+  const away = () => s.handle('a', { t: 'state', x: fx + 6, y: 0, z: fz + 6, yaw: 0, pitch: 0, crouch: false, speed: 0 });
+  const at = () => s.handle('a', { t: 'state', x: fx, y: Math.max(0, fy - 1), z: fz, yaw: 0, pitch: 0, crouch: false, speed: 0 });
+  away();
+  for (let i = 0; i < 40; i++) s.tick(0.05);
+  check('longe do fogo não queima', a.health === a.maxHealth);
+  events(s);
+  at();
+  for (let i = 0; i < 20; i++) {
+    at();
+    s.tick(0.05);
+  }
+  const ev = events(s);
+  check('dentro do fogo perde vida', a.health < a.maxHealth, `vida ${a.health}`);
+  check('o dano vem marcado como fogo', ev.some((e) => e.e === 'phurt' && (e as { fire?: boolean }).fire === true));
+  const hp = a.health;
+  away();
+  for (let i = 0; i < 12; i++) s.tick(0.05);
+  check('continua queimando um pouco depois de sair', a.health < hp, `vida ${a.health} (era ${hp})`);
+  for (let i = 0; i < 80; i++) s.tick(0.05);
+  const hp2 = a.health;
+  for (let i = 0; i < 40; i++) s.tick(0.05);
+  check('a queimadura passa (a vida volta)', a.health >= hp2);
 }
 
 console.log(`\n${passes} ok, ${fails} falharam`);

@@ -31,6 +31,12 @@ const NO_SHADOW = new Set<MaterialId>(['asphalt', 'pavement', 'dirt', 'paintYell
 // direção do sol do céu (as poças da Trincheira refletem a mesma)
 export const SKY_SUN_DIR = new THREE.Vector3(-0.75, 0.32, 0.55).normalize();
 export const FOG_COLOR = 0x5c3c27;
+
+// Visual noturno e pesado (como o modo Zombies clássico): névoa e céu escurecidos e frios, pouca luz ambiente,
+// e só as luzes pontuais (lampiões, fogo, máquinas) iluminam de verdade. Vale para todos os mapas.
+const NIGHT_DIM = 0.55;
+const NIGHT_COLD = new THREE.Color(0x12151c);
+const night = (c: THREE.Color) => c.multiplyScalar(NIGHT_DIM).lerp(NIGHT_COLD, 0.3);
 export const FOG_DENSITY = 0.032;
 
 export interface MapView {
@@ -100,7 +106,7 @@ function makeMaterial(mat: MaterialId, tint: number | undefined, tex: TexSet, si
       break;
     case 'neon':
       // luz suave na cor do bloco (tint), sem estourar no brilho
-      Object.assign(p, { color: new THREE.Color(0x151515), emissive: new THREE.Color(tint ?? 0xffc880), emissiveIntensity: 0.85 });
+      Object.assign(p, { color: new THREE.Color(0x151515), emissive: new THREE.Color(tint ?? 0xffc880), emissiveIntensity: 1.35 });
       break;
     case 'lava':
       Object.assign(p, { color: new THREE.Color(0x220800), emissive: new THREE.Color(0xffffff), emissiveMap: map, emissiveIntensity: 2.4 });
@@ -273,11 +279,11 @@ export function buildMapView(map: MapDef, tex: TexSet, scene: THREE.Scene, q: Qu
     depthWrite: false,
     fog: false,
     uniforms: {
-      top: { value: new THREE.Color(map.sky?.top ?? 0x2a1a12) },
-      horizon: { value: new THREE.Color(map.fogColor ?? FOG_COLOR) },
-      sun: { value: new THREE.Color(map.sky?.sun ?? 0xff8a3a) },
+      top: { value: night(new THREE.Color(map.sky?.top ?? 0x2a1a12)).multiplyScalar(0.7) },
+      horizon: { value: night(new THREE.Color(map.fogColor ?? FOG_COLOR)) },
+      sun: { value: new THREE.Color(map.sky?.sun ?? 0xff8a3a).multiplyScalar(0.45) },
       sunDir: { value: sunDir },
-      warm: { value: new THREE.Color(map.sky?.warm ?? 0x000000) },
+      warm: { value: new THREE.Color(map.sky?.warm ?? 0x000000).multiplyScalar(0.5) },
     },
     vertexShader: /* glsl */ `
       varying vec3 vDir;
@@ -307,15 +313,17 @@ export function buildMapView(map: MapDef, tex: TexSet, scene: THREE.Scene, q: Qu
   group.add(sky);
   materials.push(skyMat);
 
-  const stopFog = new THREE.Color(map.fogColor ?? FOG_COLOR);
-  const roadFog = new THREE.Color(map.fogRoadColor ?? map.fogColor ?? FOG_COLOR);
+  const stopFog = night(new THREE.Color(map.fogColor ?? FOG_COLOR));
+  const roadFog = night(new THREE.Color(map.fogRoadColor ?? map.fogColor ?? FOG_COLOR));
   scene.fog = new THREE.FogExp2(stopFog.getHex(), FOG_DENSITY);
   scene.background = stopFog.clone();
 
   // com menos luzes pontuais, um pouco mais de luz ambiente compensa
-  const hemi = new THREE.HemisphereLight(0xc49a78, 0x4a3426, q.lights < 4 ? 2.3 : 1.9);
+  // a Trincheira tem pouca luz pontual até os geradores ligarem: mais luz ambiente para dar para andar
+  const amb = map.trincheira ? 1.7 : 1;
+  const hemi = new THREE.HemisphereLight(0x7b8aa8, 0x2c2622, (q.lights < 4 ? 1.9 : 1.45) * amb);
   group.add(hemi);
-  const sunLight = new THREE.DirectionalLight(0xffa868, 2.4);
+  const sunLight = new THREE.DirectionalLight(0x9db0d4, 1.6 * (map.trincheira ? 1.4 : 1));
   sunLight.position.copy(sunDir).multiplyScalar(70);
   sunLight.castShadow = q.shadows;
   sunLight.shadow.mapSize.set(q.shadowSize, q.shadowSize);

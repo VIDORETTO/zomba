@@ -34,6 +34,8 @@ export interface AudioKit {
   env: (g: GainNode, t: number, peak: number, attack: number, decay: number) => void;
   noiseSrc: (t: number, dur: number) => AudioBufferSourceNode;
   noiseBuffer: AudioBuffer;
+  // ruído rosa de 8 s que emenda sem estalo (para vento e chuva em laço; o ruído branco de 2 s "pulsa" ao repetir)
+  loopBuffer: AudioBuffer;
   filter: (type: BiquadFilterType, freq: number, q?: number) => BiquadFilterNode;
   osc: (type: OscillatorType, freq: number, t: number, dur: number) => OscillatorNode;
   out: (pos?: THREE.Vector3, ref?: number, to?: AudioNode) => AudioNode;
@@ -309,7 +311,7 @@ export class TrAudio {
 
   private loopNoise(): AudioBufferSourceNode {
     const s = this.k.ctx.createBufferSource();
-    s.buffer = this.k.noiseBuffer;
+    s.buffer = this.k.loopBuffer;
     s.loop = true;
     s.start();
     return s;
