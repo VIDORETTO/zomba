@@ -759,7 +759,8 @@ details.adv[open] { display: flex; flex-direction: column; gap: 6px; }
 .tr-radio p { margin: 3px 0; font: 600 15px var(--serif); color: #e8e0cc; opacity: 0; animation: radioIn 0.8s ease-out forwards; }
 @keyframes radioIn { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
 
-.hud.burning::before { content: ''; position: absolute; inset: 0; pointer-events: none; box-shadow: inset 0 0 120px 30px rgba(255, 110, 20, 0.55); animation: burnPulse 0.7s ease-out; }
-@keyframes burnPulse { from { opacity: 1; } to { opacity: 0.2; } }
+.burn { position: absolute; inset: 0; pointer-events: none; opacity: 0; background: radial-gradient(ellipse at center, transparent 50%, rgba(255, 110, 20, 0.55) 100%); will-change: opacity; }
+.burn.on { animation: burnPulse 0.7s ease-out; }
+@keyframes burnPulse { from { opacity: 1; } to { opacity: 0; } }
 /* Trincheira: o painel de geradores ocupa o canto de cima; as informações da rodada descem */
-.hud:has(.tr-gens) .stats { top: 78px; }
+.hud.tr .stats { top: 78px; }

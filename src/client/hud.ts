@@ -243,7 +243,7 @@ export class Hud {
   private readonly statsEl: HTMLElement;
   private readonly leftVal: HTMLElement;
   private readonly timeVal: HTMLElement;
-  private burnTimer: ReturnType<typeof setTimeout> | undefined;
+  private readonly burnEl: HTMLElement;
   private leftKey = '';
   private timeKey = '';
   private readonly perksEl: HTMLElement;
@@ -301,6 +301,7 @@ export class Hud {
     this.effectsEl = el('div', 'effects', this.root);
     this.vignette = el('div', 'vignette', this.root);
     this.hurtLayer = el('div', 'hurt', this.root);
+    this.burnEl = el('div', 'burn', this.root);
     this.dirs = el('div', 'hitdirs', this.root);
     this.markersEl = el('div', 'markers', this.root);
 
@@ -380,9 +381,10 @@ export class Hud {
 
   // queimando: a borda da tela acende em laranja por um instante
   burning() {
-    this.root.classList.add('burning');
-    clearTimeout(this.burnTimer);
-    this.burnTimer = setTimeout(() => this.root.classList.remove('burning'), 700);
+    // camada própria, só com opacidade animada (nada de sombra grande nem classe na raiz: isso trava a tela)
+    this.burnEl.classList.remove('on');
+    void this.burnEl.offsetWidth;
+    this.burnEl.classList.add('on');
   }
 
   // rodada infernal: contador em brasa e borda vermelha na tela
@@ -706,7 +708,11 @@ export class Hud {
   // painéis da Trincheira (criados na primeira vez que alguém pede)
   private trHud: TrHud | null = null;
   get tr(): TrHud {
-    if (!this.trHud) this.trHud = new TrHud(this.root);
+    if (!this.trHud) {
+      this.trHud = new TrHud(this.root);
+      // a Trincheira tem o painel de geradores no canto: as informações da rodada descem (classe simples, sem :has)
+      this.root.classList.add('tr');
+    }
     return this.trHud;
   }
 

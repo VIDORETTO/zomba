@@ -76,9 +76,11 @@ class ParticlePool {
         varying vec3 vColor; varying float vAlpha; varying float vFog;
         void main() {
           vec4 mv = modelViewMatrix * vec4(position, 1.0);
-          gl_PointSize = psize * scale / max(-mv.z, 0.05);
+          // tamanho limitado e partícula que esfuma ao chegar perto da câmera: andar dentro do fogo ou da fumaça
+          // enchia a tela de pontos enormes sobrepostos (milhões de pixels redesenhados por quadro) e travava o jogo
+          gl_PointSize = min(psize * scale / max(-mv.z, 0.05), 140.0);
           gl_Position = projectionMatrix * mv;
-          vColor = pcolor; vAlpha = palpha;
+          vColor = pcolor; vAlpha = palpha * smoothstep(0.3, 1.8, -mv.z);
           float d = -mv.z * fogDensity;
           vFog = 1.0 - exp(-d * d);
         }`,
